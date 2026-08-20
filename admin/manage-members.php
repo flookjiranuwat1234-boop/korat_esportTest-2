@@ -84,6 +84,118 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tempPasswordShown = $tempPassword;
         }
 
+        // แก้ไขข้อมูลบัญชีและโปรไฟล์นักกีฬาในหน้าต่างเดียวกัน
+        elseif ($action === 'update_member' && $userId > 0) {
+            $username = trim($_POST['username'] ?? '');
+            $email = trim($_POST['email'] ?? '');
+            $displayName = trim($_POST['display_name'] ?? '');
+            $realName = trim($_POST['real_name'] ?? '');
+            $gender = trim($_POST['gender'] ?? '');
+            $birthDate = trim($_POST['birth_date'] ?? '');
+            $province = trim($_POST['province'] ?? '');
+
+            if ($username === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $error = 'กรุณากรอก Username และ Email ให้ถูกต้อง';
+            } else {
+                try {
+                    $pdo->beginTransaction();
+                    $pdo->prepare('UPDATE users SET username = :username, email = :email WHERE user_id = :id')
+                        ->execute(['username' => $username, 'email' => $email, 'id' => $userId]);
+                    $playerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :id');
+                    $playerStmt->execute(['id' => $userId]);
+                    $playerId = $playerStmt->fetchColumn();
+                    if ($playerId) {
+                        $pdo->prepare('UPDATE players SET display_name = :display_name, real_name = :real_name,
+                            gender = :gender, birth_date = :birth_date, province = :province WHERE player_id = :player_id')
+                            ->execute([
+                                'display_name' => $displayName,
+                                'real_name' => $realName !== '' ? $realName : null,
+                                'gender' => $gender !== '' ? $gender : null,
+                                'birth_date' => $birthDate !== '' ? $birthDate : null,
+                                'province' => $province !== '' ? $province : null,
+                                'player_id' => $playerId,
+                            ]);
+                    }
+                    $pdo->commit();
+                    $success = 'บันทึกข้อมูลสมาชิกเรียบร้อยแล้ว';
+                } catch (Throwable $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    $error = $e instanceof PDOException && $e->getCode() === '23000'
+                        ? 'Username หรือ Email นี้ถูกใช้งานแล้ว'
+                        : 'ไม่สามารถบันทึกข้อมูลสมาชิกได้';
+                }
+            }
+        }
+
+        // สร้างโปรไฟล์นักกีฬาให้กับบัญชีที่ยังไม่มีโปรไฟล์
+        elseif ($action === 'create_player') {
+            $targetUserId = (int) ($_POST['target_user_id'] ?? 0);
+            $displayName = trim($_POST['display_name'] ?? '');
+            if ($targetUserId <= 0 || $displayName === '') {
+                $error = 'กรุณาเลือกบัญชีผู้ใช้และกรอกชื่อในเกม';
+            } else {
+                try {
+                    $stmt = $pdo->prepare('INSERT INTO players (user_id, display_name) VALUES (:user_id, :display_name)');
+                    $stmt->execute(['user_id' => $targetUserId, 'display_name' => $displayName]);
+                    $success = 'เพิ่มโปรไฟล์นักกีฬาเรียบร้อยแล้ว';
+                } catch (PDOException $e) {
+                    $error = $e->getCode() === '23000' ? 'บัญชีนี้มีโปรไฟล์นักกีฬาอยู่แล้ว' : 'ไม่สามารถเพิ่มโปรไฟล์นักกีฬาได้';
+                }
+            }
+        }
+
+        // ลบบัญชีสมาชิกที่ยังไม่มีประวัติการแข่งขัน
+        elseif ($action === 'delete_member' && $userId > 0) {
+            if ($userId === (int) $_SESSION['user_id']) {
+                $error = 'ไม่สามารถลบบัญชีของตัวเองได้';
+            } else {
+                try {
+                    $stmt = $pdo->prepare('SELECT player_id, role FROM users u LEFT JOIN players p ON p.user_id = u.user_id WHERE u.user_id = :id');
+                    $stmt->execute(['id' => $userId]);
+                    $target = $stmt->fetch();
+                    if (!$target || $target['role'] === 'admin') {
+                        $error = 'ไม่สามารถลบบัญชีผู้ดูแลระบบได้';
+                    } else {
+                        $playerId = (int) ($target['player_id'] ?? 0);
+                        if ($playerId > 0) {
+                            $history = $pdo->prepare('SELECT
+                                (SELECT COUNT(*) FROM player_checkin_history WHERE player_id = :pid) +
+                                (SELECT COUNT(*) FROM tournament_registration_members WHERE player_id = :pid) +
+                                (SELECT COUNT(*) FROM player_rankings WHERE player_id = :pid)');
+                            $history->execute(['pid' => $playerId]);
+                            if ((int) $history->fetchColumn() > 0) {
+                                $error = 'ไม่สามารถลบสมาชิกนี้ได้ เพราะมีประวัติการแข่งขัน ให้ปิดใช้งานบัญชีแทน';
+                            }
+                        }
+                        if ($error === '') {
+                            $pdo->beginTransaction();
+                            $pdo->prepare('DELETE FROM team_members WHERE player_id = :pid')->execute(['pid' => $playerId]);
+                            if ($playerId > 0) {
+                                $pdo->prepare('DELETE FROM players WHERE player_id = :pid')->execute(['pid' => $playerId]);
+                            }
+                            $pdo->prepare('DELETE FROM users WHERE user_id = :id')->execute(['id' => $userId]);
+                            $pdo->commit();
+                            $success = 'ลบบัญชีสมาชิกเรียบร้อยแล้ว';
+                        }
+                    }
+                } catch (Throwable $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    $error = 'ไม่สามารถลบบัญชีนี้ได้ เนื่องจากมีข้อมูลที่อ้างอิงอยู่';
+                }
+            }
+        }
+
+        // เพิ่มทีมใหม่
+        elseif ($action === 'create_team') {
+            $teamName = trim($_POST['team_name'] ?? '');
+            if ($teamName === '') {
+                $error = 'กรุณากรอกชื่อทีม';
+            } else {
+                $pdo->prepare('INSERT INTO teams (name) VALUES (:name)')->execute(['name' => $teamName]);
+                $success = 'เพิ่มทีมเรียบร้อยแล้ว';
+            }
+        }
+
         // 3. อัปเดตข้อมูลทีม (หน้าต่างลอย Manage Team)
         elseif ($action === 'update_team') {
             $teamId = (int) ($_POST['team_id'] ?? 0);
@@ -99,13 +211,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // 4. เปลี่ยนบทบาทสมาชิกในทีม
+        elseif ($action === 'update_team_roles') {
+            $teamId = (int) ($_POST['team_id'] ?? 0);
+            $memberRoles = $_POST['member_roles'] ?? [];
+            if ($teamId > 0 && is_array($memberRoles)) {
+                $stmt = $pdo->prepare('UPDATE team_members SET in_game_role = :role WHERE team_id = :tid AND player_id = :pid');
+                foreach ($memberRoles as $playerId => $role) {
+                    $role = trim((string) $role);
+                    if ((int) $playerId > 0 && in_array($role, ['leader', 'member', 'substitute'], true)) {
+                        $stmt->execute(['role' => $role, 'tid' => $teamId, 'pid' => (int) $playerId]);
+                    }
+                }
+                $success = 'บันทึกตำแหน่งสมาชิกเรียบร้อยแล้ว';
+            }
+        }
+
+        // เปลี่ยนบทบาทสมาชิกทีละคน (รองรับคำขอเดิม)
         elseif ($action === 'update_member_role') {
             $teamId = (int) ($_POST['team_id'] ?? 0);
             $playerId = (int) ($_POST['player_id'] ?? 0);
             $newRole = trim($_POST['role_in_team'] ?? 'member');
 
             if ($teamId > 0 && $playerId > 0) {
-                $stmt = $pdo->prepare("UPDATE team_members SET role_in_team = :role WHERE team_id = :tid AND player_id = :pid");
+                $stmt = $pdo->prepare("UPDATE team_members SET in_game_role = :role WHERE team_id = :tid AND player_id = :pid");
                 $stmt->execute(['role' => $newRole, 'tid' => $teamId, 'pid' => $playerId]);
                 $success = 'ปรับเปลี่ยนบทบาทสมาชิกเรียบร้อยแล้ว';
             }
@@ -122,6 +250,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // ลบทีมที่ยังไม่ถูกใช้ในรายการแข่งขัน
+        elseif ($action === 'delete_team') {
+            $teamId = (int) ($_POST['team_id'] ?? 0);
+            if ($teamId > 0) {
+                $check = $pdo->prepare('SELECT COUNT(*) FROM tournament_registrations WHERE team_id = :tid');
+                $check->execute(['tid' => $teamId]);
+                if ((int) $check->fetchColumn() > 0) {
+                    $error = 'ไม่สามารถลบทีมนี้ได้ เพราะมีประวัติการสมัครแข่งขันอยู่';
+                } else {
+                    $pdo->beginTransaction();
+                    try {
+                        $pdo->prepare('DELETE FROM team_members WHERE team_id = :tid')->execute(['tid' => $teamId]);
+                        $pdo->prepare('DELETE FROM teams WHERE team_id = :tid')->execute(['tid' => $teamId]);
+                        $pdo->commit();
+                        $success = 'ลบทีมเรียบร้อยแล้ว';
+                    } catch (Throwable $e) {
+                        if ($pdo->inTransaction()) $pdo->rollBack();
+                        $error = 'ไม่สามารถลบทีมนี้ได้ เนื่องจากมีข้อมูลที่อ้างอิงอยู่';
+                    }
+                }
+            }
+        }
+
         // 6. เพิ่มสมาชิกเข้าทีม
         elseif ($action === 'add_team_member') {
             $teamId = (int) ($_POST['team_id'] ?? 0);
@@ -135,7 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($check->fetch()) {
                     $error = 'นักกีฬารายนี้อยู่ในทีมแล้ว';
                 } else {
-                    $stmt = $pdo->prepare("INSERT INTO team_members (team_id, player_id, role_in_team, is_active, joined_at) VALUES (:tid, :pid, :role, 1, NOW())");
+                    $stmt = $pdo->prepare("INSERT INTO team_members (team_id, player_id, in_game_role, is_active, joined_at) VALUES (:tid, :pid, :role, 1, NOW())");
                     $stmt->execute(['tid' => $teamId, 'pid' => $playerId, 'role' => $roleInTeam]);
                     $success = 'เพิ่มสมาชิกเข้าทีมเรียบร้อยแล้ว';
                 }
@@ -147,7 +298,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ================= ดึงข้อมูลสมาชิกเพื่อแสดงผลในตาราง =================
 $sql = "
     SELECT u.user_id, u.username, u.email, u.role, u.status, u.created_at, u.last_login_at,
-        p.player_id AS player_id, p.display_name, p.real_name, p.gender,
+        p.player_id AS player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN t.name END ORDER BY t.name SEPARATOR ', ') AS team_names,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN t.team_id END ORDER BY t.name SEPARATOR ',') AS team_ids,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN g.name END ORDER BY g.name SEPARATOR ', ') AS game_names,
@@ -209,24 +360,35 @@ if ($profileFilter === 'none') {
     )";
 }
 $sql .= " GROUP BY u.user_id, u.username, u.email, u.role, u.status, u.created_at, u.last_login_at,
-    p.player_id, p.display_name, p.real_name, p.gender
+    p.player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province
     ORDER BY u.created_at DESC LIMIT 200";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $members = $stmt->fetchAll();
 
-// ดึงข้อมูลทีมทั้งหมดพร้อมสมาชิก สำหรับ Modal ป๊อปอัพหน้าต่างลอย
+// ดึงเฉพาะทีมที่สมาชิกในผลลัพธ์ปัจจุบันสังกัดอยู่ สำหรับ Modal ป๊อปอัพ
 $teamsData = [];
-$teamStmt = $pdo->query("
+$teamIds = [];
+foreach ($members as $member) {
+    foreach (explode(',', (string) ($member['team_ids'] ?? '')) as $teamId) {
+        $teamId = (int) $teamId;
+        if ($teamId > 0) $teamIds[$teamId] = $teamId;
+    }
+}
+if ($teamIds) {
+    $teamPlaceholders = implode(',', array_fill(0, count($teamIds), '?'));
+    $teamStmt = $pdo->prepare("
     SELECT t.team_id, t.name AS team_name, g.name AS game_name
     FROM teams t
     LEFT JOIN games g ON g.game_id = t.game_id
+    WHERE t.team_id IN ($teamPlaceholders)
     ORDER BY t.name ASC
 ");
-while ($row = $teamStmt->fetch()) {
+    $teamStmt->execute(array_values($teamIds));
+    while ($row = $teamStmt->fetch()) {
     $memStmt = $pdo->prepare("
-        SELECT tm.team_id, tm.player_id, tm.role_in_team, p.display_name, p.real_name, u.username
+        SELECT tm.team_id, tm.player_id, tm.in_game_role AS role_in_team, p.display_name, p.real_name, u.username
         FROM team_members tm
         JOIN players p ON p.player_id = tm.player_id
         JOIN users u ON u.user_id = p.user_id
@@ -240,6 +402,7 @@ while ($row = $teamStmt->fetch()) {
         'game_name' => $row['game_name'],
         'members' => $memStmt->fetchAll()
     ];
+    }
 }
 
 // ดึงรายชื่อนักกีฬาสำหรับเพิ่มเข้าทีมใน Modal
@@ -257,6 +420,9 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    // Additional context or code can be added here if necessary
+    
     <script>
         tailwind.config = {
             theme: {
@@ -278,6 +444,17 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
         }
     </script>
     <style>
+        html, body, * {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        html::-webkit-scrollbar,
+        body::-webkit-scrollbar,
+        *::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
+        }
         body { background-color: #F4F6F9; }
         .nav-item { transition: all 0.2s ease; }
         .nav-item:hover, .nav-item.active {
@@ -294,7 +471,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
         }
     </script>
 </head>
-<body class="text-slate-800 font-sans min-h-screen flex antialiased">
+<body class="text-slate-800 font-sans min-h-screen antialiased">
 
     <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
         <div class="p-6 border-b border-slate-800 flex items-center gap-3">
@@ -366,7 +543,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
         </div>
     </aside>
 
-    <div class="flex-1 ml-64 min-h-screen flex flex-col">
+    <div class="ml-64 min-h-screen flex flex-col min-w-0">
 
         <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
             <div>
@@ -512,12 +689,21 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                             <?php foreach ($members as $m): ?>
                             <tr class="hover:bg-slate-50/80 transition-colors">
                                 <td class="p-4 font-bold text-slate-900">
-                                    <div class="flex items-center gap-2">
-                                        <div class="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-xs shrink-0">
-                                            <i class="fa-regular fa-user"></i>
+                                    <?php if (!empty($m['player_id'])): ?>
+                                        <a href="../pages/player-profile.php?id=<?php echo (int) $m['player_id']; ?>" title="เปิดหน้าโปรไฟล์ผู้เล่น" class="flex items-center gap-2 hover:text-brand-orange hover:underline transition-colors">
+                                            <span class="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-xs shrink-0">
+                                                <i class="fa-regular fa-user"></i>
+                                            </span>
+                                            <span><?php echo htmlspecialchars($m['username']); ?></span>
+                                        </a>
+                                    <?php else: ?>
+                                        <div class="flex items-center gap-2">
+                                            <span class="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-xs shrink-0">
+                                                <i class="fa-regular fa-user"></i>
+                                            </span>
+                                            <span><?php echo htmlspecialchars($m['username']); ?></span>
                                         </div>
-                                        <span><?php echo htmlspecialchars($m['username']); ?></span>
-                                    </div>
+                                    <?php endif; ?>
                                 </td>
 
                                 <td class="p-4 text-xs font-medium text-slate-600">
@@ -600,6 +786,28 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                                             </button>
                                         </form>
 
+                                        <button type="button" onclick="openMemberModal(<?php echo (int) $m['user_id']; ?>)"
+                                            class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-semibold transition-all">
+                                            <i class="fa-solid fa-pen-to-square"></i><span>แก้ไข</span>
+                                        </button>
+                                        <?php if (!empty($m['team_ids'])): ?>
+                                            <button type="button" onclick="openMemberTeamModal(<?php echo (int) $m['user_id']; ?>)"
+                                                class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 text-brand-orange border border-orange-200 text-xs font-semibold transition-all">
+                                                <i class="fa-solid fa-people-group"></i><span>ทีม</span>
+                                            </button>
+                                        <?php endif; ?>
+
+                                        <?php if ($m['role'] !== 'admin'): ?>
+                                            <form method="POST" class="inline-block" onsubmit="return confirm('ยืนยันลบบัญชี <?php echo htmlspecialchars($m['username'], ENT_QUOTES); ?> ? หากมีประวัติการแข่งขัน ระบบจะไม่อนุญาตให้ลบ')">
+                                                <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                                                <input type="hidden" name="action" value="delete_member">
+                                                <input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
+                                                <button type="submit" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition-all">
+                                                    <i class="fa-solid fa-trash"></i><span>ลบ</span>
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+
                                     <?php else: ?>
                                         <span class="inline-block text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1 rounded-lg">
                                             บัญชีของคุณ
@@ -616,6 +824,33 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
         </main>
     </div>
 
+    <div id="memberModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-5 bg-slate-900 text-white flex items-center justify-between">
+                <div class="flex items-center gap-2"><i class="fa-solid fa-user-pen text-brand-orange text-lg"></i><h3 class="font-bold text-base">แก้ไขข้อมูลสมาชิก</h3></div>
+                <button type="button" onclick="closeMemberModal()" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form method="POST" class="p-6 overflow-y-auto space-y-4">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                <input type="hidden" name="action" value="update_member">
+                <input type="hidden" name="user_id" id="editMemberUserId">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="text-xs font-bold text-slate-700">Username<input name="username" id="editMemberUsername" required class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
+                    <label class="text-xs font-bold text-slate-700">Email<input type="email" name="email" id="editMemberEmail" required class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
+                    <label class="text-xs font-bold text-slate-700">ชื่อในเกม<input name="display_name" id="editMemberDisplayName" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
+                    <label class="text-xs font-bold text-slate-700">ชื่อ-นามสกุล<input name="real_name" id="editMemberRealName" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
+                    <label class="text-xs font-bold text-slate-700">เพศ<input name="gender" id="editMemberGender" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
+                    <label class="text-xs font-bold text-slate-700">วันเกิด<input type="date" name="birth_date" id="editMemberBirthDate" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
+                    <label class="text-xs font-bold text-slate-700 md:col-span-2">จังหวัด<input name="province" id="editMemberProvince" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
+                </div>
+                <div class="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                    <button type="button" onclick="closeMemberModal()" class="px-4 py-2 rounded-lg bg-slate-100 text-slate-600 font-bold text-xs">ยกเลิก</button>
+                    <button type="submit" class="px-4 py-2 rounded-lg bg-brand-orange hover:bg-brand-glow text-white font-bold text-xs"><i class="fa-solid fa-floppy-disk"></i> บันทึกข้อมูล</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div id="teamModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div class="p-5 bg-slate-900 text-white flex items-center justify-between">
@@ -629,7 +864,8 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
             </div>
 
             <div class="p-6 overflow-y-auto space-y-6 flex-1 text-sm">
-                <form method="POST" class="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div class="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <form method="POST">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                     <input type="hidden" name="action" value="update_team">
                     <input type="hidden" name="team_id" id="modalTeamId">
@@ -645,38 +881,50 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                             บันทึกข้อมูลทีม
                         </button>
                     </div>
-                </form>
+                    </form>
+                    <form method="POST" class="mt-3" onsubmit="return confirm('ยืนยันลบทีมนี้? ระบบจะลบสมาชิกในทีมด้วย และจะปฏิเสธหากทีมมีประวัติสมัครแข่งขัน')">
+                        <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                        <input type="hidden" name="action" value="delete_team">
+                        <input type="hidden" name="team_id" id="modalDeleteTeamId">
+                        <button type="submit" class="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-lg transition-all">
+                            <i class="fa-solid fa-trash"></i> ลบทีม
+                        </button>
+                    </form>
+                </div>
 
-                <div>
+                <form method="POST" id="teamRolesForm">
+                    <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                    <input type="hidden" name="action" value="update_team_roles">
+                    <input type="hidden" name="team_id" id="modalRolesTeamId">
                     <h4 class="font-bold text-xs uppercase tracking-wider text-slate-500 mb-3 flex items-center justify-between">
                         <span>สมาชิกภายในทีม</span>
                     </h4>
                     <div id="modalMemberList" class="space-y-2">
-                        </div>
-                </div>
+                    </div>
+                    <div class="flex justify-end pt-4 mt-4 border-t border-slate-100">
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-all">
+                            <i class="fa-solid fa-floppy-disk"></i> บันทึกการเปลี่ยนแปลง
+                        </button>
+                    </div>
+                </form>
 
-                <form method="POST" class="bg-orange-50/50 p-4 rounded-xl border border-orange-100 space-y-3">
+                <form method="POST" id="addTeamMemberForm" class="bg-orange-50/50 p-4 rounded-xl border border-orange-100 space-y-3">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                     <input type="hidden" name="action" value="add_team_member">
                     <input type="hidden" name="team_id" id="modalAddMemberTeamId">
 
                     <h4 class="font-bold text-xs text-brand-orange">เพิ่มสมาชิกใหม่เข้าทีม</h4>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div class="md:col-span-2">
-                            <select name="player_id" required class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-brand-orange">
-                                <option value="">-- เลือกนักกีฬา --</option>
-                                <?php foreach ($allPlayers as $pl): ?>
-                                    <option value="<?= $pl['player_id'] ?>"><?= htmlspecialchars($pl['display_name']) ?> (@<?= htmlspecialchars($pl['username']) ?>)</option>
-                                <?php endforeach; ?>
-                            </select>
+                        <div class="md:col-span-2 relative">
+                            <input type="text" id="teamPlayerSearch" autocomplete="off" placeholder="พิมพ์ค้นหาชื่อนักกีฬา..." required class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-brand-orange">
+                            <input type="hidden" name="player_id" id="teamPlayerId">
+                            <div id="teamPlayerSuggestions" class="hidden absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg"></div>
                         </div>
                         <div>
                             <select name="role_in_team" class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-brand-orange">
                                 <option value="member">Member (ตัวจริง)</option>
                                 <option value="leader">Leader (กัปตัน)</option>
                                 <option value="substitute">Substitute (ตัวสำรอง)</option>
-                                <option value="coach">Coach (โค้ช)</option>
-                                <option value="manager">Manager (ผู้จัดการ)</option>
                             </select>
                         </div>
                     </div>
@@ -691,8 +939,36 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
     </div>
 
     <script>
-        const teamsData = <?= json_encode($teamsData, JSON_UNHEX_TAG | JSON_UNHEX_AMP | JSON_UNHEX_APOS | JSON_UNHEX_QUOT) ?>;
+        const teamsData = <?= json_encode($teamsData) ?>;
+        const membersData = <?= json_encode(array_column($members, null, 'user_id')) ?>;
+        const playersData = <?= json_encode($allPlayers) ?>;
         const csrfToken = <?= json_encode($csrfToken) ?>;
+
+        function openMemberModal(userId) {
+            const member = membersData[userId];
+            if (!member) return;
+            document.getElementById('editMemberUserId').value = member.user_id || '';
+            document.getElementById('editMemberUsername').value = member.username || '';
+            document.getElementById('editMemberEmail').value = member.email || '';
+            document.getElementById('editMemberDisplayName').value = member.display_name || '';
+            document.getElementById('editMemberRealName').value = member.real_name || '';
+            document.getElementById('editMemberGender').value = member.gender || '';
+            document.getElementById('editMemberBirthDate').value = member.birth_date || '';
+            document.getElementById('editMemberProvince').value = member.province || '';
+            document.getElementById('memberModal').classList.remove('hidden');
+        }
+
+        function closeMemberModal() {
+            document.getElementById('memberModal').classList.add('hidden');
+        }
+
+        function openMemberTeamModal(userId) {
+            const member = membersData[userId];
+            if (!member || !member.team_ids) return;
+
+            const teamId = String(member.team_ids).split(',').map(Number).find(id => teamsData[id]);
+            if (teamId) openTeamModal(teamId);
+        }
 
         function openTeamModal(teamId) {
             const team = teamsData[teamId];
@@ -700,7 +976,9 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
 
             document.getElementById('modalTeamTitle').innerText = 'จัดการทีม: ' + team.team_name;
             document.getElementById('modalTeamId').value = team.team_id;
+            document.getElementById('modalDeleteTeamId').value = team.team_id;
             document.getElementById('modalAddMemberTeamId').value = team.team_id;
+            document.getElementById('modalRolesTeamId').value = team.team_id;
             document.getElementById('modalTeamNameInput').value = team.team_name;
 
             const memberListDiv = document.getElementById('modalMemberList');
@@ -718,28 +996,14 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                             <span class="text-slate-400 ml-1">(@${escapeHtml(m.username)})</span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <form method="POST" class="inline-block">
-                                <input type="hidden" name="csrf_token" value="${csrfToken}">
-                                <input type="hidden" name="action" value="update_member_role">
-                                <input type="hidden" name="team_id" value="${m.team_id}">
-                                <input type="hidden" name="player_id" value="${m.player_id}">
-                                <select name="role_in_team" onchange="this.form.submit()" class="bg-white border border-slate-300 rounded px-2 py-1 text-[11px] text-slate-700 font-semibold focus:outline-none focus:border-brand-orange">
+                                <select name="member_roles[${m.player_id}]" class="bg-white border border-slate-300 rounded px-2 py-1 text-[11px] text-slate-700 font-semibold focus:outline-none focus:border-brand-orange">
                                     <option value="leader" ${m.role_in_team === 'leader' ? 'selected' : ''}>Leader (กัปตัน)</option>
                                     <option value="member" ${m.role_in_team === 'member' ? 'selected' : ''}>Member (ตัวจริง)</option>
                                     <option value="substitute" ${m.role_in_team === 'substitute' ? 'selected' : ''}>Substitute (ตัวสำรอง)</option>
-                                    <option value="coach" ${m.role_in_team === 'coach' ? 'selected' : ''}>Coach (โค้ช)</option>
-                                    <option value="manager" ${m.role_in_team === 'manager' ? 'selected' : ''}>Manager (ผู้จัดการ)</option>
                                 </select>
-                            </form>
-                            <form method="POST" class="inline-block" onsubmit="return confirm('ยืนยันลบสมาชิกคนนี้ออกจากทีม?')">
-                                <input type="hidden" name="csrf_token" value="${csrfToken}">
-                                <input type="hidden" name="action" value="remove_team_member">
-                                <input type="hidden" name="team_id" value="${m.team_id}">
-                                <input type="hidden" name="player_id" value="${m.player_id}">
-                                <button type="submit" class="p-1.5 text-rose-500 hover:bg-rose-50 rounded transition-colors" title="ลบออกจากทีม">
+                                <button type="button" onclick="removeTeamMember(${m.team_id}, ${m.player_id})" class="p-1.5 text-rose-500 hover:bg-rose-50 rounded transition-colors" title="ลบออกจากทีม">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
-                            </form>
                         </div>
                     `;
                     memberListDiv.appendChild(item);
@@ -753,9 +1017,68 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
             document.getElementById('teamModal').classList.add('hidden');
         }
 
+        function removeTeamMember(teamId, playerId) {
+            if (!confirm('ยืนยันลบสมาชิกคนนี้ออกจากทีม?')) return;
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.innerHTML = `<input type="hidden" name="csrf_token" value="${csrfToken}">
+                <input type="hidden" name="action" value="remove_team_member">
+                <input type="hidden" name="team_id" value="${teamId}">
+                <input type="hidden" name="player_id" value="${playerId}">`;
+            document.body.appendChild(form);
+            form.submit();
+        }
+
         function escapeHtml(str) {
             return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
+
+        (function () {
+            const search = document.getElementById('teamPlayerSearch');
+            const hiddenId = document.getElementById('teamPlayerId');
+            const form = document.getElementById('addTeamMemberForm');
+            const suggestions = document.getElementById('teamPlayerSuggestions');
+            if (!search || !hiddenId || !form || !suggestions) return;
+            search.addEventListener('input', function () {
+                const value = search.value.trim().toLowerCase();
+                hiddenId.value = '';
+                suggestions.innerHTML = '';
+                if (!value) {
+                    suggestions.classList.add('hidden');
+                    return;
+                }
+                const matches = playersData.filter(item =>
+                    String(item.display_name || '').toLowerCase().includes(value) ||
+                    String(item.username || '').toLowerCase().includes(value)
+                ).slice(0, 8);
+                matches.forEach(player => {
+                    const option = document.createElement('button');
+                    option.type = 'button';
+                    option.className = 'block w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-orange-50 hover:text-brand-orange';
+                    option.innerHTML = `<strong>${escapeHtml(player.display_name)}</strong> <span class="text-slate-400">(@${escapeHtml(player.username)})</span>`;
+                    option.addEventListener('click', function () {
+                        search.value = `${player.display_name} (@${player.username})`;
+                        hiddenId.value = player.player_id;
+                        suggestions.classList.add('hidden');
+                    });
+                    suggestions.appendChild(option);
+                });
+                suggestions.classList.toggle('hidden', matches.length === 0);
+            });
+            search.addEventListener('focus', function () {
+                if (search.value.trim()) search.dispatchEvent(new Event('input'));
+            });
+            document.addEventListener('click', function (event) {
+                if (!search.contains(event.target) && !suggestions.contains(event.target)) suggestions.classList.add('hidden');
+            });
+            form.addEventListener('submit', function (event) {
+                if (!hiddenId.value) {
+                    event.preventDefault();
+                    alert('กรุณาพิมพ์และเลือกนักกีฬาจากรายการค้นหา');
+                    search.focus();
+                }
+            });
+        })();
 
         (function () {
             const input = document.getElementById('memberSearchInput');
