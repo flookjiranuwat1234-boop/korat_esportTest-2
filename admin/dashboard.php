@@ -1,0 +1,750 @@
+<?php
+// admin/dashboard.php
+require_once '../config/db.php';
+require_once '../includes/auth.php';
+requireRole('admin');
+
+// ดึงข้อมูล User ปัจจุบันที่ Login อยู่
+$currentUser = [
+    'username' => $_SESSION['username'] ?? null,
+    'role' => $_SESSION['role'] ?? null,
+];
+
+// ================= แยกประเภทข้อมูล "นักกีฬา" ให้ตรงกับความเป็นจริง =================
+$importedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn();
+$claimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NOT NULL")->fetchColumn();
+$unclaimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NULL")->fetchColumn();
+
+// 3) เกณฑ์ "นักกีฬาตัวจริง": มีบัญชีผู้ใช้ + มีประวัติการเช็คอินถาวรในระบบ (ข้อมูลไม่หายแม้ลบทัวร์นาเมนต์)
+$confirmedAthleteCount = $pdo->query("
+    SELECT COUNT(DISTINCT p.player_id)
+    FROM players p
+    JOIN player_checkin_history ch ON ch.player_id = p.player_id
+    WHERE p.user_id IS NOT NULL
+")->fetchColumn();
+
+// 4) บัญชีผู้ใช้ทั้งหมด (ไม่นับ admin)
+$memberCount = $pdo->query("SELECT COUNT(*) FROM users WHERE role != 'admin'")->fetchColumn();
+
+// 5) มีบัญชี + มีโปรไฟล์นักกีฬาแล้ว แต่ยังไม่เคยเช็คอินเข้าแข่งขัน
+$profileOnlyNoTournamentCount = $pdo->query("
+    SELECT COUNT(DISTINCT u.user_id)
+    FROM users u
+    JOIN players p ON p.user_id = u.user_id
+    WHERE u.role != 'admin'
+      AND NOT EXISTS (
+          SELECT 1 FROM player_checkin_history ch
+          WHERE ch.player_id = p.player_id
+      )
+")->fetchColumn();
+
+// 6) บัญชีสมาชิกที่ยังไม่เคยเช็คอินเข้าแข่งขันเลย (ตรงกับหน้าจัดการสมาชิก)
+$membersNoTournamentCount = $pdo->query("
+    SELECT COUNT(*) FROM users u
+    WHERE u.role != 'admin'
+      AND NOT EXISTS (
+          SELECT 1 FROM players p 
+          JOIN player_checkin_history ch ON p.player_id = ch.player_id
+          WHERE p.user_id = u.user_id
+      )
+")->fetchColumn();
+
+// คำนวณเปอร์เซ็นต์สำหรับ Progress Bars
+$memberPieTotal = max(1, $memberCount);
+$pctAthlete = round(($confirmedAthleteCount / $memberPieTotal) * 100);
+$pctProfileOnly = round(($profileOnlyNoTournamentCount / $memberPieTotal) * 100);
+$pctPending = max(0, 100 - $pctAthlete - $pctProfileOnly);
+
+// สถิติภาพรวมอื่นๆ
+$teamCount = $pdo->query("
+    SELECT COUNT(*) FROM teams t
+    JOIN players p ON p.player_id = t.captain_player_id
+    WHERE p.user_id IS NOT NULL
+")->fetchColumn();
+$tournamentCount = $pdo->query("SELECT COUNT(*) FROM tournaments")->fetchColumn();
+$pendingMatches = $pdo->query("
+    SELECT COUNT(*) FROM matches
+    WHERE status = 'scheduled' AND team1_id IS NOT NULL AND team2_id IS NOT NULL
+")->fetchColumn();
+
+// ================= ดูทัวร์นาเมนต์แยกเป็นรายปี =================
+$availableYears = $pdo->query("
+    SELECT DISTINCT YEAR(created_at) AS y FROM tournaments ORDER BY y DESC
+")->fetchAll(PDO::FETCH_COLUMN);
+if (empty($availableYears)) {
+    $availableYears = [date('Y')];
+}
+
+$selectedYear = (int) ($_GET['year'] ?? date('Y'));
+if (!in_array($selectedYear, $availableYears)) {
+    $selectedYear = $availableYears[0];
+}
+
+$tournamentCountYear = $pdo->prepare("SELECT COUNT(*) FROM tournaments WHERE YEAR(created_at) = :y");
+$tournamentCountYear->execute(['y' => $selectedYear]);
+$tournamentCountYear = $tournamentCountYear->fetchColumn();
+
+$ongoingCountYear = $pdo->prepare("SELECT COUNT(*) FROM tournaments WHERE YEAR(created_at) = :y AND status = 'ongoing'");
+$ongoingCountYear->execute(['y' => $selectedYear]);
+$ongoingCountYear = $ongoingCountYear->fetchColumn();
+
+$tournamentsByYear = $pdo->prepare("
+    SELECT t.tournament_id, t.name, t.status, t.created_at, g.name AS game_name,
+        (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.tournament_id AND status = 'approved') AS team_count
+    FROM tournaments t
+    JOIN games g ON g.game_id = t.game_id
+    WHERE YEAR(t.created_at) = :y
+    ORDER BY t.created_at DESC
+");
+$tournamentsByYear->execute(['y' => $selectedYear]);
+$tournamentsByYear = $tournamentsByYear->fetchAll();
+
+$pendingRegs = $pdo->query("
+    SELECT tr.tournament_registration_id AS reg_id, t.name AS team_name, tour.tournament_id AS tournament_id, tour.name AS tournament_name, tr.registered_at
+    FROM tournament_registrations tr
+    JOIN teams t ON t.team_id = tr.team_id
+    JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
+    WHERE tr.status = 'pending'
+    ORDER BY tr.registered_at
+    LIMIT 10
+")->fetchAll();
+
+$readyForPlayoff = $pdo->query("
+    SELECT t.tournament_id, t.name,
+        (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id AND group_id IS NOT NULL AND status = 'scheduled') AS pending_group_matches,
+        (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id AND group_id IS NULL) AS playoff_match_count
+    FROM tournaments t
+    WHERE t.format = 'group_playoff' AND t.status = 'ongoing'
+    HAVING pending_group_matches = 0 AND playoff_match_count = 0
+")->fetchAll();
+
+$recentMatches = $pdo->query("
+    SELECT m.completed_at, m.team1_score, m.team2_score, m.status,
+        t1.name AS team1_name, t2.name AS team2_name, tour.name AS tournament_name
+    FROM matches m
+    JOIN tournaments tour ON tour.tournament_id = m.tournament_id
+    LEFT JOIN teams t1 ON t1.team_id = m.team1_id
+    LEFT JOIN teams t2 ON t2.team_id = m.team2_id
+    WHERE m.status IN ('completed', 'walkover')
+    ORDER BY m.completed_at DESC
+    LIMIT 8
+")->fetchAll();
+
+$openTournaments = $pdo->query("
+    SELECT t.tournament_id, t.name, g.name AS game_name,
+        (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.tournament_id AND status = 'approved') AS team_count
+    FROM tournaments t
+    JOIN games g ON g.game_id = t.game_id
+    WHERE t.status = 'registration_open'
+    ORDER BY t.created_at DESC
+")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="th" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Korat Esport</title>
+    <!-- Google Fonts & FontAwesome -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            orange: '#FF5500',
+                            glow: '#FF6600',
+                            lightbg: '#F4F6F9',
+                            card: '#FFFFFF',
+                            sidebar: '#0F172A',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Kanit', 'sans-serif'],
+                        display: ['Orbitron', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { display: none; }
+        html, body {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+            background-color: #F4F6F9;
+        }
+
+        .stat-card-light {
+            background: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+            transition: all 0.25s ease;
+        }
+        .stat-card-light:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 30px rgba(255, 85, 0, 0.12);
+            border-color: #FF5500;
+        }
+        .nav-item { transition: all 0.2s ease; }
+        .nav-item:hover, .nav-item.active {
+            background: rgba(255, 85, 0, 0.12);
+            color: #FF5500;
+            border-left: 4px solid #FF5500;
+        }
+        .progress-bar-fill {
+            width: 0%;
+            transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+    </style>
+</head>
+<body class="text-slate-800 font-sans min-h-screen flex antialiased">
+
+    <!-- ================= 1. SIDEBAR ด้านข้าง ================= -->
+    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
+        <div class="p-6 border-b border-slate-800 flex items-center gap-3">
+            <img src="../assets/img/logo.png" alt="Korat Esport" class="h-10 w-auto filter drop-shadow" onError="this.src='https://placehold.co/80x80/0F172A/FF5500?text=KE';">
+            <div>
+                <h1 class="font-display font-black text-lg text-white tracking-wider">KORAT <span class="text-brand-orange">ESPORT</span></h1>
+                <p class="text-[10px] tracking-widest text-slate-400 uppercase font-semibold">Admin Command Center</p>
+            </div>
+        </div>
+
+        <nav class="flex-1 overflow-y-auto py-4 px-2 space-y-1 text-sm font-medium">
+            <a href="dashboard.php" class="nav-item active flex items-center gap-3 px-4 py-3 rounded-r-xl text-white">
+                <i class="fa-solid fa-chart-pie w-5 text-center text-brand-orange"></i>
+                <span>หน้าหลัก (Dashboard)</span>
+            </a>
+            <a href="manage-tournament.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-trophy w-5 text-center"></i>
+                <span>จัดการทัวร์นาเมนต์</span>
+            </a>
+            <a href="manage-teams.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-people-group w-5 text-center"></i>
+                <span>จัดการทีมสมัคร</span>
+            </a>
+            <a href="manage-members.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-users-gear w-5 text-center"></i>
+                <span>จัดการสมาชิก</span>
+            </a>
+            <a href="manage-news.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-newspaper w-5 text-center"></i>
+                <span>จัดการข่าวสาร</span>
+            </a>
+            <a href="manage-gallery.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-images w-5 text-center"></i>
+                <span>จัดการแกลเลอรี่</span>
+            </a>
+            <a href="recommended-lodging.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-hotel w-5 text-center"></i>
+                <span>ที่พักแนะนำ</span>
+            </a>
+            <a href="record-match.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-pen-to-square w-5 text-center"></i>
+                <span>บันทึกผลแมตช์</span>
+            </a>
+            <a href="checkin-teams.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
+                <i class="fa-solid fa-user-check w-5 text-center"></i>
+                <span>เช็คอินทีม</span>
+            </a>
+        </nav>
+
+        <div class="p-4 border-t border-slate-800 bg-slate-950/50">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <div class="w-9 h-9 rounded-full bg-brand-orange text-white flex items-center justify-center font-bold text-sm shrink-0">
+                        <i class="fa-solid fa-user-shield"></i>
+                    </div>
+                    <div class="truncate">
+                        <div class="text-sm font-bold text-white truncate">
+                            <?= htmlspecialchars($currentUser['username'] ?? $currentUser['name'] ?? 'Admin User') ?>
+                        </div>
+                        <span class="inline-block text-[10px] font-semibold text-brand-orange bg-brand-orange/10 px-2 py-0.2 rounded uppercase">
+                            <?= htmlspecialchars($currentUser['role'] ?? 'Administrator') ?>
+                        </span>
+                    </div>
+                </div>
+                <a href="../auth/logout.php" title="ออกจากระบบ" class="text-slate-400 hover:text-rose-400 transition-colors p-2 text-base">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </a>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ================= 2. MAIN CONTENT AREA ================= -->
+    <div class="flex-1 ml-64 min-h-screen flex flex-col">
+
+        <!-- Top Header Panel -->
+        <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+            <div>
+                <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
+                    <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
+                    ภาพรวมระบบ <span class="text-brand-orange">(ADMIN DASHBOARD)</span>
+                </h1>
+                <p class="text-xs text-slate-500 mt-0.5">ศูนย์ควบคุมและสรุปสถิติระบบ Korat Esport</p>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <form method="GET" class="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg">
+                    <i class="fa-solid fa-calendar-days text-brand-orange text-xs"></i>
+                    <select name="year" onchange="this.form.submit()"
+                            class="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer">
+                        <?php foreach ($availableYears as $y): ?>
+                            <option value="<?php echo $y; ?>" <?php echo $y == $selectedYear ? 'selected' : ''; ?>>
+                                ปี <?php echo $y; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </form>
+
+                <a href="../pages/index.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">
+                    <i class="fa-solid fa-globe"></i> หน้าหลักเว็บไซต์
+                </a>
+            </div>
+        </header>
+
+        <!-- Main Body Content -->
+        <main class="p-8 space-y-8 flex-1">
+
+            <!-- STAT CARDS -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                
+                <!-- Card 1: ทีมทั้งหมด -->
+                <a href="manage-teams.php" class="stat-card-light p-5 rounded-2xl relative block group">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">ทีมทั้งหมด</span>
+                        <div class="w-9 h-9 rounded-xl bg-orange-50 text-brand-orange flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-people-group"></i>
+                        </div>
+                    </div>
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $teamCount; ?>">0</h3>
+                            <p class="text-[11px] text-slate-400 mt-1">ทีมที่สมัครผ่านเว็บจริง (ไม่รวมทีมนำเข้า)</p>
+                        </div>
+                        <span class="text-xs font-bold text-brand-orange opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
+                            จัดการ <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <!-- Card 2: นักกีฬาตัวจริง -->
+                <a href="manage-members.php?profile=confirmed" class="stat-card-light p-5 rounded-2xl relative block group">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">นักกีฬาตัวจริง</span>
+                        <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-gamepad"></i>
+                        </div>
+                    </div>
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $confirmedAthleteCount; ?>">0</h3>
+                            <p class="text-[11px] text-slate-400 mt-1">มีบัญชี + เคยเช็คอินเข้าแข่งขันแล้ว</p>
+                        </div>
+                        <span class="text-xs font-bold text-amber-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
+                            ดูรายชื่อ <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <!-- Card 3: สมาชิกยังไม่เคยแข่ง -->
+                <a href="manage-members.php" class="stat-card-light p-5 rounded-2xl relative block group">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">สมาชิกยังไม่เคยแข่ง</span>
+                        <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-users"></i>
+                        </div>
+                    </div>
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $membersNoTournamentCount; ?>">0</h3>
+                            <p class="text-[11px] text-slate-400 mt-1">บัญชีสมัครสมาชิกที่ยังไม่เคยเช็คอินแข่ง</p>
+                        </div>
+                        <span class="text-xs font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
+                            ดูสมาชิก <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <!-- Card 4: ทัวร์นาเมนต์ -->
+                <a href="manage-tournament.php" class="stat-card-light p-5 rounded-2xl relative block group">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">ทัวร์นาเมนต์ปี <?php echo $selectedYear; ?></span>
+                        <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-trophy"></i>
+                        </div>
+                    </div>
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <h3 class="text-3xl font-black font-display text-slate-900">
+                                <span class="text-brand-orange"><?php echo $ongoingCountYear; ?></span> <span class="text-sm font-normal text-slate-400">/ <?php echo $tournamentCountYear; ?></span>
+                            </h3>
+                            <p class="text-[11px] text-slate-400 mt-1">กำลังแข่ง / ทั้งหมดในปีนี้</p>
+                        </div>
+                        <span class="text-xs font-bold text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
+                            จัดการ <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <!-- Card 5: แมตช์รอผล -->
+                <a href="record-match.php" class="stat-card-light p-5 rounded-2xl relative border-orange-200 block group">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">แมตช์รอผล</span>
+                        <div class="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-clock"></i>
+                        </div>
+                    </div>
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <h3 class="text-3xl font-black font-display text-rose-600" data-countup="<?php echo $pendingMatches; ?>">0</h3>
+                            <p class="text-[11px] text-slate-400 mt-1">รอบันทึกผลการแข่ง</p>
+                        </div>
+                        <span class="text-xs font-bold text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
+                            บันทึกผล <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <!-- Card 6: สัดส่วนสมาชิกในระบบ -->
+                <div class="stat-card-light p-5 rounded-2xl relative overflow-hidden flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">สัดส่วนสมาชิกในระบบ (รวม <?php echo $memberCount; ?> คน)</span>
+                            <div class="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center text-lg">
+                                <i class="fa-solid fa-chart-bar"></i>
+                            </div>
+                        </div>
+
+                        <!-- Progress Bars สไตล์ Esports -->
+                        <div class="space-y-2.5 pt-1">
+                            <div>
+                                <div class="flex justify-between text-[11px] font-bold mb-1">
+                                    <span class="text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> นักกีฬาตัวจริง</span>
+                                    <span class="text-slate-900"><?php echo $pctAthlete; ?>%</span>
+                                </div>
+                                <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                    <div class="bg-emerald-500 h-full rounded-full progress-bar-fill" data-width="<?php echo $pctAthlete; ?>"></div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="flex justify-between text-[11px] font-bold mb-1">
+                                    <span class="text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-blue-500"></span> มีโปรไฟล์ ยังไม่แข่ง</span>
+                                    <span class="text-slate-900"><?php echo $pctProfileOnly; ?>%</span>
+                                </div>
+                                <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                    <div class="bg-blue-500 h-full rounded-full progress-bar-fill" data-width="<?php echo $pctProfileOnly; ?>"></div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="flex justify-between text-[11px] font-bold mb-1">
+                                    <span class="text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-500"></span> รอสร้างโปรไฟล์</span>
+                                    <span class="text-slate-900"><?php echo $pctPending; ?>%</span>
+                                </div>
+                                <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                    <div class="bg-rose-500 h-full rounded-full progress-bar-fill" data-width="<?php echo $pctPending; ?>"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- ทัวร์นาเมนต์แยกรายปี -->
+            <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
+                        <i class="fa-solid fa-calendar-days text-brand-orange"></i>
+                        ทัวร์นาเมนต์ทั้งหมดของปี <?php echo $selectedYear; ?>
+                    </h2>
+                    <a href="manage-tournament.php" class="text-xs text-brand-orange hover:underline font-semibold flex items-center gap-1">
+                        <i class="fa-solid fa-plus"></i> สร้างใหม่
+                    </a>
+                </div>
+
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <?php if (count($tournamentsByYear) == 0): ?>
+                        <div class="p-8 text-center text-slate-400 text-sm">
+                            <i class="fa-solid fa-calendar-xmark text-3xl mb-2 block opacity-40"></i>
+                            ไม่มีทัวร์นาเมนต์ในปี <?php echo $selectedYear; ?>
+                        </div>
+                    <?php else: ?>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm text-slate-600">
+                                <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
+                                    <tr>
+                                        <th class="p-4">ชื่อ</th>
+                                        <th class="p-4">เกม</th>
+                                        <th class="p-4 text-center">สถานะ</th>
+                                        <th class="p-4 text-center">ทีมอนุมัติแล้ว</th>
+                                        <th class="p-4">วันที่สร้าง</th>
+                                        <th class="p-4 text-right">จัดการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    <?php foreach ($tournamentsByYear as $t): ?>
+                                    <tr class="hover:bg-slate-50/80 transition-colors">
+                                        <td class="p-4 font-bold text-slate-900"><?php echo htmlspecialchars($t['name']); ?></td>
+                                        <td class="p-4 text-xs text-slate-500">
+                                            <span class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <?php
+                                                $statusLabels = [
+                                                    'registration_open' => ['เปิดรับสมัคร', 'bg-emerald-100 text-emerald-700 border-emerald-200'],
+                                                    'ongoing' => ['กำลังแข่ง', 'bg-rose-100 text-rose-700 border-rose-200'],
+                                                    'completed' => ['จบแล้ว', 'bg-slate-100 text-slate-600 border-slate-200'],
+                                                ];
+                                                $label = $statusLabels[$t['status']] ?? [$t['status'], 'bg-slate-100 text-slate-600 border-slate-200'];
+                                            ?>
+                                            <span class="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase border <?php echo $label[1]; ?>"><?php echo htmlspecialchars($label[0]); ?></span>
+                                        </td>
+                                        <td class="p-4 text-center font-bold font-display text-brand-orange text-base"><?php echo $t['team_count']; ?></td>
+                                        <td class="p-4 text-xs text-slate-400"><?php echo htmlspecialchars($t['created_at']); ?></td>
+                                        <td class="p-4 text-right">
+                                            <a href="manage-tournament.php" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs text-slate-700 font-semibold transition-all">
+                                                <span>จัดการ</span>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <!-- TASKS -->
+            <?php if (count($pendingRegs) > 0 || count($readyForPlayoff) > 0): ?>
+                <div class="space-y-4">
+                    <h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
+                        <i class="fa-solid fa-list-check text-brand-orange"></i>
+                        งานที่ต้องดำเนินการ <span class="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-brand-orange font-sans"><?= count($pendingRegs) + count($readyForPlayoff) ?> งาน</span>
+                    </h2>
+
+                    <?php if (count($readyForPlayoff) > 0): ?>
+                        <div class="space-y-2">
+                            <?php foreach ($readyForPlayoff as $t): ?>
+                                <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-emerald-800 shadow-sm">
+                                    <div class="flex items-center gap-3">
+                                        <i class="fa-solid fa-circle-check text-xl shrink-0 text-emerald-600"></i>
+                                        <div>
+                                            <strong class="text-slate-900"><?php echo htmlspecialchars($t['name']); ?></strong> 
+                                            <span class="text-sm">แข่งรอบกลุ่มจบครบแล้ว พร้อมสร้างรอบ Playoff</span>
+                                        </div>
+                                    </div>
+                                    <a href="manage-tournament.php" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider transition-all shrink-0 shadow-sm">
+                                        <span>ไปสร้างรอบ Playoff</span>
+                                        <i class="fa-solid fa-arrow-right"></i>
+                                    </a>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if (count($pendingRegs) > 0): ?>
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                                <h3 class="text-xs font-bold uppercase tracking-wider text-amber-600 flex items-center gap-2">
+                                    <i class="fa-solid fa-user-clock"></i>
+                                    คำขอสมัครทีมที่รออนุมัติ (<?php echo count($pendingRegs); ?>)
+                                </h3>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left text-sm text-slate-600">
+                                    <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
+                                        <tr>
+                                            <th class="p-4">ทีม</th>
+                                            <th class="p-4">ทัวร์นาเมนต์</th>
+                                            <th class="p-4">วันที่สมัคร</th>
+                                            <th class="p-4 text-right">จัดการ</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <?php foreach ($pendingRegs as $p): ?>
+                                        <tr class="hover:bg-slate-50/80 transition-colors">
+                                            <td class="p-4 font-bold text-slate-900">
+                                                <i class="fa-solid fa-shield-halved text-brand-orange mr-2"></i>
+                                                <?php echo htmlspecialchars($p['team_name']); ?>
+                                            </td>
+                                            <td class="p-4 text-slate-600"><?php echo htmlspecialchars($p['tournament_name']); ?></td>
+                                            <td class="p-4 text-xs text-slate-400"><?php echo htmlspecialchars($p['registered_at']); ?></td>
+                                            <td class="p-4 text-right">
+                                                <a href="manage-teams.php?tournament_id=<?php echo $p['tournament_id']; ?>" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-50 hover:bg-brand-orange border border-orange-200 text-brand-orange hover:text-white text-xs font-semibold transition-all">
+                                                    <span>ไปอนุมัติ</span>
+                                                    <i class="fa-solid fa-chevron-right text-[10px]"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <!-- OPEN TOURNAMENTS & RECENT MATCHES GRID -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                
+                <!-- Open Tournaments -->
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
+                            <i class="fa-solid fa-door-open text-brand-orange"></i>
+                            ทัวร์นาเมนต์ที่เปิดรับสมัคร
+                        </h2>
+                        <a href="manage-tournament.php" class="text-xs text-brand-orange hover:underline font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-plus"></i> สร้างใหม่
+                        </a>
+                    </div>
+
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <?php if (count($openTournaments) == 0): ?>
+                            <div class="p-8 text-center text-slate-400 text-sm">
+                                <i class="fa-solid fa-calendar-xmark text-3xl mb-2 block opacity-40"></i>
+                                ไม่มีทัวร์นาเมนต์ที่เปิดรับสมัครอยู่ตอนนี้
+                            </div>
+                        <?php else: ?>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left text-sm text-slate-600">
+                                    <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
+                                        <tr>
+                                            <th class="p-4">ชื่อ</th>
+                                            <th class="p-4">เกม</th>
+                                            <th class="p-4 text-center">ทีมอนุมัติแล้ว</th>
+                                            <th class="p-4 text-right">จัดการ</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <?php foreach ($openTournaments as $t): ?>
+                                        <tr class="hover:bg-slate-50/80 transition-colors">
+                                            <td class="p-4 font-bold text-slate-900"><?php echo htmlspecialchars($t['name']); ?></td>
+                                            <td class="p-4 text-xs text-slate-500">
+                                                <span class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
+                                            </td>
+                                            <td class="p-4 text-center font-bold font-display text-brand-orange text-base"><?php echo $t['team_count']; ?></td>
+                                            <td class="p-4 text-right">
+                                                <a href="manage-teams.php?tournament_id=<?php echo $t['tournament_id']; ?>" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs text-slate-700 font-semibold transition-all">
+                                                    <span>จัดการทีม</span>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <!-- Recent Matches -->
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
+                            <i class="fa-solid fa-clock-rotate-left text-brand-orange"></i>
+                            แมตช์เพิ่งบันทึกผลล่าสุด
+                        </h2>
+                    </div>
+
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <?php if (count($recentMatches) == 0): ?>
+                            <div class="p-8 text-center text-slate-400 text-sm">
+                                <i class="fa-solid fa-gamepad text-3xl mb-2 block opacity-40"></i>
+                                ยังไม่มีแมตช์ที่บันทึกผลแล้ว
+                            </div>
+                        <?php else: ?>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left text-sm text-slate-600">
+                                    <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
+                                        <tr>
+                                            <th class="p-4">รายการ</th>
+                                            <th class="p-4">คู่แข่งขัน</th>
+                                            <th class="p-4 text-center">ผลการแข่ง</th>
+                                            <th class="p-4 text-right">เวลา</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <?php foreach ($recentMatches as $m): ?>
+                                        <tr class="hover:bg-slate-50/80 transition-colors">
+                                            <td class="p-4 text-xs text-slate-400 max-w-[120px] truncate"><?php echo htmlspecialchars($m['tournament_name']); ?></td>
+                                            <td class="p-4 font-bold text-xs">
+                                                <span class="text-brand-orange"><?php echo htmlspecialchars($m['team1_name'] ?? '(bye)'); ?></span>
+                                                <span class="text-slate-400 font-normal mx-1">vs</span>
+                                                <span class="text-blue-600"><?php echo htmlspecialchars($m['team2_name'] ?? '(bye)'); ?></span>
+                                            </td>
+                                            <td class="p-4 text-center">
+                                                <?php if ($m['status'] == 'walkover'): ?>
+                                                    <span class="px-2 py-0.5 rounded bg-rose-100 text-rose-700 text-[10px] font-bold uppercase">Walkover</span>
+                                                <?php else: ?>
+                                                    <span class="font-display font-bold text-slate-900 px-2 py-0.5 rounded bg-slate-100 border border-slate-200">
+                                                        <?php echo $m['team1_score']; ?> - <?php echo $m['team2_score']; ?>
+                                                    </span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="p-4 text-right text-[11px] text-slate-400 whitespace-nowrap">
+                                                <?php echo htmlspecialchars($m['completed_at']); ?>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+            </div>
+
+        </main>
+    </div>
+
+    <!-- CountUp Animation Script & Progress Bars Runner -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // CountUp สำหรับตัวเลขสถิติ
+            const counters = document.querySelectorAll('[data-countup]');
+            counters.forEach(counter => {
+                const target = +counter.getAttribute('data-countup');
+                if (isNaN(target)) return;
+                
+                let count = 0;
+                const speed = 25;
+                const increment = Math.max(1, Math.ceil(target / speed));
+
+                const updateCount = () => {
+                    count += increment;
+                    if (count < target) {
+                        counter.innerText = count;
+                        setTimeout(updateCount, 20);
+                    } else {
+                        counter.innerText = target;
+                    }
+                };
+                updateCount();
+            });
+
+            // Animate Progress Bars สไตล์ Esports
+            setTimeout(() => {
+                const bars = document.querySelectorAll('.progress-bar-fill');
+                bars.forEach(bar => {
+                    const targetWidth = bar.getAttribute('data-width');
+                    bar.style.width = targetWidth + '%';
+                });
+            }, 300);
+        });
+    </script>
+</body>
+</html>
