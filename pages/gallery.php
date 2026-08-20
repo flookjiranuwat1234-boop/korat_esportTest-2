@@ -19,7 +19,7 @@ if ($selectedAlbumId > 0) {
         SELECT g.*, COALESCE(a.title, CONCAT('อัลบั้ม #', g.album_id)) as display_album_name 
         FROM gallery g
         LEFT JOIN gallery_albums a ON a.album_id = g.album_id
-        WHERE g.album_id = :aid 
+        WHERE g.media_type = 'activity' AND g.is_active = 1 AND g.album_id = :aid 
         ORDER BY g.created_at DESC
     ");
     $stmt->execute(['aid' => $selectedAlbumId]);
@@ -31,15 +31,16 @@ if ($selectedAlbumId > 0) {
         SELECT g.*, COALESCE(a.title, CONCAT('อัลบั้ม #', g.album_id)) as display_album_name 
         FROM gallery g
         LEFT JOIN gallery_albums a ON a.album_id = g.album_id
+        WHERE g.media_type = 'activity' AND g.is_active = 1
         ORDER BY g.created_at DESC
     ")->fetchAll();
 } else {
     // โหมดดูรายการอัลบั้ม (ดึงข้อมูลจากตาราง gallery_albums โดยตรง มั่นใจได้ว่าชื่อตรงกับหน้าแอดมิน)
     $albums = $pdo->query("
-        SELECT a.album_id, 
+        SELECT a.album_id,
                a.title as album_name,
-               (SELECT image_path FROM gallery g2 WHERE g2.album_id = a.album_id ORDER BY g2.created_at DESC LIMIT 1) as cover_image,
-               (SELECT COUNT(*) FROM gallery g3 WHERE g3.album_id = a.album_id) as image_count
+               (SELECT image_path FROM gallery g2 WHERE g2.album_id = a.album_id AND g2.media_type = 'activity' AND g2.is_active = 1 ORDER BY g2.created_at DESC LIMIT 1) as cover_image,
+               (SELECT COUNT(*) FROM gallery g3 WHERE g3.album_id = a.album_id AND g3.media_type = 'activity' AND g3.is_active = 1) as image_count
         FROM gallery_albums a
         ORDER BY a.created_at DESC
     ")->fetchAll();

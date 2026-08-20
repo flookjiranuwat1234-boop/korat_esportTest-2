@@ -50,6 +50,14 @@ $totalTeams = $pdo->query("
 $totalPlayers = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NOT NULL")->fetchColumn();
 $totalTournaments = $pdo->query("SELECT COUNT(*) FROM tournaments")->fetchColumn();
 $totalMatchesPlayed = $pdo->query("SELECT COUNT(*) FROM matches WHERE status IN ('completed', 'walkover')")->fetchColumn();
+
+$banners = [];
+try {
+    $banners = $pdo->query("SELECT gallery_id, title, caption, image_path FROM gallery
+        WHERE media_type = 'banner' AND is_active = 1 ORDER BY gallery_id DESC LIMIT 5")->fetchAll();
+} catch (Throwable $e) {
+    // The gallery media columns are added by the admin gallery setup when needed.
+}
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
@@ -526,6 +534,27 @@ $totalMatchesPlayed = $pdo->query("SELECT COUNT(*) FROM matches WHERE status IN 
                 </div>
             </div>
         </section>
+
+        <?php if ($banners): ?>
+            <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full" data-aos="fade-up">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-bullhorn text-brand-orange"></i> ประชาสัมพันธ์</h2>
+                    <span class="text-[10px] text-slate-400">ข่าวสารล่าสุดจาก Korat Esport</span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <?php foreach ($banners as $banner): ?>
+                        <article class="relative overflow-hidden rounded-2xl border border-white/20 bg-black/30 shadow-xl aspect-[16/7]">
+                            <img src="../assets/<?php echo htmlspecialchars($banner['image_path']); ?>" alt="<?php echo htmlspecialchars($banner['title'] ?: 'แบนเนอร์ประชาสัมพันธ์'); ?>" class="absolute inset-0 w-full h-full object-cover">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+                            <div class="absolute inset-x-0 bottom-0 p-4 text-left">
+                                <h3 class="text-base font-bold text-white"><?php echo htmlspecialchars($banner['title'] ?: 'ประชาสัมพันธ์'); ?></h3>
+                                <?php if (!empty($banner['caption'])): ?><p class="text-xs text-slate-200 mt-1"><?php echo htmlspecialchars($banner['caption']); ?></p><?php endif; ?>
+                            </div>
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+            </section>
+        <?php endif; ?>
 
         <!-- Cyber HUD Badge Divider -->
         <div class="hud-divider">

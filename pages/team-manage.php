@@ -3,7 +3,9 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/upload.php';
+require_once '../includes/team_roles.php';
 requireLogin();
+ensureTeamMemberRolesTable($pdo);
 
 $teamId = (int) ($_GET['id'] ?? 0);
 $error = '';
@@ -62,20 +64,47 @@ if ($isCaptain && $_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '
         if ($check->fetch()) {
             $error = 'ผู้เล่นนี้อยู่ในทีมอยู่แล้ว';
         } else {
-            $add = $pdo->prepare("INSERT INTO team_members (team_id, player_id) VALUES (:tid, :pid)");
+            $add = $pdo->prepare("INSERT INTO team_members (team_id, player_id, member_roles, in_game_role, is_active, joined_at) VALUES (:tid, :pid, 'player', 'player', 1, NOW())");
             $add->execute(['tid' => $teamId, 'pid' => $newPlayerId]);
+            syncTeamMemberRoles($pdo, (int) $pdo->lastInsertId(), ['player']);
             $success = 'เพิ่มสมาชิกเรียบร้อยแล้ว';
         }
     }
 }
 
+// เปลี่ยนหลายบทบาทของสมาชิก (กัปตันจัดการได้เฉพาะทีมตัวเอง)
+if ($isCaptain && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_member_roles') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $memberId = (int) ($_POST['team_member_id'] ?? 0);
+        $roles = normalizeTeamRoles($_POST['member_roles'] ?? []);
+        $memberCheck = $pdo->prepare('SELECT team_member_id FROM team_members WHERE team_member_id = :id AND team_id = :tid AND is_active = 1');
+        $memberCheck->execute(['id' => $memberId, 'tid' => $teamId]);
+        if (!$memberCheck->fetchColumn()) {
+            $error = 'ไม่พบสมาชิกที่กำลังแก้ไขในทีมนี้';
+        } elseif (!$roles) {
+            $error = 'ต้องเลือกบทบาทอย่างน้อย 1 บทบาท';
+        } else {
+            syncTeamMemberRoles($pdo, $memberId, $roles);
+            $success = 'บันทึกบทบาทสมาชิกเรียบร้อยแล้ว';
+        }
+    }
+}
+
 // เอาสมาชิกออก (กัปตันเท่านั้น เอาตัวเองออกไม่ได้)
-if ($isCaptain && isset($_GET['remove_member'])) {
-    $memberId = (int) $_GET['remove_member'];
-    if ($memberId != $myPlayerId) {
-        $pdo->prepare("UPDATE team_members SET is_active = 0 WHERE team_id = :tid AND player_id = :pid")
-            ->execute(['tid' => $teamId, 'pid' => $memberId]);
-        $success = 'เอาสมาชิกออกจากทีมแล้ว';
+if ($isCaptain && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remove_member') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $memberId = (int) ($_POST['player_id'] ?? 0);
+        if ($memberId <= 0 || $memberId === (int) $myPlayerId) {
+            $error = 'ไม่สามารถนำกัปตันออกจากทีมได้';
+        } else {
+            $pdo->prepare("UPDATE team_members SET is_active = 0, left_at = NOW() WHERE team_id = :tid AND player_id = :pid")
+                ->execute(['tid' => $teamId, 'pid' => $memberId]);
+            $success = 'เอาสมาชิกออกจากทีมแล้ว';
+        }
     }
 }
 
@@ -93,12 +122,16 @@ if ($isCaptain && $q !== '') {
 }
 
 $members = $pdo->prepare("
-    SELECT p.player_id, p.display_name, tm.in_game_role
+    SELECT tm.team_member_id, p.player_id, p.display_name, tm.in_game_role
     FROM team_members tm JOIN players p ON p.player_id = tm.player_id
     WHERE tm.team_id = :tid AND tm.is_active = 1
 ");
 $members->execute(['tid' => $teamId]);
 $members = $members->fetchAll();
+foreach ($members as &$member) {
+    $member['role_codes'] = getTeamMemberRoles($pdo, (int) $member['team_member_id']);
+}
+unset($member);
 
 $csrfToken = generateCsrfToken();
 ?>
@@ -143,12 +176,26 @@ $csrfToken = generateCsrfToken();
                     <?php echo htmlspecialchars($m['display_name']); ?>
                     <?php if ($m['player_id'] == $team['captain_player_id']): ?> (กัปตัน)<?php endif; ?>
                 </td>
-                <td><?php echo htmlspecialchars($m['in_game_role'] ?? '-'); ?></td>
+                <td><?php echo htmlspecialchars(implode(', ', $m['role_codes'] ?: ['-'])); ?></td>
                 <?php if ($isCaptain): ?>
                 <td>
+                    <form method="POST" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                        <input type="hidden" name="action" value="update_member_roles">
+                        <input type="hidden" name="team_member_id" value="<?php echo (int) $m['team_member_id']; ?>">
+                        <?php foreach (allowedTeamRoles() as $role): ?>
+                            <?php $roleLabels = ['manager' => 'ผู้จัดการทีม', 'coach' => 'โค้ช', 'player' => 'นักกีฬาหลัก', 'substitute' => 'นักกีฬาสำรอง']; ?>
+                            <label><input type="checkbox" name="member_roles[]" value="<?php echo htmlspecialchars($role); ?>" <?php echo in_array($role, $m['role_codes'], true) ? 'checked' : ''; ?>> <?php echo htmlspecialchars($roleLabels[$role]); ?></label>
+                        <?php endforeach; ?>
+                        <button type="submit">บันทึกตำแหน่ง</button>
+                    </form>
                     <?php if ($m['player_id'] != $myPlayerId): ?>
-                        <a href="?id=<?php echo $teamId; ?>&remove_member=<?php echo $m['player_id']; ?>"
-                           onclick="return confirm('เอาสมาชิกคนนี้ออกจากทีม?')">เอาออก</a>
+                        <form method="POST" style="display:inline;" onsubmit="return confirm('เอาสมาชิกคนนี้ออกจากทีม?')">
+                            <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                            <input type="hidden" name="action" value="remove_member">
+                            <input type="hidden" name="player_id" value="<?php echo (int) $m['player_id']; ?>">
+                            <button type="submit">เอาออก</button>
+                        </form>
                     <?php endif; ?>
                 </td>
                 <?php endif; ?>

@@ -12,6 +12,7 @@ $currentUser = [
 
 $error = '';
 $success = '';
+$csrfToken = generateCsrfToken();
 
 // ================= AUTO SETUP: ตรวจสอบและสร้างตาราง/คอลัมน์ให้อัตโนมัติ =================
 try {
@@ -20,6 +21,7 @@ try {
             album_id INT AUTO_INCREMENT PRIMARY KEY,
             title VARCHAR(255) NOT NULL,
             description TEXT NULL,
+            album_type VARCHAR(20) NOT NULL DEFAULT 'activity',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
@@ -28,26 +30,60 @@ try {
     if (!$chkCol) {
         $pdo->exec("ALTER TABLE gallery ADD COLUMN album_id INT NULL AFTER gallery_id;");
     }
+    $albumTypeCheck = $pdo->query("SHOW COLUMNS FROM gallery_albums LIKE 'album_type'")->fetch();
+    if (!$albumTypeCheck) $pdo->exec("ALTER TABLE gallery_albums ADD COLUMN album_type VARCHAR(20) NOT NULL DEFAULT 'activity' AFTER description");
+    foreach ([
+        'media_type' => "ALTER TABLE gallery ADD COLUMN media_type VARCHAR(20) NOT NULL DEFAULT 'activity' AFTER album_id",
+        'title' => "ALTER TABLE gallery ADD COLUMN title VARCHAR(255) NULL AFTER media_type",
+        'is_active' => "ALTER TABLE gallery ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER caption",
+    ] as $column => $alterSql) {
+        $columnCheck = $pdo->query("SHOW COLUMNS FROM gallery LIKE '{$column}'")->fetch();
+        if (!$columnCheck) $pdo->exec($alterSql);
+    }
 } catch (Exception $e) {
     // ซ่อน Error การ Setup
 }
 
 // ================= 1. ประมวลผลสร้างอัลบั้ม + อัปโหลดรูปพร้อมกันในขั้นตอนเดียว =================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_gallery') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    }
     $albumOption = trim($_POST['album_option'] ?? '');
+    $bannerAlbumOption = trim($_POST['banner_album_option'] ?? '');
     $newAlbumName = trim($_POST['new_album_name'] ?? '');
     $newAlbumDesc = trim($_POST['new_album_desc'] ?? '');
+    $newBannerAlbumName = trim($_POST['new_banner_album_name'] ?? '');
+    $newBannerAlbumDesc = trim($_POST['new_banner_album_desc'] ?? '');
+    $mediaType = ($_POST['media_type'] ?? 'activity') === 'banner' ? 'banner' : 'activity';
+    $mediaTitle = trim($_POST['media_title'] ?? '');
     $caption = trim($_POST['caption'] ?? '');
     $adminUserId = (int) ($_SESSION['user_id'] ?? 0);
 
     $albumId = 0;
 
-    // 1.1 ตรวจสอบกรณีเลือกสร้างอัลบั้มใหม่
-    if ($albumOption === 'new') {
+    // แบนเนอร์ไม่ต้องผูกกับอัลบั้ม ส่วนรูปกิจกรรมยังใช้อัลบั้มเดิม
+    if ($error !== '') {
+        // Stop upload processing when the CSRF token is invalid.
+    } elseif ($mediaType === 'banner') {
+        if ($bannerAlbumOption === 'new') {
+            if ($newBannerAlbumName === '') {
+                $error = 'กรุณาระบุชื่ออัลบั้มแบนเนอร์';
+            } else {
+                $ins = $pdo->prepare("INSERT INTO gallery_albums (title, description, album_type) VALUES (:title, :desc, 'banner')");
+                $ins->execute(['title' => $newBannerAlbumName, 'desc' => $newBannerAlbumDesc]);
+                $albumId = (int) $pdo->lastInsertId();
+            }
+        } else {
+            $albumId = (int) $bannerAlbumOption;
+        }
+        if ($albumId <= 0) $error = 'กรุณาเลือกหรือสร้างอัลบั้มแบนเนอร์';
+        if ($mediaTitle === '') $error = 'กรุณาระบุหัวข้อแบนเนอร์ประชาสัมพันธ์';
+    } elseif ($albumOption === 'new') {
         if (empty($newAlbumName)) {
             $error = 'กรุณาระบุชื่ออัลบั้ม/โฟลเดอร์ใหม่';
         } else {
-            $ins = $pdo->prepare("INSERT INTO gallery_albums (title, description) VALUES (:title, :desc)");
+            $ins = $pdo->prepare("INSERT INTO gallery_albums (title, description, album_type) VALUES (:title, :desc, 'activity')");
             $ins->execute(['title' => $newAlbumName, 'desc' => $newAlbumDesc]);
             $albumId = (int) $pdo->lastInsertId();
         }
@@ -57,12 +93,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
     // 1.2 ดำเนินการอัปโหลดรูปภาพ
     if (empty($error)) {
-        if ($albumId <= 0) {
+        if ($mediaType === 'activity' && $albumId <= 0) {
             $error = 'กรุณาเลือกอัลบั้ม หรือสร้างอัลบั้มใหม่';
         } elseif (!isset($_FILES['photos']) || empty($_FILES['photos']['name'][0])) {
             $error = 'กรุณาเลือกรูปภาพอย่างน้อย 1 รูป';
         } else {
-            $uploadDir = "../assets/uploads/gallery/album_{$albumId}/";
+            $uploadDir = $mediaType === 'banner'
+                ? "../assets/uploads/banners/album_{$albumId}/"
+                : "../assets/uploads/gallery/album_{$albumId}/";
             if (!is_dir($uploadDir)) {
                 mkdir($uploadDir, 0777, true);
             }
@@ -79,14 +117,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                         $targetFile = $uploadDir . $fileName;
 
                         if (move_uploaded_file($tmpName, $targetFile)) {
-                            $relativePath = "uploads/gallery/album_{$albumId}/" . $fileName;
+                            $relativePath = $mediaType === 'banner'
+                                ? "uploads/banners/album_{$albumId}/" . $fileName
+                                : "uploads/gallery/album_{$albumId}/" . $fileName;
 
                             try {
-                                $stmt = $pdo->prepare("INSERT INTO gallery (album_id, image_path, caption, created_by, created_at) VALUES (:aid, :path, :cap, :uid, NOW())");
-                                $stmt->execute(['aid' => $albumId, 'path' => $relativePath, 'cap' => $caption, 'uid' => $adminUserId]);
+                                $stmt = $pdo->prepare("INSERT INTO gallery (album_id, media_type, title, image_path, caption, is_active, created_by, created_at) VALUES (:aid, :type, :title, :path, :cap, 1, :uid, NOW())");
+                                $stmt->execute(['aid' => $albumId ?: null, 'type' => $mediaType, 'title' => $mediaTitle ?: null, 'path' => $relativePath, 'cap' => $caption, 'uid' => $adminUserId]);
                             } catch (Exception $e) {
-                                $stmt = $pdo->prepare("INSERT INTO gallery (album_id, image_path, caption, created_at) VALUES (:aid, :path, :cap, NOW())");
-                                $stmt->execute(['aid' => $albumId, 'path' => $relativePath, 'cap' => $caption]);
+                                $stmt = $pdo->prepare("INSERT INTO gallery (album_id, media_type, title, image_path, caption, is_active, created_at) VALUES (:aid, :type, :title, :path, :cap, 1, NOW())");
+                                $stmt->execute(['aid' => $albumId ?: null, 'type' => $mediaType, 'title' => $mediaTitle ?: null, 'path' => $relativePath, 'cap' => $caption]);
                             }
 
                             $uploadedCount++;
@@ -104,26 +144,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     }
 }
 
-// ================= 2. ลบรูปภาพ =================
-if (isset($_GET['delete_photo_id'])) {
-    $photoId = (int) $_GET['delete_photo_id'];
-    $stmt = $pdo->prepare("SELECT image_path FROM gallery WHERE gallery_id = :id");
-    $stmt->execute(['id' => $photoId]);
-    $photo = $stmt->fetch();
-
-    if ($photo) {
-        $filePath = '../assets/' . $photo['image_path'];
-        if (file_exists($filePath)) {
-            @unlink($filePath);
+// แก้ไขหัวข้อ คำบรรยาย และสถานะเผยแพร่ของสื่อ
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_media') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $mediaId = (int) ($_POST['media_id'] ?? 0);
+        $title = trim($_POST['media_title'] ?? '');
+        $caption = trim($_POST['caption'] ?? '');
+        $isActive = isset($_POST['is_active']) ? 1 : 0;
+        if ($mediaId > 0) {
+            $pdo->prepare('UPDATE gallery SET title = :title, caption = :caption, is_active = :active WHERE gallery_id = :id')
+                ->execute(['title' => $title ?: null, 'caption' => $caption ?: null, 'active' => $isActive, 'id' => $mediaId]);
+            $success = 'แก้ไขข้อมูลสื่อเรียบร้อยแล้ว';
         }
-        $pdo->prepare("DELETE FROM gallery WHERE gallery_id = :id")->execute(['id' => $photoId]);
-        $success = 'ลบรูปภาพเรียบร้อยแล้ว';
+    }
+}
+
+// ================= 2. ลบรูปภาพ =================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_media') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $photoId = (int) ($_POST['media_id'] ?? 0);
+        $stmt = $pdo->prepare("SELECT image_path FROM gallery WHERE gallery_id = :id");
+        $stmt->execute(['id' => $photoId]);
+        $photo = $stmt->fetch();
+
+        if ($photo) {
+            $filePath = '../assets/' . $photo['image_path'];
+            if (file_exists($filePath)) @unlink($filePath);
+            $pdo->prepare("DELETE FROM gallery WHERE gallery_id = :id")->execute(['id' => $photoId]);
+            $success = 'ลบสื่อเรียบร้อยแล้ว';
+        }
     }
 }
 
 // ================= 3. ลบอัลบั้ม (พร้อมลบรูปทั้งหมดในอัลบั้ม) =================
-if (isset($_GET['delete_album_id'])) {
-    $delAlbumId = (int) $_GET['delete_album_id'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_album' && verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+    $delAlbumId = (int) ($_POST['album_id'] ?? 0);
 
     $stmt = $pdo->prepare("SELECT image_path FROM gallery WHERE album_id = :aid");
     $stmt->execute(['aid' => $delAlbumId]);
@@ -134,7 +193,12 @@ if (isset($_GET['delete_album_id'])) {
         if (file_exists($filePath)) { @unlink($filePath); }
     }
 
-    $dirPath = "../assets/uploads/gallery/album_{$delAlbumId}/";
+    $albumTypeStmt = $pdo->prepare('SELECT album_type FROM gallery_albums WHERE album_id = :id');
+    $albumTypeStmt->execute(['id' => $delAlbumId]);
+    $albumType = $albumTypeStmt->fetchColumn() ?: 'activity';
+    $dirPath = $albumType === 'banner'
+        ? "../assets/uploads/banners/album_{$delAlbumId}/"
+        : "../assets/uploads/gallery/album_{$delAlbumId}/";
     if (is_dir($dirPath)) { @rmdir($dirPath); }
 
     $pdo->prepare("DELETE FROM gallery WHERE album_id = :aid")->execute(['aid' => $delAlbumId]);
@@ -155,17 +219,22 @@ try {
 } catch (Exception $e) {
     $albums = [];
 }
+$bannerAlbums = array_values(array_filter($albums, static fn($album) => ($album['album_type'] ?? 'activity') === 'banner'));
+$activityAlbums = array_values(array_filter($albums, static fn($album) => ($album['album_type'] ?? 'activity') === 'activity'));
 
 // รับค่าฟิลเตอร์อัลบั้มที่เลือกดู
 $selectedAlbumId = (int) ($_GET['view_album'] ?? 0);
+$banners = $pdo->query("SELECT g.*, a.title AS album_title
+    FROM gallery g LEFT JOIN gallery_albums a ON a.album_id = g.album_id
+    WHERE g.media_type = 'banner' ORDER BY g.gallery_id DESC")->fetchAll();
 
 // ดึงรูปภาพตามอัลบั้ม
 if ($selectedAlbumId > 0) {
-    $pStmt = $pdo->prepare("SELECT g.*, a.title AS album_title FROM gallery g JOIN gallery_albums a ON a.album_id = g.album_id WHERE g.album_id = :aid ORDER BY g.gallery_id DESC");
+    $pStmt = $pdo->prepare("SELECT g.*, a.title AS album_title FROM gallery g JOIN gallery_albums a ON a.album_id = g.album_id WHERE g.media_type = 'activity' AND g.album_id = :aid ORDER BY g.gallery_id DESC");
     $pStmt->execute(['aid' => $selectedAlbumId]);
     $galleryPhotos = $pStmt->fetchAll();
 } else {
-    $galleryPhotos = $pdo->query("SELECT g.*, a.title AS album_title FROM gallery g LEFT JOIN gallery_albums a ON a.album_id = g.album_id ORDER BY g.gallery_id DESC")->fetchAll();
+    $galleryPhotos = $pdo->query("SELECT g.*, a.title AS album_title FROM gallery g LEFT JOIN gallery_albums a ON a.album_id = g.album_id WHERE g.media_type = 'activity' ORDER BY g.gallery_id DESC")->fetchAll();
 }
 ?>
 <!DOCTYPE html>
@@ -321,22 +390,25 @@ if ($selectedAlbumId > 0) {
             <?php endif; ?>
 
             <!-- ================= UNIFIED FORM: ฟอร์มรวมอัปโหลดรูป + สร้างอัลบั้ม ================= -->
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
             <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                 <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2 border-b border-slate-100 pb-3">
                     <i class="fa-solid fa-cloud-arrow-up text-brand-orange"></i> อัปโหลดรูปภาพ / สร้างอัลบั้มใหม่
                 </h2>
 
                 <form method="POST" enctype="multipart/form-data" class="space-y-4">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
                     <input type="hidden" name="action" value="save_gallery">
+                    <input type="hidden" name="media_type" value="activity">
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <!-- ตัวเลือกอัลบั้ม -->
-                        <div>
+                        <div id="albumField">
                             <label class="block text-xs font-bold text-slate-700 mb-1">เลือกโฟลเดอร์อัลบั้ม:</label>
                             <select name="album_option" id="albumSelect" onchange="toggleNewAlbumFields()" required 
                                     class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:bg-white focus:outline-none focus:border-brand-orange">
                                 <option value="new">➕ [สร้างอัลบั้ม/โฟลเดอร์ใหม่]</option>
-                                <?php foreach ($albums as $a): ?>
+                                <?php foreach ($activityAlbums as $a): ?>
                                     <option value="<?php echo $a['album_id']; ?>" <?php echo $selectedAlbumId == $a['album_id'] ? 'selected' : ''; ?>>
                                         📁 <?php echo htmlspecialchars($a['title']); ?> (<?php echo $a['photo_count']; ?> รูป)
                                     </option>
@@ -386,11 +458,51 @@ if ($selectedAlbumId > 0) {
                 </form>
             </div>
 
+            <div class="bg-white p-6 rounded-2xl border border-orange-200 shadow-sm space-y-4">
+                <h2 class="text-xs font-bold tracking-wider text-slate-700 flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <i class="fa-solid fa-bullhorn text-brand-orange"></i> สร้างแบนเนอร์ประชาสัมพันธ์
+                </h2>
+                <form method="POST" enctype="multipart/form-data" class="space-y-4">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
+                    <input type="hidden" name="action" value="save_gallery">
+                    <input type="hidden" name="media_type" value="banner">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">อัลบั้มแบนเนอร์</label>
+                        <select name="banner_album_option" id="bannerAlbumSelect" onchange="toggleBannerAlbumFields()" required class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-bold focus:bg-white focus:outline-none focus:border-brand-orange">
+                            <option value="new">สร้างอัลบั้มแบนเนอร์ใหม่</option>
+                            <?php foreach ($bannerAlbums as $bannerAlbum): ?>
+                                <option value="<?php echo (int) $bannerAlbum['album_id']; ?>"><?php echo htmlspecialchars($bannerAlbum['title']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div id="newBannerAlbumBox" class="p-3 rounded-lg bg-orange-50/60 border border-orange-200 space-y-2">
+                        <input type="text" name="new_banner_album_name" id="newBannerAlbumName" required placeholder="ชื่ออัลบั้มแบนเนอร์" class="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs">
+                        <input type="text" name="new_banner_album_desc" placeholder="รายละเอียดอัลบั้ม (ไม่บังคับ)" class="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">หัวข้อแบนเนอร์ <span class="text-rose-500">*</span></label>
+                        <input type="text" name="media_title" required placeholder="เช่น เปิดรับสมัครการแข่งขัน" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:bg-white focus:outline-none focus:border-brand-orange">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">คำบรรยาย</label>
+                        <input type="text" name="caption" placeholder="รายละเอียดสั้น ๆ ของประชาสัมพันธ์" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:bg-white focus:outline-none focus:border-brand-orange">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ไฟล์แบนเนอร์ <span class="text-rose-500">*</span></label>
+                        <input type="file" name="photos[]" multiple accept="image/jpeg,image/png,image/webp" required class="w-full text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                    </div>
+                    <button type="submit" class="w-full py-3 rounded-lg bg-brand-orange hover:bg-brand-glow text-white font-bold text-xs"><i class="fa-solid fa-cloud-arrow-up"></i> อัปโหลดแบนเนอร์</button>
+                </form>
+            </div>
+            </div>
+
             <!-- ALBUM FOLDERS LIST -->
-            <div class="space-y-4 pt-2">
-                <div class="flex items-center justify-between border-b border-slate-200 pb-2">
-                    <h2 class="text-xs font-bold text-slate-700 uppercase flex items-center gap-2">
-                        <i class="fa-solid fa-folder-open text-amber-500"></i> อัลบั้มทั้งหมดในระบบ (<?php echo count($albums); ?> โฟลเดอร์)
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+            <div>
+            <div class="p-0 space-y-4 h-full">
+                <div class="flex items-center justify-between border-b border-slate-300 pb-3">
+                    <h2 class="text-xs font-bold text-slate-700 flex items-center gap-2">
+                        <i class="fa-solid fa-folder-open text-amber-500"></i> อัลบั้มรูปกิจกรรม (<?php echo count($activityAlbums); ?> โฟลเดอร์)
                     </h2>
                     <?php if ($selectedAlbumId > 0): ?>
                         <a href="manage-gallery.php" class="text-xs font-bold text-brand-orange hover:underline">
@@ -399,11 +511,11 @@ if ($selectedAlbumId > 0) {
                     <?php endif; ?>
                 </div>
 
-                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                    <?php foreach ($albums as $alb): ?>
-                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 flex flex-col justify-between hover:border-brand-orange transition-all group">
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                    <?php foreach ($activityAlbums as $alb): ?>
+                        <div class="bg-white rounded-xl border border-slate-200 p-3 space-y-2 shadow-sm hover:border-brand-orange hover:shadow-md transition-all group">
                             <div class="space-y-2">
-                                <div class="h-28 rounded-xl bg-slate-100 overflow-hidden relative border border-slate-100 flex items-center justify-center">
+                                <div class="h-28 rounded-lg bg-slate-100 overflow-hidden relative border border-slate-100 flex items-center justify-center">
                                     <?php if (!empty($alb['cover_image']) && file_exists('../assets/' . $alb['cover_image'])): ?>
                                         <img src="../assets/<?php echo htmlspecialchars($alb['cover_image']); ?>" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
                                     <?php else: ?>
@@ -425,15 +537,79 @@ if ($selectedAlbumId > 0) {
                                 <a href="?view_album=<?php echo $alb['album_id']; ?>" class="font-bold text-slate-600 hover:text-brand-orange">
                                     <i class="fa-solid fa-images mr-1"></i> ดูรูปในอัลบั้ม
                                 </a>
-                                <a href="?delete_album_id=<?php echo $alb['album_id']; ?>" 
-                                   onclick="return confirm('ยืนยันลบอัลบั้มนี้และรูปภาพทั้งหมดในอัลบั้มใช่หรือไม่?')"
-                                   class="text-rose-500 hover:text-rose-700 p-1">
-                                    <i class="fa-solid fa-trash-can"></i>
-                                </a>
+                                <form method="POST" onsubmit="return confirm('ยืนยันลบอัลบั้มนี้และรูปภาพทั้งหมดในอัลบั้มใช่หรือไม่?')">
+                                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
+                                    <input type="hidden" name="action" value="delete_album">
+                                    <input type="hidden" name="album_id" value="<?php echo (int) $alb['album_id']; ?>">
+                                    <button type="submit" class="text-rose-500 hover:text-rose-700 p-1"><i class="fa-solid fa-trash-can"></i></button>
+                                </form>
                             </div>
                         </div>
                     <?php endforeach; ?>
                 </div>
+            </div>
+
+            </div>
+            <div>
+            <div class="p-0 space-y-4 h-full">
+                <h2 class="text-xs font-bold text-slate-700 flex items-center gap-2 border-b border-slate-300 pb-3">
+                    <i class="fa-solid fa-bullhorn text-brand-orange"></i> อัลบั้มแบนเนอร์ประชาสัมพันธ์ (<?php echo count($bannerAlbums); ?> อัลบั้ม)
+                </h2>
+                <?php if (!$bannerAlbums): ?>
+                    <p class="text-center py-6 text-xs text-slate-400">ยังไม่มีอัลบั้มแบนเนอร์</p>
+                <?php else: ?>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <?php foreach ($bannerAlbums as $bannerAlbum): ?>
+                            <div class="bg-white rounded-xl border border-slate-200 p-3 space-y-2 shadow-sm hover:border-brand-orange hover:shadow-md transition-all">
+                                <div class="h-28 rounded-lg overflow-hidden bg-slate-100 flex items-center justify-center">
+                                    <?php if (!empty($bannerAlbum['cover_image']) && file_exists('../assets/' . $bannerAlbum['cover_image'])): ?>
+                                        <img src="../assets/<?php echo htmlspecialchars($bannerAlbum['cover_image']); ?>" class="w-full h-full object-cover" alt="<?php echo htmlspecialchars($bannerAlbum['title']); ?>">
+                                    <?php else: ?><i class="fa-solid fa-bullhorn text-2xl text-brand-orange"></i><?php endif; ?>
+                                </div>
+                                <p class="text-xs font-bold text-slate-800 line-clamp-1"><?php echo htmlspecialchars($bannerAlbum['title']); ?></p>
+                                <div class="flex items-center justify-between gap-2">
+                                    <p class="text-[10px] text-slate-400"><?php echo (int) $bannerAlbum['photo_count']; ?> รูป</p>
+                                    <form method="POST" onsubmit="return confirm('ยืนยันลบอัลบั้มแบนเนอร์นี้และรูปทั้งหมดใช่หรือไม่?')">
+                                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
+                                        <input type="hidden" name="action" value="delete_album">
+                                        <input type="hidden" name="album_id" value="<?php echo (int) $bannerAlbum['album_id']; ?>">
+                                        <button type="submit" class="text-rose-500 hover:text-rose-700 p-1" title="ลบอัลบั้มแบนเนอร์"><i class="fa-solid fa-trash-can"></i></button>
+                                    </form>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
+            </div>
+            </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <h2 class="text-xs font-bold text-slate-700 flex items-center gap-2 border-b border-slate-100 pb-3 pt-4">
+                    <i class="fa-solid fa-images text-brand-orange"></i> รายการรูปภาพแบนเนอร์ (<?php echo count($banners); ?> รูป)
+                </h2>
+                <?php if (!$banners): ?>
+                    <p class="text-center py-8 text-xs text-slate-400">ยังไม่มีรูปภาพแบนเนอร์</p>
+                <?php else: ?>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <?php foreach ($banners as $banner): ?>
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2 relative group">
+                                <div class="h-32 rounded-lg overflow-hidden bg-slate-200">
+                                    <img src="../assets/<?php echo htmlspecialchars($banner['image_path']); ?>" alt="<?php echo htmlspecialchars($banner['title'] ?: 'แบนเนอร์'); ?>" class="w-full h-full object-cover">
+                                </div>
+                                <p class="text-[10px] font-bold text-brand-orange line-clamp-1">📁 <?php echo htmlspecialchars($banner['album_title'] ?? 'อัลบั้มแบนเนอร์'); ?></p>
+                                <p class="text-xs font-semibold text-slate-700 line-clamp-1"><?php echo htmlspecialchars($banner['title'] ?: 'ไม่มีหัวข้อ'); ?></p>
+                                <form method="POST" onsubmit="return confirm('ยืนยันลบแบนเนอร์นี้ใช่หรือไม่?')" class="flex justify-end pt-1">
+                                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
+                                    <input type="hidden" name="action" value="delete_media">
+                                    <input type="hidden" name="media_id" value="<?php echo (int) $banner['gallery_id']; ?>">
+                                    <button type="submit" class="px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 text-[11px] font-bold"><i class="fa-solid fa-trash"></i> ลบ</button>
+                                </form>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
             </div>
 
             <!-- PHOTOS GRID SHOWCASE -->
@@ -459,17 +635,18 @@ if ($selectedAlbumId > 0) {
 
                                 <div class="p-2 space-y-1">
                                     <p class="text-[10px] font-bold text-brand-orange line-clamp-1">📁 <?php echo htmlspecialchars($photo['album_title'] ?? 'ไม่ระบุอัลบั้ม'); ?></p>
-                                    <?php if ($photo['caption']): ?>
+                                    <?php if (!empty($photo['caption'])): ?>
                                         <p class="text-[11px] text-slate-600 line-clamp-1"><?php echo htmlspecialchars($photo['caption']); ?></p>
                                     <?php endif; ?>
                                 </div>
 
                                 <!-- ปุ่มลบรูป -->
-                                <a href="?delete_photo_id=<?php echo $photo['gallery_id']; ?><?php echo $selectedAlbumId > 0 ? '&view_album=' . $selectedAlbumId : ''; ?>" 
-                                   onclick="return confirm('ยืนยันลบรูปภาพนี้ใช่หรือไม่?')"
-                                   class="absolute top-2 right-2 w-7 h-7 rounded-xl bg-rose-600 text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-md">
-                                    <i class="fa-solid fa-trash-can"></i>
-                                </a>
+                                <form method="POST" onsubmit="return confirm('ยืนยันลบรูปภาพนี้ใช่หรือไม่?')" class="absolute top-2 right-2">
+                                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
+                                    <input type="hidden" name="action" value="delete_media">
+                                    <input type="hidden" name="media_id" value="<?php echo (int) $photo['gallery_id']; ?>">
+                                    <button type="submit" class="w-7 h-7 rounded-xl bg-rose-600 text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-md"><i class="fa-solid fa-trash-can"></i></button>
+                                </form>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -497,6 +674,18 @@ if ($selectedAlbumId > 0) {
 
         // เรียกทำงานทันทีเมื่อโหลดหน้าเว็บ
         document.addEventListener('DOMContentLoaded', toggleNewAlbumFields);
+
+        function toggleBannerAlbumFields() {
+            const select = document.getElementById('bannerAlbumSelect');
+            const box = document.getElementById('newBannerAlbumBox');
+            const name = document.getElementById('newBannerAlbumName');
+            if (!select || !box || !name) return;
+            const isNew = select.value === 'new';
+            box.style.display = isNew ? 'block' : 'none';
+            name.required = isNew;
+        }
+
+        document.addEventListener('DOMContentLoaded', toggleBannerAlbumFields);
     </script>
 </body>
 </html>

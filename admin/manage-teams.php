@@ -2,7 +2,11 @@
 // admin/manage-teams.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_roster.php';
+require_once '../includes/registration_status.php';
 requireRole('admin');
+ensureTournamentRosterTables($pdo);
+ensureRegistrationStatusHistoryTable($pdo);
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
 $currentUser = [
@@ -14,27 +18,6 @@ $tournamentId = (int) ($_GET['tournament_id'] ?? 0);
 $filterCategory = $_GET['category'] ?? 'all';
 $error = '';
 $success = '';
-
-// เก็บ Tournament Roster แยกจากสมาชิกทีมปัจจุบัน เพื่อรักษาประวัติย้อนหลัง
-function snapshotTournamentRoster(PDO $pdo, int $registrationId, ?int $teamId, ?int $playerId): void
-{
-    if ($playerId) {
-        $pdo->prepare("INSERT IGNORE INTO tournament_registration_members
-            (tournament_registration_id, player_id, member_roles, is_starter, is_required_for_checkin)
-            VALUES (:registration_id, :player_id, 'player', 1, 1)")
-            ->execute(['registration_id' => $registrationId, 'player_id' => $playerId]);
-        return;
-    }
-    if (!$teamId) return;
-
-    $stmt = $pdo->prepare("INSERT IGNORE INTO tournament_registration_members
-        (tournament_registration_id, player_id, member_roles, is_starter, is_required_for_checkin)
-        SELECT :registration_id, tm.player_id, tm.member_roles,
-            IF(FIND_IN_SET('substitute', tm.member_roles) > 0, 0, 1),
-            IF(FIND_IN_SET('player', tm.member_roles) > 0 AND FIND_IN_SET('substitute', tm.member_roles) = 0, 1, 0)
-        FROM team_members tm WHERE tm.team_id = :team_id AND tm.is_active = 1");
-    $stmt->execute(['registration_id' => $registrationId, 'team_id' => $teamId]);
-}
 
 // ดึงรายการทัวร์นาเมนต์ทั้งหมดมาทำตัวเลือก Dropdown พร้อมเช็ก play_mode และ gender_category ของเกม
 $allTournaments = $pdo->query("
@@ -149,6 +132,7 @@ if (isset($_GET['approve']) && $tournamentId) {
     $targetPlayerId = $regData['player_id'] ?? null;
     $existingToken = $regData['qr_code_token'] ?? '';
     if ($regData) {
+        recordRegistrationStatus($pdo, $regId, 'approved', (int) $_SESSION['user_id'], 'อนุมัติโดยผู้ดูแลระบบ');
         snapshotTournamentRoster($pdo, $regId, $targetTeamId ? (int) $targetTeamId : null, $targetPlayerId ? (int) $targetPlayerId : null);
     }
 
@@ -190,6 +174,7 @@ if (isset($_GET['approve']) && $tournamentId) {
 // 3. ปฏิเสธคำขอสมัคร
 if (isset($_GET['reject']) && $tournamentId) {
     $regId = (int) $_GET['reject'];
+    recordRegistrationStatus($pdo, $regId, 'rejected', (int) $_SESSION['user_id'], 'ปฏิเสธโดยผู้ดูแลระบบ');
     $pdo->prepare("UPDATE tournament_registrations SET status = 'rejected' WHERE tournament_registration_id = :id AND tournament_id = :tid")
         ->execute(['id' => $regId, 'tid' => $tournamentId]);
     $success = 'ปฏิเสธคำขอเรียบร้อยแล้ว';

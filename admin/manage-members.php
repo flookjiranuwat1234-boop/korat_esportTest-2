@@ -2,7 +2,9 @@
 // admin/manage-members.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/team_roles.php';
 requireRole('admin');
+ensureTeamMemberRolesTable($pdo);
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
 $currentUser = [
@@ -215,14 +217,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $teamId = (int) ($_POST['team_id'] ?? 0);
             $memberRoles = $_POST['member_roles'] ?? [];
             if ($teamId > 0 && is_array($memberRoles)) {
-                $stmt = $pdo->prepare('UPDATE team_members SET in_game_role = :role WHERE team_id = :tid AND player_id = :pid');
-                foreach ($memberRoles as $playerId => $role) {
-                    $role = trim((string) $role);
-                    if ((int) $playerId > 0 && in_array($role, ['leader', 'member', 'substitute'], true)) {
-                        $stmt->execute(['role' => $role, 'tid' => $teamId, 'pid' => (int) $playerId]);
+                $memberStmt = $pdo->prepare('SELECT team_member_id FROM team_members WHERE team_id = :tid AND player_id = :pid AND is_active = 1');
+                foreach ($memberRoles as $playerId => $roles) {
+                    $memberStmt->execute(['tid' => $teamId, 'pid' => (int) $playerId]);
+                    $teamMemberId = (int) $memberStmt->fetchColumn();
+                    if ($teamMemberId > 0 && is_array($roles)) {
+                        $roles = normalizeTeamRoles($roles);
+                        if (!$roles) {
+                            $error = 'สมาชิกแต่ละคนต้องมีบทบาทอย่างน้อย 1 บทบาท';
+                            continue;
+                        }
+                        syncTeamMemberRoles($pdo, $teamMemberId, $roles);
                     }
                 }
-                $success = 'บันทึกตำแหน่งสมาชิกเรียบร้อยแล้ว';
+                if ($error === '') $success = 'บันทึกตำแหน่งสมาชิกเรียบร้อยแล้ว';
             }
         }
 
@@ -231,11 +239,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $teamId = (int) ($_POST['team_id'] ?? 0);
             $playerId = (int) ($_POST['player_id'] ?? 0);
             $newRole = trim($_POST['role_in_team'] ?? 'member');
+            $newRole = ['leader' => 'manager', 'member' => 'player'][$newRole] ?? $newRole;
 
             if ($teamId > 0 && $playerId > 0) {
-                $stmt = $pdo->prepare("UPDATE team_members SET in_game_role = :role WHERE team_id = :tid AND player_id = :pid");
-                $stmt->execute(['role' => $newRole, 'tid' => $teamId, 'pid' => $playerId]);
-                $success = 'ปรับเปลี่ยนบทบาทสมาชิกเรียบร้อยแล้ว';
+                $stmt = $pdo->prepare('SELECT team_member_id FROM team_members WHERE team_id = :tid AND player_id = :pid');
+                $stmt->execute(['tid' => $teamId, 'pid' => $playerId]);
+                $teamMemberId = (int) $stmt->fetchColumn();
+                if ($teamMemberId > 0 && in_array($newRole, allowedTeamRoles(), true)) {
+                    syncTeamMemberRoles($pdo, $teamMemberId, [$newRole]);
+                    $success = 'ปรับเปลี่ยนบทบาทสมาชิกเรียบร้อยแล้ว';
+                } else {
+                    $error = 'บทบาทสมาชิกไม่ถูกต้อง';
+                }
             }
         }
 
@@ -388,7 +403,7 @@ if ($teamIds) {
     $teamStmt->execute(array_values($teamIds));
     while ($row = $teamStmt->fetch()) {
     $memStmt = $pdo->prepare("
-        SELECT tm.team_id, tm.player_id, tm.in_game_role AS role_in_team, p.display_name, p.real_name, u.username
+        SELECT tm.team_member_id, tm.team_id, tm.player_id, tm.in_game_role AS role_in_team, p.display_name, p.real_name, u.username
         FROM team_members tm
         JOIN players p ON p.player_id = tm.player_id
         JOIN users u ON u.user_id = p.user_id
@@ -396,11 +411,17 @@ if ($teamIds) {
     ");
     $memStmt->execute(['tid' => $row['team_id']]);
     
+    $teamMembers = $memStmt->fetchAll();
+    foreach ($teamMembers as &$teamMember) {
+        $teamMember['role_codes'] = getTeamMemberRoles($pdo, (int) $teamMember['team_member_id']);
+    }
+    unset($teamMember);
+
     $teamsData[$row['team_id']] = [
         'team_id' => $row['team_id'],
         'team_name' => $row['team_name'],
         'game_name' => $row['game_name'],
-        'members' => $memStmt->fetchAll()
+        'members' => $teamMembers
     ];
     }
 }
@@ -876,17 +897,17 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                             class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-brand-orange">
                     </div>
 
-                    <div class="flex justify-end">
-                        <button type="submit" class="px-4 py-2 bg-brand-orange hover:bg-brand-glow text-white font-bold text-xs rounded-lg transition-all shadow-sm">
+                    <div class="flex justify-end pt-3">
+                        <button type="submit" class="px-5 py-2.5 bg-brand-orange hover:bg-brand-glow text-white font-bold text-xs rounded-lg transition-all shadow-sm">
                             บันทึกข้อมูลทีม
                         </button>
                     </div>
                     </form>
-                    <form method="POST" class="mt-3" onsubmit="return confirm('ยืนยันลบทีมนี้? ระบบจะลบสมาชิกในทีมด้วย และจะปฏิเสธหากทีมมีประวัติสมัครแข่งขัน')">
+                    <form method="POST" class="mt-5 pt-4 border-t border-slate-200" onsubmit="return confirm('ยืนยันลบทีมนี้? ระบบจะลบสมาชิกในทีมด้วย และจะปฏิเสธหากทีมมีประวัติสมัครแข่งขัน')">
                         <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                         <input type="hidden" name="action" value="delete_team">
                         <input type="hidden" name="team_id" id="modalDeleteTeamId">
-                        <button type="submit" class="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-lg transition-all">
+                        <button type="submit" class="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-lg transition-all">
                             <i class="fa-solid fa-trash"></i> ลบทีม
                         </button>
                     </form>
@@ -896,13 +917,13 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                     <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                     <input type="hidden" name="action" value="update_team_roles">
                     <input type="hidden" name="team_id" id="modalRolesTeamId">
-                    <h4 class="font-bold text-xs uppercase tracking-wider text-slate-500 mb-3 flex items-center justify-between">
+                    <h4 class="font-bold text-xs tracking-wider text-slate-500 mb-4 flex items-center justify-between">
                         <span>สมาชิกภายในทีม</span>
                     </h4>
                     <div id="modalMemberList" class="space-y-2">
                     </div>
-                    <div class="flex justify-end pt-4 mt-4 border-t border-slate-100">
-                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-all">
+                    <div class="flex justify-end pt-5 mt-5 border-t border-slate-100">
+                        <button type="submit" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-all">
                             <i class="fa-solid fa-floppy-disk"></i> บันทึกการเปลี่ยนแปลง
                         </button>
                     </div>
@@ -996,11 +1017,14 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                             <span class="text-slate-400 ml-1">(@${escapeHtml(m.username)})</span>
                         </div>
                         <div class="flex items-center gap-2">
-                                <select name="member_roles[${m.player_id}]" class="bg-white border border-slate-300 rounded px-2 py-1 text-[11px] text-slate-700 font-semibold focus:outline-none focus:border-brand-orange">
-                                    <option value="leader" ${m.role_in_team === 'leader' ? 'selected' : ''}>Leader (กัปตัน)</option>
-                                    <option value="member" ${m.role_in_team === 'member' ? 'selected' : ''}>Member (ตัวจริง)</option>
-                                    <option value="substitute" ${m.role_in_team === 'substitute' ? 'selected' : ''}>Substitute (ตัวสำรอง)</option>
-                                </select>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    ${['manager', 'coach', 'player', 'substitute'].map(role => `
+                                        <label class="inline-flex items-center gap-1 text-[10px] text-slate-600">
+                                            <input type="checkbox" name="member_roles[${m.player_id}][]" value="${role}" ${(m.role_codes || []).includes(role) ? 'checked' : ''}>
+                                            ${role === 'manager' ? 'ผู้จัดการทีม' : role === 'coach' ? 'โค้ช' : role === 'player' ? 'นักกีฬาหลัก' : 'นักกีฬาสำรอง'}
+                                        </label>
+                                    `).join('')}
+                                </div>
                                 <button type="button" onclick="removeTeamMember(${m.team_id}, ${m.player_id})" class="p-1.5 text-rose-500 hover:bg-rose-50 rounded transition-colors" title="ลบออกจากทีม">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>

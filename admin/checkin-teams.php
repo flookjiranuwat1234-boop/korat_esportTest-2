@@ -2,7 +2,9 @@
 // admin/checkin-teams.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_roster.php';
 requireRole('admin');
+ensureTournamentRosterTables($pdo);
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
 $currentUser = [
@@ -79,11 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'checkin
                     WHERE tournament_registration_id = :id
                 ")->execute(['id' => $reg['tournament_registration_id']]);
 
-                // บันทึกประวัติลง player_checkin_history
-                $pdo->prepare("
-                    INSERT IGNORE INTO player_checkin_history (player_id, tournament_id) 
-                    VALUES (:pid, :tid)
-                ")->execute(['pid' => $reg['player_id'], 'tid' => $tournamentId]);
+                snapshotTournamentRoster($pdo, (int) $reg['tournament_registration_id'], null, (int) $reg['player_id']);
+                markRosterPlayerCheckedIn($pdo, (int) $reg['tournament_registration_id'], (int) $reg['player_id'], (int) $_SESSION['user_id']);
 
                 $success = 'เช็คอินผู้เล่นเดี่ยว "' . $reg['participant_name'] . '" เรียบร้อยแล้ว!';
             }
@@ -109,19 +108,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'checkin
                     WHERE tournament_registration_id = :id
                 ")->execute(['id' => $reg['tournament_registration_id']]);
 
-                $teamId = $reg['team_id'];
-                $memberStmt = $pdo->prepare("SELECT player_id FROM team_members WHERE team_id = :tid");
-                $memberStmt->execute(['tid' => $teamId]);
-                $teamMembers = $memberStmt->fetchAll(PDO::FETCH_COLUMN);
-
-                if (!empty($teamMembers)) {
-                    $insertHistory = $pdo->prepare("
-                        INSERT IGNORE INTO player_checkin_history (player_id, tournament_id) 
-                        VALUES (:pid, :tid)
-                    ");
-                    foreach ($teamMembers as $playerId) {
-                        $insertHistory->execute(['pid' => $playerId, 'tid' => $tournamentId]);
-                    }
+                snapshotTournamentRoster($pdo, (int) $reg['tournament_registration_id'], (int) $reg['team_id'], null);
+                $memberStmt = $pdo->prepare('SELECT player_id FROM tournament_registration_members
+                    WHERE tournament_registration_id = :registration_id AND is_required_for_checkin = 1');
+                $memberStmt->execute(['registration_id' => $reg['tournament_registration_id']]);
+                foreach ($memberStmt->fetchAll(PDO::FETCH_COLUMN) as $playerId) {
+                    markRosterPlayerCheckedIn($pdo, (int) $reg['tournament_registration_id'], (int) $playerId, (int) $_SESSION['user_id']);
                 }
 
                 $success = 'เช็คอินทีม "' . $reg['participant_name'] . '" เรียบร้อยแล้ว!';
