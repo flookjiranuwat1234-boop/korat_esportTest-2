@@ -3,6 +3,9 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/upload.php';
+require_once '../includes/tournament_roster.php';
+require_once '../includes/tournament_categories.php';
+ensureTournamentCategorySchema($pdo);
 
 // ตรวจสอบสถานะการเข้าสู่ระบบ
 $isLoggedIn = isLoggedIn();
@@ -105,24 +108,25 @@ $teams = $pdo->prepare("
 $teams->execute(['player_id' => $playerId]);
 $teams = $teams->fetchAll();
 
-// ดึงตารางการแข่งขันของทีมที่สังกัด
-$myMatches = [];
-if (!empty($teams)) {
-    $teamIds = array_column($teams, 'team_id');
-    $placeholders = implode(',', array_fill(0, count($teamIds), '?'));
-    $mStmt = $pdo->prepare("
-        SELECT m.*, t1.name as t1_name, t2.name as t2_name, tour.name as tour_name
-        FROM matches m
-        JOIN tournaments tour ON m.tournament_id = tour.tournament_id
-        JOIN teams t1 ON m.team1_id = t1.team_id
-        JOIN teams t2 ON m.team2_id = t2.team_id
-        WHERE (m.team1_id IN ($placeholders) OR m.team2_id IN ($placeholders))
-        AND m.status != 'completed'
-        ORDER BY m.match_id ASC
-    ");
-    $mStmt->execute(array_merge($teamIds, $teamIds));
-    $myMatches = $mStmt->fetchAll();
-}
+// Match history follows the Tournament Roster snapshot, not current team membership.
+$mStmt = $pdo->prepare("SELECT DISTINCT m.*, COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS t1_name,
+        COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS t2_name,
+        tour.name AS tour_name, tr.category AS tournament_category
+    FROM tournament_registration_members trm
+    JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+    JOIN matches m ON m.tournament_id = tr.tournament_id
+        AND (m.team1_id = tr.team_id OR m.team2_id = tr.team_id OR m.team1_id = tr.player_id OR m.team2_id = tr.player_id)
+    JOIN tournaments tour ON tour.tournament_id = m.tournament_id
+    LEFT JOIN teams t1 ON t1.team_id = m.team1_id
+    LEFT JOIN players p1 ON p1.player_id = m.team1_id
+    LEFT JOIN users u1 ON u1.user_id = p1.user_id
+    LEFT JOIN teams t2 ON t2.team_id = m.team2_id
+    LEFT JOIN players p2 ON p2.player_id = m.team2_id
+    LEFT JOIN users u2 ON u2.user_id = p2.user_id
+    WHERE trm.player_id = :player_id AND tr.status = 'approved'
+    ORDER BY m.scheduled_at IS NULL, m.scheduled_at, m.match_id");
+$mStmt->execute(['player_id' => $playerId]);
+$myMatches = $mStmt->fetchAll();
 
 // อันดับคะแนนของผู้เล่นนี้ (ทุกเกมที่เคยเล่น)
 $rankings = $pdo->prepare("
@@ -133,6 +137,22 @@ $rankings = $pdo->prepare("
 ");
 $rankings->execute(['player_id' => $playerId]);
 $rankings = $rankings->fetchAll();
+
+$tournamentHistoryStmt = $pdo->prepare('SELECT tr.tournament_registration_id, tr.tournament_id, tr.category,
+        tr.status, tr.participation_status, tour.name AS tournament_name, g.name AS game_name,
+        COALESCE(t.name, \'การแข่งขันเดี่ยว\') AS registered_team,
+        trm.checkin_status AS own_checkin_status,
+        (SELECT COUNT(*) FROM tournament_registration_members req WHERE req.tournament_registration_id = tr.tournament_registration_id AND req.is_required_for_checkin = 1) AS required_count,
+        (SELECT COUNT(*) FROM tournament_registration_members req WHERE req.tournament_registration_id = tr.tournament_registration_id AND req.is_required_for_checkin = 1 AND req.checkin_status IN (\'checked_in\', \'waived\')) AS checked_count
+    FROM tournament_registration_members trm
+    JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+    JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
+    JOIN games g ON g.game_id = tour.game_id
+    LEFT JOIN teams t ON t.team_id = tr.team_id
+    WHERE trm.player_id = :player_id
+    ORDER BY tour.start_date DESC, tr.tournament_registration_id DESC');
+$tournamentHistoryStmt->execute(['player_id' => $playerId]);
+$tournamentHistory = $tournamentHistoryStmt->fetchAll();
 
 // ตรวจสอบว่าผู้เล่นคนนี้ติด Top Player (ติดอันดับ Top 3 ใน ranking ใดเกมหนึ่ง)
 $isTopPlayer = false;
@@ -384,6 +404,28 @@ $csrfToken = $isOwner ? generateCsrfToken() : '';
             </div>
 
             <div class="space-y-4">
+                <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/15 pb-3" data-aos="fade-right">
+                    <i class="fa-solid fa-trophy text-brand-orange"></i> เส้นทางการแข่งขันของนักกีฬา
+                </h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <?php if (empty($tournamentHistory)): ?>
+                        <div class="glass-panel p-8 text-center text-gray-400 rounded-2xl md:col-span-2">ยังไม่มีประวัติการสมัคร Tournament</div>
+                    <?php endif; ?>
+                    <?php foreach ($tournamentHistory as $history): ?>
+                        <?php $teamCheckinComplete = (int) $history['required_count'] > 0 && (int) $history['checked_count'] >= (int) $history['required_count']; ?>
+                        <div class="glass-panel p-5 rounded-2xl border border-white/15 space-y-2">
+                            <div class="flex items-start justify-between gap-2"><h3 class="font-bold text-white"><?php echo htmlspecialchars($history['tournament_name']); ?></h3><span class="text-[10px] text-brand-orange font-bold uppercase"><?php echo htmlspecialchars($history['category'] ?: 'open'); ?></span></div>
+                            <p class="text-xs text-gray-400"><?php echo htmlspecialchars($history['game_name']); ?> | ทีมที่ใช้สมัคร: <?php echo htmlspecialchars($history['registered_team']); ?></p>
+                            <p class="text-xs text-gray-300">Check-in ของฉัน: <b class="<?php echo in_array($history['own_checkin_status'], ['checked_in', 'waived'], true) ? 'text-emerald-400' : 'text-rose-300'; ?>"><?php echo in_array($history['own_checkin_status'], ['checked_in', 'waived'], true) ? 'เรียบร้อย' : 'ยังไม่ครบ'; ?></b></p>
+                            <p class="text-xs text-gray-300">สถานะทีม: <b class="<?php echo $teamCheckinComplete ? 'text-emerald-400' : 'text-amber-300'; ?>"><?php echo (int) $history['checked_count']; ?>/<?php echo (int) $history['required_count']; ?> <?php echo $teamCheckinComplete ? 'Check-in ครบ' : 'Check-in ไม่ครบ'; ?></b></p>
+                            <p class="text-xs text-gray-400">สถานะการแข่งขัน: <?php echo htmlspecialchars($history['participation_status'] ?: $history['status']); ?></p>
+                            <a href="tournament-detail.php?id=<?php echo (int) $history['tournament_id']; ?>&category=<?php echo urlencode($history['category'] ?: 'open'); ?>" class="text-[11px] text-brand-orange hover:underline font-semibold">ดูตารางและเส้นทางการแข่งขัน <i class="fa-solid fa-arrow-right ml-1"></i></a>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+
+            <div class="space-y-4">
                 <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/15 pb-3"
                     data-aos="fade-right">
                     <i class="fa-solid fa-shield-halved text-brand-orange"></i> ทีมที่สังกัด
@@ -436,6 +478,14 @@ $csrfToken = $isOwner ? generateCsrfToken() : '';
                                         <span class="truncate max-w-[40%] text-left"><?php echo htmlspecialchars($m['t1_name']); ?></span>
                                         <span class="text-brand-orange font-display text-xs px-2 py-0.5 rounded bg-brand-orange/10">VS</span>
                                         <span class="truncate max-w-[40%] text-right"><?php echo htmlspecialchars($m['t2_name']); ?></span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs text-gray-400">
+                                        <span>Category: <?php echo htmlspecialchars($m['tournament_category'] ?: 'open'); ?></span>
+                                        <?php if (in_array($m['status'], ['completed', 'walkover'], true)): ?>
+                                            <span class="font-bold text-emerald-300"><?php echo $m['status'] === 'walkover' ? 'WO' : ((int) $m['team1_score'] . ' - ' . (int) $m['team2_score']); ?></span>
+                                        <?php else: ?>
+                                            <span class="text-amber-300">รอแข่งขัน</span>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="text-right">
                                         <a href="tournament-detail.php?id=<?php echo $m['tournament_id']; ?>" class="text-[11px] text-brand-orange hover:underline font-semibold">

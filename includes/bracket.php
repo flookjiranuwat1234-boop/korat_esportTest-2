@@ -1,6 +1,7 @@
 <?php
 // includes/bracket.php
 // ระบบจัดการสายการแข่งขันแบบ Single Elimination, Double Elimination และ Playoff พร้อมระบบแยกประเภท (ชาย, หญิง, Open) อัตโนมัติ
+require_once __DIR__ . '/tournament_categories.php';
 
 function ensureDoubleElimSchema($pdo)
 {
@@ -66,8 +67,8 @@ function ensureDoubleElimSchema($pdo)
 function generateSingleEliminationBracket($pdo, $tournamentId)
 {
     ensureDoubleElimSchema($pdo);
-
-    $pdo->prepare("UPDATE tournament_registrations SET status = 'approved' WHERE tournament_id = :tid")->execute(['tid' => $tournamentId]);
+    ensureTournamentCategorySchema($pdo);
+    backfillRegistrationCategories($pdo, $tournamentId);
 
     $check = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tid AND group_id IS NULL");
     $check->execute(['tid' => $tournamentId]);
@@ -98,14 +99,19 @@ function generateSingleEliminationBracket($pdo, $tournamentId)
         if (!isset($groupedTeams[$cat])) {
             $cat = 'open';
         }
-        $groupedTeams[$cat][] = $t['competitor_id'];
+        $groupedTeams[$cat][] = [
+            'competitor_id' => $t['competitor_id'],
+            'category_id' => $t['tournament_category_id'] ?? null,
+        ];
     }
 
     $maxRounds = 1;
 
     foreach ($groupedTeams as $category => $categoryTeamIds) {
         if (count($categoryTeamIds) >= 2) {
-            $rounds = generateEliminationForCategory($pdo, $tournamentId, $categoryTeamIds, $bestOf, 'single_' . $category);
+            $categoryId = $categoryTeamIds[0]['category_id'] ?? null;
+            $categoryIds = array_column($categoryTeamIds, 'competitor_id');
+            $rounds = generateEliminationForCategory($pdo, $tournamentId, $categoryIds, $bestOf, 'single_' . $category, $categoryId);
             if ($rounds > $maxRounds) {
                 $maxRounds = $rounds;
             }
@@ -118,8 +124,8 @@ function generateSingleEliminationBracket($pdo, $tournamentId)
 function generateDoubleEliminationBracket($pdo, $tournamentId)
 {
     ensureDoubleElimSchema($pdo);
-
-    $pdo->prepare("UPDATE tournament_registrations SET status = 'approved' WHERE tournament_id = :tid")->execute(['tid' => $tournamentId]);
+    ensureTournamentCategorySchema($pdo);
+    backfillRegistrationCategories($pdo, $tournamentId);
 
     $check = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tid AND group_id IS NULL");
     $check->execute(['tid' => $tournamentId]);
@@ -150,14 +156,19 @@ function generateDoubleEliminationBracket($pdo, $tournamentId)
         if (!isset($groupedTeams[$cat])) {
             $cat = 'open';
         }
-        $groupedTeams[$cat][] = $t['competitor_id'];
+        $groupedTeams[$cat][] = [
+            'competitor_id' => $t['competitor_id'],
+            'category_id' => $t['tournament_category_id'] ?? null,
+        ];
     }
 
     $maxRounds = 1;
 
     foreach ($groupedTeams as $category => $categoryTeamIds) {
         if (count($categoryTeamIds) >= 2) {
-            $rounds = generateEliminationForCategory($pdo, $tournamentId, $categoryTeamIds, $bestOf, 'double_' . $category);
+            $categoryId = $categoryTeamIds[0]['category_id'] ?? null;
+            $categoryIds = array_column($categoryTeamIds, 'competitor_id');
+            $rounds = generateDoubleEliminationForCategory($pdo, $tournamentId, $categoryIds, $bestOf, $category, $categoryId);
             if ($rounds > $maxRounds) {
                 $maxRounds = $rounds;
             }
@@ -165,6 +176,21 @@ function generateDoubleEliminationBracket($pdo, $tournamentId)
     }
 
     return $maxRounds;
+}
+
+function backfillRegistrationCategories(PDO $pdo, int $tournamentId): void
+{
+    $stmt = $pdo->prepare('SELECT tournament_registration_id, category FROM tournament_registrations
+        WHERE tournament_id = :tournament_id AND (tournament_category_id IS NULL OR tournament_category_id = 0)');
+    $stmt->execute(['tournament_id' => $tournamentId]);
+    $update = $pdo->prepare('UPDATE tournament_registrations SET tournament_category_id = :category_id
+        WHERE tournament_registration_id = :registration_id');
+    foreach ($stmt->fetchAll() as $registration) {
+        $categoryId = getTournamentCategoryId($pdo, $tournamentId, $registration['category'] ?: 'open');
+        if ($categoryId) {
+            $update->execute(['category_id' => $categoryId, 'registration_id' => $registration['tournament_registration_id']]);
+        }
+    }
 }
 
 function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
@@ -181,26 +207,34 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
 
     if ($isIndividual) {
         $stmt = $pdo->prepare("
-            SELECT DISTINCT tr.player_id AS competitor_id, 'open' AS category
+            SELECT DISTINCT tr.player_id AS competitor_id, 'open' AS category, tr.tournament_category_id,
+                tr.seed_no,
+                COALESCE((SELECT pr.points FROM player_rankings pr
+                    WHERE pr.player_id = tr.player_id AND pr.game_id = :game_id
+                    ORDER BY pr.points DESC LIMIT 1), 0) AS ranking_points
             FROM tournament_registrations tr
             WHERE tr.tournament_id = :tid 
               AND tr.player_id IS NOT NULL
-              AND (tr.status = 'approved' OR tr.status = 'checked_in')
-            ORDER BY tr.registered_at ASC
+              AND tr.status = 'approved' AND tr.participation_status = 'qualified_for_draw'
+            ORDER BY (tr.seed_no IS NULL), tr.seed_no ASC, ranking_points DESC, RAND()
         ");
-        $stmt->execute(['tid' => $tournamentId]);
+        $stmt->execute(['tid' => $tournamentId, 'game_id' => $gameId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $stmt = $pdo->prepare("
-            SELECT DISTINCT tr.team_id AS competitor_id, tm.team_category AS category, tm.name AS team_name
+            SELECT DISTINCT tr.team_id AS competitor_id, tr.category AS category, tm.name AS team_name, tr.tournament_category_id,
+                tr.seed_no,
+                COALESCE((SELECT trank.points FROM team_rankings trank
+                    WHERE trank.team_id = tr.team_id AND trank.game_id = :game_id
+                    ORDER BY trank.points DESC LIMIT 1), 0) AS ranking_points
             FROM tournament_registrations tr
             JOIN teams tm ON tm.team_id = tr.team_id
             WHERE tr.tournament_id = :tid 
               AND tr.team_id IS NOT NULL
-              AND (tr.status = 'approved' OR tr.status = 'checked_in')
-            ORDER BY tr.registered_at ASC
+              AND tr.status = 'approved' AND tr.participation_status = 'qualified_for_draw'
+            ORDER BY (tr.seed_no IS NULL), tr.seed_no ASC, ranking_points DESC, RAND()
         ");
-        $stmt->execute(['tid' => $tournamentId]);
+        $stmt->execute(['tid' => $tournamentId, 'game_id' => $gameId]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $results = [];
@@ -214,7 +248,8 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
             }
             $results[] = [
                 'competitor_id' => $row['competitor_id'],
-                'category' => $cat
+                'category' => $cat,
+                'tournament_category_id' => $row['tournament_category_id']
             ];
         }
         return $results;
@@ -231,7 +266,101 @@ function getSeededTeams($pdo, $tournamentId, $gameId)
     return $ids;
 }
 
-function generateEliminationForCategory($pdo, $tournamentId, $seededTeamIds, $bestOf, $btype)
+function generateDoubleEliminationForCategory(PDO $pdo, int $tournamentId, array $seededTeamIds, int $bestOf, string $category, ?int $categoryId): int
+{
+    $teamCount = count($seededTeamIds);
+    if ($teamCount < 2) return 0;
+    $bracketSize = nextPowerOfTwo($teamCount);
+    $roundCount = (int) log($bracketSize, 2);
+    $seedOrder = buildSeedOrder($bracketSize);
+    $insert = $pdo->prepare('INSERT INTO matches
+        (tournament_id, tournament_category_id, group_id, bracket_type, best_of, round_number, match_index, team1_id, team2_id, status)
+        VALUES (:tournament_id, :category_id, NULL, :bracket_type, :best_of, :round_number, :match_index, :team1_id, :team2_id, \'scheduled\')');
+    $winners = [];
+
+    for ($round = 1; $round <= $roundCount; $round++) {
+        $matchCount = (int) ($bracketSize / pow(2, $round));
+        $winners[$round] = [];
+        for ($index = 0; $index < $matchCount; $index++) {
+            $team1 = null;
+            $team2 = null;
+            if ($round === 1) {
+                $team1 = $seededTeamIds[$seedOrder[$index * 2] - 1] ?? null;
+                $team2 = $seededTeamIds[$seedOrder[$index * 2 + 1] - 1] ?? null;
+            }
+            $insert->execute([
+                'tournament_id' => $tournamentId, 'category_id' => $categoryId,
+                'bracket_type' => 'double_winners_' . $category, 'best_of' => $bestOf,
+                'round_number' => $round, 'match_index' => $index,
+                'team1_id' => $team1, 'team2_id' => $team2,
+            ]);
+            $winners[$round][$index] = (int) $pdo->lastInsertId();
+        }
+    }
+    for ($round = 1; $round < $roundCount; $round++) {
+        foreach ($winners[$round] as $index => $matchId) {
+            upsertWinnerEdge($pdo, $matchId, $winners[$round + 1][intdiv($index, 2)], $index % 2 === 0 ? 'team1' : 'team2');
+        }
+    }
+
+    $loserRoundCount = max(1, ($roundCount * 2) - 2);
+    $losers = [];
+    for ($loserRound = 1; $loserRound <= $loserRoundCount; $loserRound++) {
+        $matchCount = max(1, (int) ($bracketSize / pow(2, floor(($loserRound + 1) / 2) + 1)));
+        $losers[$loserRound] = [];
+        for ($index = 0; $index < $matchCount; $index++) {
+            $insert->execute([
+                'tournament_id' => $tournamentId, 'category_id' => $categoryId,
+                'bracket_type' => 'double_losers_' . $category, 'best_of' => $bestOf,
+                'round_number' => $loserRound, 'match_index' => $index,
+                'team1_id' => null, 'team2_id' => null,
+            ]);
+            $losers[$loserRound][$index] = (int) $pdo->lastInsertId();
+        }
+        if ($loserRound > 1) {
+            $previousCount = count($losers[$loserRound - 1]);
+            foreach ($losers[$loserRound - 1] as $index => $matchId) {
+                $nextIndex = count($losers[$loserRound]) === $previousCount ? $index : intdiv($index, 2);
+                upsertWinnerEdge($pdo, $matchId, $losers[$loserRound][$nextIndex], $index % 2 === 0 ? 'team1' : 'team2');
+            }
+        }
+    }
+
+    for ($round = 1; $round <= $roundCount; $round++) {
+        $targetRound = $round === 1 ? 1 : ($round * 2) - 2;
+        if (!isset($losers[$targetRound])) continue;
+        foreach ($winners[$round] as $index => $matchId) {
+            $targetIndex = $round === 1 ? intdiv($index, 2) : $index;
+            $targetIndex = min($targetIndex, count($losers[$targetRound]) - 1);
+            upsertLoserEdge($pdo, $matchId, $losers[$targetRound][$targetIndex], $round === 1 ? ($index % 2 === 0 ? 'team1' : 'team2') : 'team2');
+        }
+    }
+
+    foreach ($winners[1] as $matchId) resolveByeIfNeeded($pdo, $matchId);
+
+    $grandFinalType = 'double_grand_final_' . $category;
+    $insert->execute([
+        'tournament_id' => $tournamentId, 'category_id' => $categoryId,
+        'bracket_type' => $grandFinalType, 'best_of' => $bestOf,
+        'round_number' => $roundCount + 1, 'match_index' => 0,
+        'team1_id' => null, 'team2_id' => null,
+    ]);
+    $grandFinalId = (int) $pdo->lastInsertId();
+    $insert->execute([
+        'tournament_id' => $tournamentId, 'category_id' => $categoryId,
+        'bracket_type' => 'double_grand_final_reset_' . $category, 'best_of' => $bestOf,
+        'round_number' => $roundCount + 2, 'match_index' => 0,
+        'team1_id' => null, 'team2_id' => null,
+    ]);
+    $resetId = (int) $pdo->lastInsertId();
+    $pdo->prepare('UPDATE matches SET reset_match_id = :reset_id WHERE match_id = :grand_final_id')
+        ->execute(['reset_id' => $resetId, 'grand_final_id' => $grandFinalId]);
+    upsertWinnerEdge($pdo, $winners[$roundCount][0], $grandFinalId, 'team1');
+    upsertWinnerEdge($pdo, $losers[$loserRoundCount][0], $grandFinalId, 'team2');
+    return $roundCount + 2;
+}
+
+function generateEliminationForCategory($pdo, $tournamentId, $seededTeamIds, $bestOf, $btype, $categoryId = null)
 {
     $teamCount = count($seededTeamIds);
     if ($teamCount < 2) {
@@ -245,8 +374,8 @@ function generateEliminationForCategory($pdo, $tournamentId, $seededTeamIds, $be
     $matchIds = [];
 
     $insertMatchStmt = $pdo->prepare("
-        INSERT INTO matches (tournament_id, group_id, bracket_type, best_of, round_number, match_index, team1_id, team2_id, status)
-        VALUES (:tid, NULL, :btype, :bo, :round, :idx, :team1, :team2, 'scheduled')
+        INSERT INTO matches (tournament_id, tournament_category_id, group_id, bracket_type, best_of, round_number, match_index, team1_id, team2_id, status)
+        VALUES (:tid, :category_id, NULL, :btype, :bo, :round, :idx, :team1, :team2, 'scheduled')
     ");
 
     for ($round = 1; $round <= $totalRounds; $round++) {
@@ -266,6 +395,7 @@ function generateEliminationForCategory($pdo, $tournamentId, $seededTeamIds, $be
 
             $insertMatchStmt->execute([
                 'tid' => $tournamentId,
+                'category_id' => $categoryId,
                 'btype' => $btype,
                 'bo' => $bestOf,
                 'round' => $round,
@@ -367,7 +497,7 @@ function resolveByeIfNeeded($pdo, $matchId)
         $loserId = null;
 
         $update = $pdo->prepare("
-            UPDATE matches SET winner_team_id = :winner, status = 'walkover', completed_at = NOW()
+            UPDATE matches SET winner_team_id = :winner, status = 'walkover', result_type = 'bye', wo_reason = 'ได้รับ Bye จากการจัดสาย', completed_at = NOW()
             WHERE match_id = :id
         ");
         $update->execute(['winner' => $winnerId, 'id' => $matchId]);
@@ -377,7 +507,7 @@ function resolveByeIfNeeded($pdo, $matchId)
     }
 
     $update = $pdo->prepare("
-        UPDATE matches SET winner_team_id = NULL, status = 'walkover', completed_at = NOW()
+        UPDATE matches SET winner_team_id = NULL, status = 'walkover', result_type = 'bye', wo_reason = 'ไม่มีคู่แข่งขันในรอบนี้', completed_at = NOW()
         WHERE match_id = :id
     ");
     $update->execute(['id' => $matchId]);
@@ -402,6 +532,14 @@ function upsertWinnerEdge($pdo, $matchId, $nextMatchId, $nextSlot)
     $stmt->execute(['mid' => $matchId, 'next_id' => $nextMatchId, 'slot' => $nextSlot]);
 }
 
+function upsertLoserEdge(PDO $pdo, int $matchId, int $nextMatchId, string $nextSlot): void
+{
+    $stmt = $pdo->prepare('INSERT INTO bracket_edges (match_id, loser_next_match_id, loser_next_slot)
+        VALUES (:match_id, :next_match_id, :next_slot)
+        ON DUPLICATE KEY UPDATE loser_next_match_id = VALUES(loser_next_match_id), loser_next_slot = VALUES(loser_next_slot)');
+    $stmt->execute(['match_id' => $matchId, 'next_match_id' => $nextMatchId, 'next_slot' => $nextSlot]);
+}
+
 function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
 {
     $stmt = $pdo->prepare("SELECT tournament_id, bracket_type, round_number, match_index, team1_id, team2_id, reset_match_id FROM matches WHERE match_id = :id");
@@ -411,6 +549,20 @@ function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
     if (!isset($match['round_number'], $match['match_index'])) return;
 
     $bracketType = $match['bracket_type'] ?? 'single';
+
+    if (strpos($bracketType, 'double_grand_final_') === 0
+        && strpos($bracketType, 'reset') === false
+        && (int) $winnerId === (int) $match['team2_id']
+        && !empty($match['reset_match_id'])) {
+        $pdo->prepare("UPDATE matches SET team1_id = :team1, team2_id = :team2, status = 'scheduled',
+                result_type = 'normal', team1_score = NULL, team2_score = NULL, winner_team_id = NULL
+            WHERE match_id = :reset_match_id")
+            ->execute([
+                'team1' => $match['team1_id'],
+                'team2' => $match['team2_id'],
+                'reset_match_id' => $match['reset_match_id'],
+            ]);
+    }
 
     $edgeStmt = $pdo->prepare("
         SELECT next_match_id, next_slot, loser_next_match_id, loser_next_slot
@@ -450,5 +602,14 @@ function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
                 ->execute(['winner' => $winnerId, 'next_id' => $nextMatchId]);
         }
         resolveByeIfNeeded($pdo, $nextMatchId);
+    }
+
+    $loserNextMatchId = $edge['loser_next_match_id'] ?? null;
+    $loserNextSlot = $edge['loser_next_slot'] ?? null;
+    if ($loserId !== null && !empty($loserNextMatchId) && in_array($loserNextSlot, ['team1', 'team2'], true)) {
+        $col = $loserNextSlot === 'team1' ? 'team1_id' : 'team2_id';
+        $pdo->prepare("UPDATE matches SET {$col} = :loser WHERE match_id = :next_id")
+            ->execute(['loser' => $loserId, 'next_id' => $loserNextMatchId]);
+        resolveByeIfNeeded($pdo, $loserNextMatchId);
     }
 }

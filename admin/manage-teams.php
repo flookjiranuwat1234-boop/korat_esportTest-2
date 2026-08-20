@@ -3,9 +3,11 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/tournament_roster.php';
+require_once '../includes/tournament_categories.php';
 require_once '../includes/registration_status.php';
 requireRole('admin');
 ensureTournamentRosterTables($pdo);
+ensureTournamentCategorySchema($pdo);
 ensureRegistrationStatusHistoryTable($pdo);
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
@@ -69,11 +71,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $tourname
                     $error = 'ผู้เล่นนี้อยู่ในทัวร์นาเมนต์นี้แล้ว';
                 } else {
                     $qrToken = strtoupper(bin2hex(random_bytes(5)));
+                    $categoryId = getTournamentCategoryId($pdo, $tournamentId, 'open');
                     $insert = $pdo->prepare("
-                        INSERT INTO tournament_registrations (tournament_id, player_id, category, status, qr_code_token)
-                        VALUES (:tid, :pid, 'open', 'approved', :qr_token)
+                        INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, category, status, qr_code_token)
+                        VALUES (:tid, :category_id, :pid, 'open', 'approved', :qr_token)
                     ");
-                    $insert->execute(['tid' => $tournamentId, 'pid' => $playerId, 'qr_token' => $qrToken]);
+                    $insert->execute(['tid' => $tournamentId, 'category_id' => $categoryId, 'pid' => $playerId, 'qr_token' => $qrToken]);
                     snapshotTournamentRoster($pdo, (int) $pdo->lastInsertId(), null, $playerId);
 
                     // อัปเดต is_athlete = 1 ให้ผู้เล่น
@@ -99,11 +102,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $tourname
                     $error = 'ทีมนี้อยู่ในทัวร์นาเมนต์แล้ว';
                 } else {
                     $qrToken = strtoupper(bin2hex(random_bytes(5)));
+                    $categoryCode = in_array($_POST['category'] ?? 'open', ['male', 'female', 'open'], true) ? $_POST['category'] : 'open';
+                    $categoryId = getTournamentCategoryId($pdo, $tournamentId, $categoryCode);
                     $insert = $pdo->prepare("
-                        INSERT INTO tournament_registrations (tournament_id, team_id, category, status, qr_code_token)
-                        VALUES (:tid, :team_id, 'open', 'approved', :qr_token)
+                        INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, category, status, qr_code_token)
+                        VALUES (:tid, :category_id, :team_id, :category, 'approved', :qr_token)
                     ");
-                    $insert->execute(['tid' => $tournamentId, 'team_id' => $teamId, 'qr_token' => $qrToken]);
+                    $insert->execute(['tid' => $tournamentId, 'category_id' => $categoryId, 'team_id' => $teamId, 'category' => $categoryCode, 'qr_token' => $qrToken]);
                     snapshotTournamentRoster($pdo, (int) $pdo->lastInsertId(), $teamId, null);
 
                     // อัปเดต is_athlete = 1 ให้กับสมาชิกในทีม
@@ -125,13 +130,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $tourname
 if (isset($_GET['approve']) && $tournamentId) {
     $regId = (int) $_GET['approve'];
     
-    $regQuery = $pdo->prepare("SELECT team_id, player_id, qr_code_token FROM tournament_registrations WHERE tournament_registration_id = :id");
+    $regQuery = $pdo->prepare("SELECT team_id, player_id, category, qr_code_token FROM tournament_registrations WHERE tournament_registration_id = :id");
     $regQuery->execute(['id' => $regId]);
     $regData = $regQuery->fetch();
     $targetTeamId = $regData['team_id'] ?? null;
     $targetPlayerId = $regData['player_id'] ?? null;
     $existingToken = $regData['qr_code_token'] ?? '';
     if ($regData) {
+        $categoryId = getTournamentCategoryId($pdo, $tournamentId, $regData['category'] ?: 'open');
+        $pdo->prepare('UPDATE tournament_registrations SET tournament_category_id = :category_id WHERE tournament_registration_id = :registration_id')
+            ->execute(['category_id' => $categoryId, 'registration_id' => $regId]);
         recordRegistrationStatus($pdo, $regId, 'approved', (int) $_SESSION['user_id'], 'อนุมัติโดยผู้ดูแลระบบ');
         snapshotTournamentRoster($pdo, $regId, $targetTeamId ? (int) $targetTeamId : null, $targetPlayerId ? (int) $targetPlayerId : null);
     }
@@ -549,6 +557,13 @@ $csrfToken = generateCsrfToken();
                             <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                             <input type="hidden" name="action" value="<?php echo $isSolo ? 'add_solo' : 'add_team'; ?>">
                             <input type="hidden" name="<?php echo $isSolo ? 'player_id' : 'team_id'; ?>" id="selected_item_id" required>
+                            <?php if (!$isSolo): ?>
+                                <select name="category" class="w-full sm:w-auto bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-xs font-bold">
+                                    <option value="open">Open</option>
+                                    <option value="male">ชาย</option>
+                                    <option value="female">หญิง</option>
+                                </select>
+                            <?php endif; ?>
 
                             <div class="relative w-full sm:w-auto flex-1">
                                 <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">

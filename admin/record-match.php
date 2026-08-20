@@ -4,6 +4,7 @@ require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/ranking.php';
 require_once '../includes/bracket.php';
+require_once '../includes/tournament_categories.php';
 requireRole('admin');
 
 $currentUser = [
@@ -18,6 +19,7 @@ $error = '';
 $success = '';
 
 ensureDoubleElimSchema($pdo);
+ensureTournamentCategorySchema($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_score') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
@@ -25,11 +27,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
     } else {
         $matchId = (int) $_POST['match_id'];
 
-        $checkStmt = $pdo->prepare("SELECT status FROM matches WHERE match_id = :id");
+        $checkStmt = $pdo->prepare("SELECT status, tournament_id FROM matches WHERE match_id = :id");
         $checkStmt->execute(['id' => $matchId]);
-        $currentMatchStatus = $checkStmt->fetchColumn();
+        $matchOwnership = $checkStmt->fetch();
+        $currentMatchStatus = $matchOwnership['status'] ?? false;
 
-        if ($currentMatchStatus == 'completed' || $currentMatchStatus == 'walkover') {
+        if (!$matchOwnership || (int) $matchOwnership['tournament_id'] !== $tournamentId) {
+            $error = 'Match นี้ไม่อยู่ใน Tournament ที่กำลังจัดการ';
+        } elseif ($currentMatchStatus == 'completed' || $currentMatchStatus == 'walkover') {
             $error = 'แมตช์นี้ถูกบันทึกผลการแข่งขันไปแล้ว ไม่สามารถบันทึกซ้ำได้';
         } else {
             $fmtStmt = $pdo->prepare("
@@ -63,6 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                                 status = 'completed', completed_at = NOW()
                             WHERE match_id = :id
                         ")->execute(['s1' => $score1, 's2' => $score2, 'winner' => $winnerId, 'id' => $matchId]);
+                        $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :tournament_id AND status = 'bracket_generated'")
+                            ->execute(['tournament_id' => $tournamentId]);
 
                         if (function_exists('updateRankingsAfterMatch')) {
                             try { @updateRankingsAfterMatch($pdo, $matchId); } catch (Exception $ex) {}
@@ -156,6 +163,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             's1' => $team1GamesWon, 's2' => $team2GamesWon,
                             'winner' => $winnerId, 'id' => $matchId,
                         ]);
+                        $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :tournament_id AND status = 'bracket_generated'")
+                            ->execute(['tournament_id' => $tournamentId]);
 
                         if (function_exists('updateRankingsAfterMatch')) {
                             try { @updateRankingsAfterMatch($pdo, $matchId); } catch (Exception $ex) {}
@@ -178,10 +187,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_schedule') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $matchId = (int) ($_POST['match_id'] ?? 0);
+        $scheduleCheck = $pdo->prepare('SELECT tournament_id FROM matches WHERE match_id = :match_id');
+        $scheduleCheck->execute(['match_id' => $matchId]);
+        if ((int) $scheduleCheck->fetchColumn() !== $tournamentId) {
+            $error = 'Match นี้ไม่อยู่ใน Tournament ที่กำลังจัดการ';
+        } else {
+            $pdo->prepare('UPDATE matches SET scheduled_at = :scheduled_at, venue_name = :venue_name, venue_area = :venue_area
+                WHERE match_id = :match_id')->execute([
+                'scheduled_at' => $_POST['scheduled_at'] !== '' ? str_replace('T', ' ', $_POST['scheduled_at']) : null,
+                'venue_name' => trim($_POST['venue_name'] ?? '') ?: null,
+                'venue_area' => trim($_POST['venue_area'] ?? '') ?: null,
+                'match_id' => $matchId,
+            ]);
+            $success = 'บันทึกวัน เวลา และสนามของ Match แล้ว';
+        }
+    }
+}
+
 $tournaments = $pdo->query("
     SELECT tournament_id, name, format 
     FROM tournaments 
-    WHERE status = 'ongoing' 
+    WHERE status IN ('ongoing', 'bracket_generated')
     ORDER BY name
 ")->fetchAll();
 
@@ -201,7 +232,8 @@ if ($tournamentId) {
                COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name, 
                COALESCE(tr1.category, t1.team_category, 'open') AS team1_cat,
                COALESCE(tr2.category, t2.team_category, 'open') AS team2_cat,
-               tg.name AS group_name
+               tg.name AS group_name,
+               m.tournament_category_id AS match_category_id
         FROM matches m
         JOIN tournaments t ON t.tournament_id = m.tournament_id
         LEFT JOIN teams t1 ON t1.team_id = m.team1_id
@@ -216,6 +248,7 @@ if ($tournamentId) {
         WHERE m.tournament_id = :tid AND m.status != 'cancelled'
     ";
     $params = ['tid' => $tournamentId];
+    $selectedCategoryId = $filterCategory !== 'all' ? getTournamentCategoryId($pdo, $tournamentId, $filterCategory) : null;
 
     if ($teamSearch !== '') {
         $sql .= " AND (t1.name LIKE :search OR u1.username LIKE :search OR t2.name LIKE :search OR u2.username LIKE :search)";
@@ -230,6 +263,9 @@ if ($tournamentId) {
 
     // จัดหมวดหมู่แมตช์ตาม Category ที่เลือก (Male, Female, Open) โดยไม่ทำให้ทีมตกหาย
     foreach ($rawMatches as $m) {
+        if ($selectedCategoryId && !empty($m['match_category_id']) && (int) $m['match_category_id'] !== $selectedCategoryId) {
+            continue;
+        }
         $bt = strtolower($m['bracket_type'] ?? '');
         $c1 = strtolower($m['team1_cat'] ?? 'open');
         $c2 = strtolower($m['team2_cat'] ?? 'open');
@@ -586,6 +622,15 @@ $csrfToken = generateCsrfToken();
                                                     <?php else: ?>
                                                         <span class="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold">รอแข่ง</span>
                                                     <?php endif; ?>
+                                                    <form method="POST" class="mt-2 space-y-1 text-left">
+                                                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
+                                                        <input type="hidden" name="action" value="save_schedule">
+                                                        <input type="hidden" name="match_id" value="<?php echo (int) $m['match_id']; ?>">
+                                                        <input type="datetime-local" name="scheduled_at" value="<?php echo !empty($m['scheduled_at']) ? htmlspecialchars(str_replace(' ', 'T', substr($m['scheduled_at'], 0, 16))) : ''; ?>" class="w-full rounded border border-slate-200 px-1 py-1 text-[10px]">
+                                                        <input type="text" name="venue_name" value="<?php echo htmlspecialchars($m['venue_name'] ?? ''); ?>" placeholder="สนาม" class="w-full rounded border border-slate-200 px-1 py-1 text-[10px]">
+                                                        <input type="text" name="venue_area" value="<?php echo htmlspecialchars($m['venue_area'] ?? ''); ?>" placeholder="พื้นที่" class="w-full rounded border border-slate-200 px-1 py-1 text-[10px]">
+                                                        <button type="submit" class="w-full rounded bg-slate-100 px-1 py-1 text-[10px] font-bold text-slate-700">บันทึก Schedule</button>
+                                                    </form>
                                                 </td>
                                             </tr>
                                             <?php endforeach; ?>

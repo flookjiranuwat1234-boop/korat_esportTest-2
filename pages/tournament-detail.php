@@ -2,6 +2,8 @@
 // pages/tournament-detail.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_categories.php';
+ensureTournamentCategorySchema($pdo);
 
 // ตรวจสอบสถานะการเข้าสู่ระบบ
 $isLoggedIn = isLoggedIn();
@@ -43,6 +45,61 @@ if ($isOpenGame) {
 } elseif ($selectedCategory === 'all') {
     $selectedCategory = 'male';
 }
+$selectedCategoryId = getTournamentCategoryId($pdo, $tournamentId, $selectedCategory);
+$publicTab = $_GET['tab'] ?? 'overview';
+$rankingRows = [];
+if ($tournament['play_mode'] === 'solo') {
+    $rankingStmt = $pdo->prepare('SELECT pr.points, pr.wins, pr.losses, p.display_name AS participant_name
+        FROM player_rankings pr JOIN players p ON p.player_id = pr.player_id
+        WHERE pr.game_id = :game_id AND pr.category = :category
+        ORDER BY pr.points DESC, pr.wins DESC LIMIT 10');
+} else {
+    $rankingStmt = $pdo->prepare('SELECT trank.points, trank.wins, trank.losses, t.name AS participant_name
+        FROM team_rankings trank JOIN teams t ON t.team_id = trank.team_id
+        WHERE trank.game_id = :game_id AND trank.category = :category
+        ORDER BY trank.points DESC, trank.wins DESC LIMIT 10');
+}
+$rankingStmt->execute(['game_id' => $tournament['game_id'], 'category' => $selectedCategory]);
+$rankingRows = $rankingStmt->fetchAll();
+
+$myPlayerId = null;
+$myRegistrations = [];
+$myParticipantIds = [];
+if ($isLoggedIn) {
+    $playerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user_id');
+    $playerStmt->execute(['user_id' => $_SESSION['user_id']]);
+    $myPlayerId = $playerStmt->fetchColumn();
+
+    if ($myPlayerId) {
+        $registrationStmt = $pdo->prepare('SELECT tr.tournament_registration_id, tr.team_id, tr.player_id, tr.status, tr.checkin_status,
+                COALESCE(teams.name, users.username, \'ผู้สมัคร\') AS participant_name
+            FROM tournament_registrations tr
+            LEFT JOIN teams ON teams.team_id = tr.team_id
+            LEFT JOIN players solo_player ON solo_player.player_id = tr.player_id
+            LEFT JOIN users ON users.user_id = solo_player.user_id
+            WHERE tr.tournament_id = :tournament_id
+              AND (tr.player_id = :player_id OR EXISTS (
+                    SELECT 1 FROM team_members my_members
+                    WHERE my_members.team_id = tr.team_id AND my_members.player_id = :player_id AND my_members.is_active = 1
+                ))
+            ORDER BY tr.tournament_registration_id DESC');
+        $registrationStmt->execute(['tournament_id' => $tournamentId, 'player_id' => $myPlayerId]);
+        $myRegistrations = $registrationStmt->fetchAll();
+        foreach ($myRegistrations as $registration) {
+            $myParticipantIds[] = (int) ($registration['team_id'] ?: $registration['player_id']);
+        }
+    }
+}
+
+$tournamentDays = [];
+try {
+    $daysStmt = $pdo->prepare('SELECT day_number, event_date, start_time, end_time, venue_name, notes
+        FROM tournament_days WHERE tournament_id = :tournament_id ORDER BY day_number');
+    $daysStmt->execute(['tournament_id' => $tournamentId]);
+    $tournamentDays = $daysStmt->fetchAll();
+} catch (PDOException $exception) {
+    // The optional Phase 1 migration has not been applied yet.
+}
 
 // ดึง matches ทั้งหมดของทัวร์นาเมนต์ พร้อมปรับกรองประเภทให้แม่นยำขึ้น
 $sqlMatches = "
@@ -66,7 +123,8 @@ $sqlMatches = "
 $paramsMatches = ['tid' => $tournamentId];
 
 if ($tournament['play_mode'] !== 'solo' && !$isOpenGame) {
-    $sqlMatches .= " AND (m.bracket_type LIKE :catSql OR tr1.category = :catExact OR tr2.category = :catExact)";
+    $sqlMatches .= " AND (m.tournament_category_id = :categoryId OR m.bracket_type LIKE :catSql OR tr1.category = :catExact OR tr2.category = :catExact)";
+    $paramsMatches['categoryId'] = $selectedCategoryId;
     $paramsMatches['catSql'] = '%' . $selectedCategory . '%';
     $paramsMatches['catExact'] = $selectedCategory;
 }
@@ -101,7 +159,10 @@ if (empty($matches) && $tournament['play_mode'] !== 'solo' && !$isOpenGame) {
     $mStmtFallback->execute(['tid' => $tournamentId]);
     $allMatches = $mStmtFallback->fetchAll();
     
-    $matches = array_filter($allMatches, function($m) use ($selectedCategory) {
+    $matches = array_filter($allMatches, function($m) use ($selectedCategory, $selectedCategoryId) {
+        if ($selectedCategoryId && !empty($m['tournament_category_id'])) {
+            return (int) $m['tournament_category_id'] === $selectedCategoryId;
+        }
         $bt = strtolower($m['bracket_type'] ?? '');
         $c1 = strtolower($m['team1_cat'] ?? '');
         $c2 = strtolower($m['team2_cat'] ?? '');
@@ -118,7 +179,7 @@ $totalRounds = count($roundsGrouped);
 
 // ตารางคะแนนกลุ่ม (ถ้ามี)
 $groups = $pdo->prepare("
-    SELECT tg.tournament_group_id AS group_id, tg.name AS group_name,
+    SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id,
            gt.team_id, t.name AS team_name, t.team_category,
            gt.played, gt.wins, gt.draws, gt.losses, gt.points, gt.score_diff
     FROM tournament_groups tg
@@ -132,7 +193,10 @@ $groupRows = $groups->fetchAll();
 
 $groupedStandings = [];
 foreach ($groupRows as $row) {
-    if (!$isOpenGame && ($row['team_category'] ?? '') !== $selectedCategory) {
+    if ($selectedCategoryId && !empty($row['tournament_category_id']) && (int) $row['tournament_category_id'] !== $selectedCategoryId) {
+        continue;
+    }
+    if (!$selectedCategoryId && !$isOpenGame && ($row['team_category'] ?? '') !== $selectedCategory) {
         continue;
     }
     $groupedStandings[$row['group_name']][] = $row;
@@ -436,6 +500,19 @@ function roundName($roundNum, $totalRounds)
                             <?php echo htmlspecialchars($tournamentName); ?>
                         </h1>
                         <p class="text-gray-300">เกม: <?php echo htmlspecialchars($tournament['game_name']); ?></p>
+                        <?php foreach ($myRegistrations as $registration): ?>
+                            <?php
+                                $entryState = $registration['status'] === 'approved'
+                                    ? ($registration['checkin_status'] === 'checked_in' ? 'อนุมัติและเช็กอินแล้ว' : 'อนุมัติ รอเช็กอิน')
+                                    : ($registration['status'] === 'rejected' ? 'ไม่ผ่านการอนุมัติ' : 'รออนุมัติ');
+                                $entryClass = $registration['status'] === 'approved'
+                                    ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
+                                    : ($registration['status'] === 'rejected' ? 'bg-rose-500/15 border-rose-400/40 text-rose-200' : 'bg-amber-500/15 border-amber-400/40 text-amber-200');
+                            ?>
+                            <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold <?php echo $entryClass; ?>">
+                                <i class="fa-solid fa-user-check"></i> <?php echo htmlspecialchars($registration['participant_name']); ?>: <?php echo $entryState; ?>
+                            </span>
+                        <?php endforeach; ?>
                     </div>
 
                     <?php if (($tournament['status'] ?? '') == 'registration_open'): ?>
@@ -450,12 +527,20 @@ function roundName($roundNum, $totalRounds)
             </div>
         </section>
 
+        <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 w-full" aria-label="Tournament sections">
+            <div class="glass-panel rounded-2xl p-2 flex gap-2 overflow-x-auto border border-white/15">
+                <?php foreach ([['overview', 'รายละเอียด', 'fa-circle-info'], ['rules', 'กติกา', 'fa-scroll'], ['schedule', 'ตารางแข่งขัน', 'fa-calendar-days'], ['groups', 'Group Stage', 'fa-table-cells-large'], ['bracket', 'สายแข่งขัน', 'fa-sitemap'], ['ranking', 'Ranking', 'fa-ranking-star']] as $tabItem): ?>
+                    <a href="?id=<?php echo $tournamentId; ?>&category=<?php echo urlencode($selectedCategory); ?>&tab=<?php echo $tabItem[0]; ?>#<?php echo $tabItem[0]; ?>" class="whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold <?php echo $publicTab === $tabItem[0] ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/5 text-gray-300 hover:bg-white/10'; ?>"><i class="fa-solid <?php echo $tabItem[2]; ?> mr-1"></i><?php echo $tabItem[1]; ?></a>
+                <?php endforeach; ?>
+            </div>
+        </nav>
+
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-12">
 
             <!-- ================= 4. RULES & SCHEDULE TIMELINE SECTION ================= -->
-            <section class="grid grid-cols-1 md:grid-cols-2 gap-6" data-aos="fade-up" data-aos-duration="800">
+            <section id="overview" class="grid grid-cols-1 md:grid-cols-2 gap-6" data-aos="fade-up" data-aos-duration="800">
                 <?php if (!empty($tournament['rules'] ?? '')): ?>
-                    <div class="glass-panel p-6 rounded-3xl border border-white/15 shadow-xl space-y-3 flex flex-col justify-between">
+                    <div id="rules" class="glass-panel p-6 rounded-3xl border border-white/15 shadow-xl space-y-3 flex flex-col justify-between">
                         <div>
                             <h3 class="text-base font-bold font-display text-brand-orange uppercase tracking-wider flex items-center gap-2 border-b border-white/10 pb-3">
                                 <i class="fa-solid fa-scroll"></i> กฎกติกาการแข่งขัน (RULES)
@@ -472,7 +557,7 @@ function roundName($roundNum, $totalRounds)
                     </div>
                 <?php endif; ?>
 
-                <div class="glass-panel p-6 rounded-3xl border border-white/15 shadow-xl space-y-4 relative overflow-hidden flex flex-col justify-between">
+                <div id="schedule" class="glass-panel p-6 rounded-3xl border border-white/15 shadow-xl space-y-4 relative overflow-hidden flex flex-col justify-between">
                     <div class="absolute -right-10 -bottom-10 w-40 h-40 bg-brand-orange/10 rounded-full blur-3xl pointer-events-none"></div>
                     <div>
                         <h3 class="text-base font-bold font-display text-amber-400 uppercase tracking-wider flex items-center gap-2 border-b border-white/10 pb-3">
@@ -488,6 +573,21 @@ function roundName($roundNum, $totalRounds)
                                     <?php echo ($tournament['status'] == 'registration_open') ? 'เปิดรับสมัครอยู่' : 'ปิดรับสมัคร / กำลังแข่ง'; ?>
                                 </span>
                             </div>
+
+                            <?php foreach ($tournamentDays as $day): ?>
+                                <div class="flex items-center justify-between gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
+                                    <span class="text-gray-400 flex items-center gap-2">
+                                        <i class="fa-solid fa-calendar-day text-brand-cyber"></i> วันที่ <?php echo (int) $day['day_number']; ?>
+                                    </span>
+                                    <span class="text-right text-xs font-semibold text-white">
+                                        <?php echo date('d / m / Y', strtotime($day['event_date'])); ?>
+                                        <?php if ($day['start_time']): ?>
+                                            <span class="text-gray-400"> <?php echo date('H:i', strtotime($day['start_time'])); ?><?php echo $day['end_time'] ? ' - ' . date('H:i', strtotime($day['end_time'])) : ''; ?></span>
+                                        <?php endif; ?>
+                                        <?php if ($day['venue_name']): ?><span class="block text-[10px] text-gray-400"><?php echo htmlspecialchars($day['venue_name']); ?></span><?php endif; ?>
+                                    </span>
+                                </div>
+                            <?php endforeach; ?>
 
                             <div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                                 <span class="text-gray-400 flex items-center gap-2">
@@ -528,7 +628,7 @@ function roundName($roundNum, $totalRounds)
 
             <!-- ================= 5. GROUP STAGE STANDINGS ================= -->
             <?php if (!empty($groupedStandings)): ?>
-                <section class="space-y-6" data-aos="fade-up" data-aos-duration="900">
+                <section id="groups" class="space-y-6" data-aos="fade-up" data-aos-duration="900">
                     <div class="flex items-center gap-3 border-b border-white/15 pb-4">
                         <i class="fa-solid fa-table-cells-large text-brand-orange text-2xl"></i>
                         <div>
@@ -588,7 +688,7 @@ function roundName($roundNum, $totalRounds)
             <?php endif; ?>
 
             <!-- ================= 6. TOURNAMENT BRACKET ================= -->
-            <section class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
+            <section id="bracket" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/15 pb-4 gap-4">
                     <div class="flex items-center gap-3">
                         <i class="fa-solid fa-sitemap text-brand-orange text-2xl"></i>
@@ -633,19 +733,33 @@ function roundName($roundNum, $totalRounds)
                                     <div class="flex flex-col justify-around h-full">
                                         <?php foreach ($roundMatches as $m):
                                             $isDecided = !empty($m['winner_team_id']);
+                                            $isWalkover = ($m['status'] ?? '') === 'walkover';
+                                            $isBye = !$isWalkover && $isDecided && (empty($m['team1_id']) || empty($m['team2_id']));
                                         ?>
                                             <div class="glass-card rounded-2xl border border-white/15 overflow-hidden shadow-lg p-1.5 space-y-1 bracket-match"
                                                 data-match-id="<?php echo $m['match_id']; ?>"
                                                 data-decided="<?php echo $isDecided ? '1' : '0'; ?>"
                                                 data-winner-id="<?php echo $m['winner_team_id'] ?? ''; ?>">
+                                                <?php if (!empty($m['scheduled_at']) || !empty($m['venue_name']) || !empty($m['venue_area'])): ?>
+                                                    <div class="px-2 py-1 text-[10px] text-gray-400 border-b border-white/10">
+                                                        <?php if (!empty($m['scheduled_at'])): ?><i class="fa-regular fa-clock mr-1 text-brand-cyber"></i><?php echo date('d/m/Y H:i', strtotime($m['scheduled_at'])); ?><?php endif; ?>
+                                                        <?php if (!empty($m['venue_name']) || !empty($m['venue_area'])): ?><span class="ml-2"><i class="fa-solid fa-location-dot mr-1 text-brand-orange"></i><?php echo htmlspecialchars($m['venue_name'] ?: 'สนาม'); ?><?php if (!empty($m['venue_area'])): ?> / <?php echo htmlspecialchars($m['venue_area']); ?><?php endif; ?></span><?php endif; ?>
+                                                    </div>
+                                                <?php endif; ?>
+                                                <?php if ($isWalkover || $isBye): ?>
+                                                    <div class="px-2 py-1 text-center text-[10px] font-black uppercase rounded-lg <?php echo $isWalkover ? 'bg-rose-500/25 text-rose-200' : 'bg-amber-500/20 text-amber-200'; ?>">
+                                                        <i class="fa-solid <?php echo $isWalkover ? 'fa-flag-checkered' : 'fa-forward-step'; ?> mr-1"></i><?php echo $isWalkover ? 'ชนะผ่าน WO' : 'ชนะบาย (Bye)'; ?>
+                                                    </div>
+                                                <?php endif; ?>
                                         
                                                 <?php 
                                                     $isT1Winner = ($m['winner_team_id'] == $m['team1_id'] && $m['team1_id']);
                                                     $t1Id = $m['team1_id'] ?? 'none';
                                                     $t1Name = $m['team1_name'] ?? 'รอผู้ชนะรอบก่อน';
+                                                    $isMyTeam1 = in_array((int) ($m['team1_id'] ?? 0), $myParticipantIds, true);
                                                 ?>
                                                 <div onmouseenter="highlightTeamPath('<?php echo $t1Id; ?>')" onmouseleave="resetTeamPath()"
-                                                    class="bracket-match-team flex items-center justify-between p-2.5 rounded-xl transition-all <?php echo $isT1Winner ? 'bg-brand-orange/40 border border-brand-orange text-white shadow-[0_0_15px_rgba(255,85,0,0.6)]' : 'bg-black/40 text-gray-300'; ?>"
+                                                    class="bracket-match-team flex items-center justify-between p-2.5 rounded-xl transition-all <?php echo $isT1Winner ? 'bg-brand-orange/40 border border-brand-orange text-white shadow-[0_0_15px_rgba(255,85,0,0.6)]' : ($isMyTeam1 ? 'bg-cyan-500/20 border border-cyan-300/60 text-white' : 'bg-black/40 text-gray-300'); ?>"
                                                     data-team-id="<?php echo $t1Id; ?>">
                                                     <span class="text-xs font-bold truncate max-w-[170px] flex items-center gap-1.5">
                                                         <?php if ($isT1Winner): ?><i class="fa-solid fa-trophy text-amber-400 text-[10px]"></i><?php endif; ?>
@@ -660,9 +774,10 @@ function roundName($roundNum, $totalRounds)
                                                     $isT2Winner = ($m['winner_team_id'] == $m['team2_id'] && $m['team2_id']);
                                                     $t2Id = $m['team2_id'] ?? 'none';
                                                     $t2Name = $m['team2_name'] ?? 'รอผู้ชนะรอบก่อน';
+                                                    $isMyTeam2 = in_array((int) ($m['team2_id'] ?? 0), $myParticipantIds, true);
                                                 ?>
                                                 <div onmouseenter="highlightTeamPath('<?php echo $t2Id; ?>')" onmouseleave="resetTeamPath()"
-                                                    class="bracket-match-team flex items-center justify-between p-2.5 rounded-xl transition-all <?php echo $isT2Winner ? 'bg-brand-orange/40 border border-brand-orange text-white shadow-[0_0_15px_rgba(255,85,0,0.6)]' : 'bg-black/40 text-gray-300'; ?>"
+                                                    class="bracket-match-team flex items-center justify-between p-2.5 rounded-xl transition-all <?php echo $isT2Winner ? 'bg-brand-orange/40 border border-brand-orange text-white shadow-[0_0_15px_rgba(255,85,0,0.6)]' : ($isMyTeam2 ? 'bg-cyan-500/20 border border-cyan-300/60 text-white' : 'bg-black/40 text-gray-300'); ?>"
                                                     data-team-id="<?php echo $t2Id; ?>">
                                                     <span class="text-xs font-bold truncate max-w-[170px] flex items-center gap-1.5">
                                                         <?php if ($isT2Winner): ?><i class="fa-solid fa-trophy text-amber-400 text-[10px]"></i><?php endif; ?>
@@ -687,7 +802,19 @@ function roundName($roundNum, $totalRounds)
                 <?php endif; ?>
             </section>
 
-            <!-- ================= 7. RECOMMENDED LODGING ================= -->
+            <section id="ranking" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
+                <div class="flex items-center gap-3 border-b border-white/15 pb-4">
+                    <i class="fa-solid fa-ranking-star text-amber-400 text-2xl"></i>
+                    <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">Ranking <?php echo htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400">คะแนนแยกตามเกมและ Category ของ Tournament นี้</p></div>
+                </div>
+                <div class="glass-panel rounded-2xl overflow-hidden border border-white/15">
+                    <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับ</th><th class="p-3">ผู้แข่งขัน</th><th class="p-3 text-center">คะแนน</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
+                    <?php if (!$rankingRows): ?><tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูล Ranking</td></tr><?php endif; ?>
+                    <?php foreach ($rankingRows as $rankIndex => $ranking): ?><tr class="hover:bg-white/10"><td class="p-3 font-bold text-brand-orange">#<?php echo $rankIndex + 1; ?></td><td class="p-3 font-bold text-white"><?php echo htmlspecialchars($ranking['participant_name']); ?></td><td class="p-3 text-center font-display text-brand-orange"><?php echo (float) $ranking['points']; ?></td><td class="p-3 text-center text-emerald-300"><?php echo (int) $ranking['wins']; ?></td><td class="p-3 text-center text-rose-300"><?php echo (int) $ranking['losses']; ?></td></tr><?php endforeach; ?></tbody></table>
+                </div>
+            </section>
+
+            <!-- ================= 8. RECOMMENDED LODGING ================= -->
             <?php if (!empty($accommodations)): ?>
                 <section class="space-y-6 pt-4" data-aos="fade-up" data-aos-duration="1000">
                     <div class="flex items-center gap-3 border-b border-white/15 pb-4">

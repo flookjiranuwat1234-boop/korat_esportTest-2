@@ -109,3 +109,69 @@ CREATE TABLE IF NOT EXISTS `tournament_days` (
     CONSTRAINT `tournament_days_tournament_fk`
         FOREIGN KEY (`tournament_id`) REFERENCES `tournaments` (`tournament_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Phase 2: multi-category tournaments, participation/DQ tracking, WO/bye matches, check-in waivers.
+
+CREATE TABLE IF NOT EXISTS `tournament_categories` (
+    `tournament_category_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `tournament_id` INT UNSIGNED NOT NULL,
+    `category_code` VARCHAR(30) NOT NULL,
+    `label` VARCHAR(100) NOT NULL,
+    `max_participants` INT UNSIGNED NULL,
+    `format` VARCHAR(30) NOT NULL DEFAULT 'single_elimination',
+    `group_size` INT UNSIGNED NULL,
+    `teams_advance_per_group` INT UNSIGNED NULL,
+    `starters_count` INT UNSIGNED NULL,
+    `substitutes_count` INT UNSIGNED NULL,
+    `checkin_required_roles` VARCHAR(255) NULL,
+    `seed_method` VARCHAR(30) NOT NULL DEFAULT 'ranking',
+    `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`tournament_category_id`),
+    UNIQUE KEY `tournament_category_unique` (`tournament_id`, `category_code`),
+    CONSTRAINT `tournament_categories_tournament_fk`
+        FOREIGN KEY (`tournament_id`) REFERENCES `tournaments` (`tournament_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE `tournaments`
+    ADD COLUMN IF NOT EXISTS `checkin_open_at` DATETIME NULL,
+    ADD COLUMN IF NOT EXISTS `checkin_close_at` DATETIME NULL;
+
+ALTER TABLE `tournament_registrations`
+    ADD COLUMN IF NOT EXISTS `tournament_category_id` INT UNSIGNED NULL,
+    ADD COLUMN IF NOT EXISTS `participation_status` VARCHAR(30) NOT NULL DEFAULT 'registered',
+    ADD COLUMN IF NOT EXISTS `roster_locked_at` DATETIME NULL,
+    ADD COLUMN IF NOT EXISTS `seed_no` INT UNSIGNED NULL;
+
+ALTER TABLE `tournament_registration_members`
+    ADD COLUMN IF NOT EXISTS `checkin_waived_reason` VARCHAR(500) NULL,
+    ADD COLUMN IF NOT EXISTS `checkin_waived_by` INT UNSIGNED NULL,
+    ADD COLUMN IF NOT EXISTS `checkin_waived_at` DATETIME NULL;
+
+ALTER TABLE `matches`
+    ADD COLUMN IF NOT EXISTS `result_type` VARCHAR(20) NOT NULL DEFAULT 'normal',
+    ADD COLUMN IF NOT EXISTS `wo_reason` VARCHAR(500) NULL,
+    ADD COLUMN IF NOT EXISTS `tournament_category_id` INT UNSIGNED NULL,
+    ADD COLUMN IF NOT EXISTS `scheduled_at` DATETIME NULL,
+    ADD COLUMN IF NOT EXISTS `venue_name` VARCHAR(255) NULL,
+    ADD COLUMN IF NOT EXISTS `venue_area` VARCHAR(100) NULL;
+
+ALTER TABLE `tournament_groups`
+    ADD COLUMN IF NOT EXISTS `tournament_category_id` INT UNSIGNED NULL;
+
+CREATE TABLE IF NOT EXISTS `ranking_history` (
+    `ranking_history_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `game_id` INT UNSIGNED NOT NULL,
+    `tournament_id` INT UNSIGNED NOT NULL,
+    `tournament_category_id` INT UNSIGNED NULL,
+    `match_id` INT UNSIGNED NULL,
+    `player_id` INT UNSIGNED NULL,
+    `team_id` INT UNSIGNED NULL,
+    `result_code` VARCHAR(20) NOT NULL,
+    `points` DECIMAL(10,2) NOT NULL DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`ranking_history_id`),
+    KEY `ranking_history_tournament_idx` (`tournament_id`),
+    KEY `ranking_history_player_idx` (`player_id`),
+    KEY `ranking_history_team_idx` (`team_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

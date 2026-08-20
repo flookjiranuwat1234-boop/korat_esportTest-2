@@ -4,8 +4,10 @@ require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/upload.php';
 require_once '../includes/team_roles.php';
+require_once '../includes/tournament_categories.php';
 requireLogin();
 ensureTeamMemberRolesTable($pdo);
+ensureTournamentCategorySchema($pdo);
 
 $teamId = (int) ($_GET['id'] ?? 0);
 $error = '';
@@ -28,6 +30,14 @@ if (!$team) {
 }
 
 $isCaptain = ($team['captain_player_id'] == $myPlayerId);
+$rosterLockStmt = $pdo->prepare('SELECT tr.roster_locked_at, COALESCE(tour.roster_lock_at, tour.checkin_close_at) AS roster_lock_deadline
+    FROM tournament_registrations tr
+    JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
+    WHERE tr.team_id = :team_id AND tr.status = \'approved\'
+    ORDER BY tr.tournament_registration_id DESC LIMIT 1');
+$rosterLockStmt->execute(['team_id' => $teamId]);
+$rosterLock = $rosterLockStmt->fetch();
+$rosterLocked = $rosterLock && ($rosterLock['roster_locked_at'] || ($rosterLock['roster_lock_deadline'] && strtotime($rosterLock['roster_lock_deadline']) <= time()));
 
 // อัปโหลดโลโก้ทีม (กัปตันเท่านั้น)
 if ($isCaptain && $_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update_logo') {
@@ -52,7 +62,7 @@ if ($isCaptain && $_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '
 }
 
 // เพิ่มสมาชิก (กัปตันเท่านั้น) — ค้นหาจากชื่อในเกม
-if ($isCaptain && $_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'add_member') {
+if ($isCaptain && !$rosterLocked && $_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'add_member') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
@@ -73,7 +83,7 @@ if ($isCaptain && $_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '
 }
 
 // เปลี่ยนหลายบทบาทของสมาชิก (กัปตันจัดการได้เฉพาะทีมตัวเอง)
-if ($isCaptain && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_member_roles') {
+if ($isCaptain && !$rosterLocked && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_member_roles') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
@@ -93,7 +103,7 @@ if ($isCaptain && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? 
 }
 
 // เอาสมาชิกออก (กัปตันเท่านั้น เอาตัวเองออกไม่ได้)
-if ($isCaptain && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remove_member') {
+if ($isCaptain && !$rosterLocked && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remove_member') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
@@ -106,6 +116,10 @@ if ($isCaptain && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? 
             $success = 'เอาสมาชิกออกจากทีมแล้ว';
         }
     }
+}
+
+if ($isCaptain && $rosterLocked && $_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['add_member', 'update_member_roles', 'remove_member'], true)) {
+    $error = 'Tournament Roster ถูกล็อกแล้ว กรุณาให้ Admin ปลดล็อกหรือแก้ไขพร้อมบันทึกเหตุผล';
 }
 
 // ค้นหาผู้เล่นเพื่อเพิ่มเข้าทีม (ค้นได้ทุกคนในระบบ ไม่จำกัดว่าเคยอยู่ทีมไหน)
@@ -157,8 +171,13 @@ $csrfToken = generateCsrfToken();
 
         <?php if ($error): ?><p class="error"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
         <?php if ($success): ?><p class="success"><?php echo htmlspecialchars($success); ?></p><?php endif; ?>
+        <?php if ($rosterLocked): ?>
+            <p class="error">Tournament Roster ถูกล็อกแล้ว การแก้สมาชิกทีมปัจจุบันจะไม่กระทบ Roster ที่อนุมัติแล้ว และต้องให้ Admin ปลดล็อกก่อน</p>
+        <?php else: ?>
+            <p>การแก้สมาชิกทีมปัจจุบันจะไม่เปลี่ยน Tournament Roster ที่ส่งและอนุมัติแล้ว</p>
+        <?php endif; ?>
 
-        <?php if ($isCaptain): ?>
+        <?php if ($isCaptain && !$rosterLocked): ?>
             <form method="POST" enctype="multipart/form-data" style="display:flex; gap:10px; align-items:center; max-width:none; margin-bottom:1.5rem;">
                 <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                 <input type="hidden" name="action" value="update_logo">
@@ -177,7 +196,7 @@ $csrfToken = generateCsrfToken();
                     <?php if ($m['player_id'] == $team['captain_player_id']): ?> (กัปตัน)<?php endif; ?>
                 </td>
                 <td><?php echo htmlspecialchars(implode(', ', $m['role_codes'] ?: ['-'])); ?></td>
-                <?php if ($isCaptain): ?>
+                <?php if ($isCaptain && !$rosterLocked): ?>
                 <td>
                     <form method="POST" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                         <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
@@ -203,7 +222,7 @@ $csrfToken = generateCsrfToken();
             <?php endforeach; ?>
         </table>
 
-        <?php if ($isCaptain): ?>
+        <?php if ($isCaptain && !$rosterLocked): ?>
             <h2>เพิ่มสมาชิก</h2>
             <form method="GET">
                 <input type="hidden" name="id" value="<?php echo $teamId; ?>">

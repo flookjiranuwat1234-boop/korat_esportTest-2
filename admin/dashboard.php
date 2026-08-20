@@ -2,7 +2,9 @@
 // admin/dashboard.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_categories.php';
 requireRole('admin');
+ensureTournamentCategorySchema($pdo);
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
 $currentUser = [
@@ -15,12 +17,13 @@ $importedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn(
 $claimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NOT NULL")->fetchColumn();
 $unclaimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NULL")->fetchColumn();
 
-// 3) เกณฑ์ "นักกีฬาตัวจริง": มีบัญชีผู้ใช้ + มีประวัติการเช็คอินถาวรในระบบ (ข้อมูลไม่หายแม้ลบทัวร์นาเมนต์)
+// 3) นักกีฬาตัวจริง: มีบัญชีผู้ใช้และเช็คอินผ่าน Tournament Roster แล้ว
 $confirmedAthleteCount = $pdo->query("
     SELECT COUNT(DISTINCT p.player_id)
     FROM players p
-    JOIN player_checkin_history ch ON ch.player_id = p.player_id
+    JOIN tournament_registration_members trm ON trm.player_id = p.player_id
     WHERE p.user_id IS NOT NULL
+      AND trm.checkin_status IN ('checked_in', 'waived')
 ")->fetchColumn();
 
 // 4) บัญชีผู้ใช้ทั้งหมด (ไม่นับ admin)
@@ -33,21 +36,12 @@ $profileOnlyNoTournamentCount = $pdo->query("
     JOIN players p ON p.user_id = u.user_id
     WHERE u.role != 'admin'
       AND NOT EXISTS (
-          SELECT 1 FROM player_checkin_history ch
-          WHERE ch.player_id = p.player_id
+          SELECT 1 FROM tournament_registration_members trm
+          WHERE trm.player_id = p.player_id AND trm.checkin_status IN ('checked_in', 'waived')
       )
 ")->fetchColumn();
 
-// 6) บัญชีสมาชิกที่ยังไม่เคยเช็คอินเข้าแข่งขันเลย (ตรงกับหน้าจัดการสมาชิก)
-$membersNoTournamentCount = $pdo->query("
-    SELECT COUNT(*) FROM users u
-    WHERE u.role != 'admin'
-      AND NOT EXISTS (
-          SELECT 1 FROM players p 
-          JOIN player_checkin_history ch ON p.player_id = ch.player_id
-          WHERE p.user_id = u.user_id
-      )
-")->fetchColumn();
+$noProfileCount = max(0, (int) $memberCount - (int) $claimedPlayerCount);
 
 // คำนวณเปอร์เซ็นต์สำหรับ Progress Bars
 $memberPieTotal = max(1, $memberCount);
@@ -66,6 +60,23 @@ $pendingMatches = $pdo->query("
     SELECT COUNT(*) FROM matches
     WHERE status = 'scheduled' AND team1_id IS NOT NULL AND team2_id IS NOT NULL
 ")->fetchColumn();
+$openTournamentCount = $pdo->query("SELECT COUNT(*) FROM tournaments WHERE status = 'registration_open'")->fetchColumn();
+$checkinTournamentCount = $pdo->query("SELECT COUNT(*) FROM tournaments WHERE status = 'checkin_open'
+    OR (checkin_open_at IS NOT NULL AND checkin_open_at <= NOW() AND (checkin_close_at IS NULL OR checkin_close_at >= NOW()))")->fetchColumn();
+$pendingRegistrationCount = $pdo->query("SELECT COUNT(*) FROM tournament_registrations WHERE status = 'pending'")->fetchColumn();
+$incompleteCheckinCount = $pdo->query("SELECT COUNT(*) FROM tournament_registrations tr
+    WHERE tr.status = 'approved'
+      AND EXISTS (SELECT 1 FROM tournament_registration_members req WHERE req.tournament_registration_id = tr.tournament_registration_id AND req.is_required_for_checkin = 1)
+      AND EXISTS (SELECT 1 FROM tournament_registration_members waiting WHERE waiting.tournament_registration_id = tr.tournament_registration_id AND waiting.is_required_for_checkin = 1 AND waiting.checkin_status NOT IN ('checked_in', 'waived'))")->fetchColumn();
+$readyForDrawCount = $pdo->query("SELECT COUNT(*) FROM tournaments t
+        WHERE t.status NOT IN ('completed', 'cancelled', 'archived')
+            AND EXISTS (SELECT 1 FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id AND tr.participation_status = 'qualified_for_draw')
+            AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.tournament_id = t.tournament_id)")->fetchColumn();
+$completedTournamentCount = $pdo->query("SELECT COUNT(*) FROM tournaments WHERE status = 'completed'")->fetchColumn();
+$upcomingTournamentCount = $pdo->query("SELECT COUNT(*) FROM tournaments
+        WHERE status NOT IN ('completed', 'cancelled', 'archived')
+            AND start_date IS NOT NULL AND start_date BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)")->fetchColumn();
+$urgentTaskCount = (int) $incompleteCheckinCount + (int) $pendingMatches + (int) $pendingRegistrationCount + (int) $readyForDrawCount + (int) $upcomingTournamentCount;
 
 // ================= ดูทัวร์นาเมนต์แยกเป็นรายปี =================
 $availableYears = $pdo->query("
@@ -89,8 +100,15 @@ $ongoingCountYear->execute(['y' => $selectedYear]);
 $ongoingCountYear = $ongoingCountYear->fetchColumn();
 
 $tournamentsByYear = $pdo->prepare("
-    SELECT t.tournament_id, t.name, t.status, t.created_at, g.name AS game_name,
-        (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.tournament_id AND status = 'approved') AS team_count
+    SELECT t.tournament_id, t.name, t.status, t.created_at, t.image_path, t.start_date, g.name AS game_name,
+        (SELECT GROUP_CONCAT(DISTINCT category_code ORDER BY tournament_category_id SEPARATOR ', ') FROM tournament_categories WHERE tournament_id = t.tournament_id AND is_active = 1) AS category_labels,
+        (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.tournament_id) AS registered_count,
+        (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.tournament_id AND status = 'approved') AS approved_count,
+        (SELECT COUNT(*) FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id AND tr.status = 'approved'
+            AND EXISTS (SELECT 1 FROM tournament_registration_members req WHERE req.tournament_registration_id = tr.tournament_registration_id AND req.is_required_for_checkin = 1)
+            AND NOT EXISTS (SELECT 1 FROM tournament_registration_members waiting WHERE waiting.tournament_registration_id = tr.tournament_registration_id AND waiting.is_required_for_checkin = 1 AND waiting.checkin_status NOT IN ('checked_in', 'waived'))) AS checkin_complete_count,
+        (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id) AS total_match_count,
+        (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id AND status IN ('completed', 'walkover')) AS completed_match_count
     FROM tournaments t
     JOIN games g ON g.game_id = t.game_id
     WHERE YEAR(t.created_at) = :y
@@ -100,9 +118,11 @@ $tournamentsByYear->execute(['y' => $selectedYear]);
 $tournamentsByYear = $tournamentsByYear->fetchAll();
 
 $pendingRegs = $pdo->query("
-    SELECT tr.tournament_registration_id AS reg_id, t.name AS team_name, tour.tournament_id AS tournament_id, tour.name AS tournament_name, tr.registered_at
+    SELECT tr.tournament_registration_id AS reg_id, COALESCE(t.name, u.username, 'ผู้สมัครเดี่ยว') AS team_name, tour.tournament_id AS tournament_id, tour.name AS tournament_name, tr.registered_at
     FROM tournament_registrations tr
-    JOIN teams t ON t.team_id = tr.team_id
+    LEFT JOIN teams t ON t.team_id = tr.team_id
+    LEFT JOIN players p ON p.player_id = tr.player_id
+    LEFT JOIN users u ON u.user_id = p.user_id
     JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
     WHERE tr.status = 'pending'
     ORDER BY tr.registered_at
@@ -316,21 +336,21 @@ $openTournaments = $pdo->query("
             <!-- STAT CARDS -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 
-                <!-- Card 1: ทีมทั้งหมด -->
-                <a href="manage-teams.php" class="stat-card-light p-5 rounded-2xl relative block group">
+                <!-- Card 1: สมาชิกทั้งหมด -->
+                <a href="manage-members.php" class="stat-card-light p-5 rounded-2xl relative block group">
                     <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">ทีมทั้งหมด</span>
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">สมาชิกทั้งหมด</span>
                         <div class="w-9 h-9 rounded-xl bg-orange-50 text-brand-orange flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
                             <i class="fa-solid fa-people-group"></i>
                         </div>
                     </div>
                     <div class="flex items-end justify-between">
                         <div>
-                            <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $teamCount; ?>">0</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">ทีมที่สมัครผ่านเว็บจริง (ไม่รวมทีมนำเข้า)</p>
+                            <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $memberCount; ?>">0</h3>
+                            <p class="text-[11px] text-slate-400 mt-1">บัญชีสมาชิกทั้งหมดในระบบ</p>
                         </div>
                         <span class="text-xs font-bold text-brand-orange opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
-                            จัดการ <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                            จัดการสมาชิก <i class="fa-solid fa-arrow-right text-[10px]"></i>
                         </span>
                     </div>
                 </a>
@@ -354,21 +374,21 @@ $openTournaments = $pdo->query("
                     </div>
                 </a>
 
-                <!-- Card 3: สมาชิกยังไม่เคยแข่ง -->
-                <a href="manage-members.php" class="stat-card-light p-5 rounded-2xl relative block group">
+                <!-- Card 3: ทีมที่ใช้งานอยู่ -->
+                <a href="manage-teams.php" class="stat-card-light p-5 rounded-2xl relative block group">
                     <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">สมาชิกยังไม่เคยแข่ง</span>
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-500">ทีมที่ใช้งานอยู่</span>
                         <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
                             <i class="fa-solid fa-users"></i>
                         </div>
                     </div>
                     <div class="flex items-end justify-between">
                         <div>
-                            <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $membersNoTournamentCount; ?>">0</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">บัญชีสมัครสมาชิกที่ยังไม่เคยเช็คอินแข่ง</p>
+                            <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $teamCount; ?>">0</h3>
+                            <p class="text-[11px] text-slate-400 mt-1">ทีมที่มี Captain และพร้อมใช้งาน</p>
                         </div>
                         <span class="text-xs font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
-                            ดูสมาชิก <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                            จัดการทีม <i class="fa-solid fa-arrow-right text-[10px]"></i>
                         </span>
                     </div>
                 </a>
@@ -413,52 +433,54 @@ $openTournaments = $pdo->query("
                     </div>
                 </a>
 
-                <!-- Card 6: สัดส่วนสมาชิกในระบบ -->
-                <div class="stat-card-light p-5 rounded-2xl relative overflow-hidden flex flex-col justify-between">
+                <!-- Card 6: ทีม Check-in ไม่ครบ -->
+                <a href="checkin-teams.php" class="stat-card-light p-5 rounded-2xl relative block group border-rose-200">
                     <div>
                         <div class="flex items-center justify-between mb-3">
-                            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">สัดส่วนสมาชิกในระบบ (รวม <?php echo $memberCount; ?> คน)</span>
-                            <div class="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center text-lg">
-                                <i class="fa-solid fa-chart-bar"></i>
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">ทีม Check-in ไม่ครบ</span>
+                            <div class="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
+                                <i class="fa-solid fa-user-clock"></i>
                             </div>
                         </div>
 
-                        <!-- Progress Bars สไตล์ Esports -->
-                        <div class="space-y-2.5 pt-1">
-                            <div>
-                                <div class="flex justify-between text-[11px] font-bold mb-1">
-                                    <span class="text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> นักกีฬาตัวจริง</span>
-                                    <span class="text-slate-900"><?php echo $pctAthlete; ?>%</span>
-                                </div>
-                                <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                    <div class="bg-emerald-500 h-full rounded-full progress-bar-fill" data-width="<?php echo $pctAthlete; ?>"></div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <div class="flex justify-between text-[11px] font-bold mb-1">
-                                    <span class="text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-blue-500"></span> มีโปรไฟล์ ยังไม่แข่ง</span>
-                                    <span class="text-slate-900"><?php echo $pctProfileOnly; ?>%</span>
-                                </div>
-                                <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                    <div class="bg-blue-500 h-full rounded-full progress-bar-fill" data-width="<?php echo $pctProfileOnly; ?>"></div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <div class="flex justify-between text-[11px] font-bold mb-1">
-                                    <span class="text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-500"></span> รอสร้างโปรไฟล์</span>
-                                    <span class="text-slate-900"><?php echo $pctPending; ?>%</span>
-                                </div>
-                                <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                    <div class="bg-rose-500 h-full rounded-full progress-bar-fill" data-width="<?php echo $pctPending; ?>"></div>
-                                </div>
-                            </div>
+                        <div class="flex items-end justify-between">
+                            <div><h3 class="text-3xl font-black font-display text-rose-600" data-countup="<?php echo $incompleteCheckinCount; ?>">0</h3><p class="text-[11px] text-slate-400 mt-1">ต้องตรวจสอบก่อนปิด Check-in</p></div>
+                            <span class="text-xs font-bold text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity">ตรวจสอบ <i class="fa-solid fa-arrow-right"></i></span>
                         </div>
                     </div>
-                </div>
+                </a>
 
             </div>
+
+            <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                    <div><h2 class="font-bold font-display text-slate-900">สถานะ Tournament Workflow</h2><p class="text-xs text-slate-500 mt-1">แยกจำนวนตาม Tournament, Registration และ Match อย่างชัดเจน</p></div>
+                    <a href="manage-tournament.php" class="text-xs font-bold text-brand-orange hover:underline">เปิดศูนย์จัดการ</a>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+                    <?php $workflow = [
+                        ['เปิดรับสมัคร', $openTournamentCount, 'manage-tournament.php', 'bg-emerald-50 text-emerald-700'],
+                        ['รออนุมัติ', $pendingRegistrationCount, 'manage-teams.php', 'bg-amber-50 text-amber-700'],
+                        ['กำลัง Check-in', $checkinTournamentCount, 'checkin-teams.php', 'bg-blue-50 text-blue-700'],
+                        ['Check-in ไม่ครบ', $incompleteCheckinCount, 'checkin-teams.php', 'bg-rose-50 text-rose-700'],
+                        ['พร้อมจัดสาย', $readyForDrawCount, 'manage-tournament.php', 'bg-sky-50 text-sky-700'],
+                        ['กำลังแข่งขัน', $ongoingCountYear, 'manage-tournament.php', 'bg-violet-50 text-violet-700'],
+                        ['Match รอผล', $pendingMatches, 'record-match.php', 'bg-orange-50 text-orange-700'],
+                        ['แข่งขันจบแล้ว', $completedTournamentCount, 'manage-tournament.php', 'bg-slate-100 text-slate-700'],
+                    ]; foreach ($workflow as $item): ?>
+                        <a href="<?php echo $item[2]; ?>" class="rounded-xl p-3 <?php echo $item[3]; ?> border border-current/10 hover:shadow-sm transition-shadow"><b class="block text-2xl font-display"><?php echo (int) $item[1]; ?></b><span class="block text-[11px] font-bold leading-tight"><?php echo $item[0]; ?></span></a>
+                    <?php endforeach; ?>
+                </div>
+            </section>
+
+            <section class="stat-card-light p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3"><h2 class="text-sm font-bold font-display text-slate-900">สัดส่วนสมาชิกในระบบ (รวม <?php echo $memberCount; ?> คน)</h2><i class="fa-solid fa-chart-bar text-slate-500"></i></div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <?php foreach ([['นักกีฬาตัวจริง', $confirmedAthleteCount, $pctAthlete, 'emerald'], ['มีโปรไฟล์แต่ยังไม่แข่งขัน', $profileOnlyNoTournamentCount, $pctProfileOnly, 'blue'], ['ยังไม่มีโปรไฟล์', $noProfileCount, round(($noProfileCount / $memberPieTotal) * 100), 'rose']] as $memberStat): ?>
+                        <div><div class="flex justify-between text-[11px] font-bold mb-1"><span class="text-slate-600"><?php echo $memberStat[0]; ?></span><span><?php echo (int) $memberStat[1]; ?> คน · <?php echo (int) $memberStat[2]; ?>%</span></div><div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden"><div class="bg-<?php echo $memberStat[3]; ?>-500 h-full rounded-full progress-bar-fill" data-width="<?php echo (int) $memberStat[2]; ?>"></div></div></div>
+                    <?php endforeach; ?>
+                </div>
+            </section>
 
             <!-- ทัวร์นาเมนต์แยกรายปี -->
             <div class="space-y-4">
@@ -483,38 +505,44 @@ $openTournaments = $pdo->query("
                             <table class="w-full text-left text-sm text-slate-600">
                                 <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                                     <tr>
-                                        <th class="p-4">ชื่อ</th>
+                                        <th class="p-4">Tournament</th>
                                         <th class="p-4">เกม</th>
+                                        <th class="p-4">Category</th>
+                                        <th class="p-4 text-center">สมัคร / อนุมัติ</th>
+                                        <th class="p-4 text-center">Check-in</th>
+                                        <th class="p-4 text-center">Match</th>
+                                        <th class="p-4">วันแข่งขัน</th>
                                         <th class="p-4 text-center">สถานะ</th>
-                                        <th class="p-4 text-center">ทีมอนุมัติแล้ว</th>
-                                        <th class="p-4">วันที่สร้าง</th>
                                         <th class="p-4 text-right">จัดการ</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100">
                                     <?php foreach ($tournamentsByYear as $t): ?>
                                     <tr class="hover:bg-slate-50/80 transition-colors">
-                                        <td class="p-4 font-bold text-slate-900"><?php echo htmlspecialchars($t['name']); ?></td>
+                                        <td class="p-4 font-bold text-slate-900 min-w-[180px]"><?php if (!empty($t['image_path'])): ?><img src="../assets/<?php echo htmlspecialchars($t['image_path']); ?>" class="w-12 h-8 object-cover rounded inline-block mr-2" alt=""><?php endif; ?><?php echo htmlspecialchars($t['name']); ?></td>
                                         <td class="p-4 text-xs text-slate-500">
                                             <span class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
                                         </td>
+                                        <td class="p-4 text-xs"><span class="px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-100"><?php echo htmlspecialchars($t['category_labels'] ?: 'ยังไม่กำหนด'); ?></span></td>
+                                        <td class="p-4 text-center text-xs font-bold"><?php echo (int) $t['registered_count']; ?> / <?php echo (int) $t['approved_count']; ?></td>
+                                        <td class="p-4 text-center text-xs font-bold text-emerald-700"><?php echo (int) $t['checkin_complete_count']; ?></td>
+                                        <td class="p-4 text-center text-xs font-bold"><span class="text-emerald-600"><?php echo (int) $t['completed_match_count']; ?></span> / <?php echo (int) $t['total_match_count']; ?></td>
+                                        <td class="p-4 text-xs text-slate-500"><?php echo !empty($t['start_date']) ? date('d/m/Y', strtotime($t['start_date'])) : '-'; ?></td>
                                         <td class="p-4 text-center">
                                             <?php
                                                 $statusLabels = [
                                                     'registration_open' => ['เปิดรับสมัคร', 'bg-emerald-100 text-emerald-700 border-emerald-200'],
-                                                    'ongoing' => ['กำลังแข่ง', 'bg-rose-100 text-rose-700 border-rose-200'],
+                                                    'ongoing' => ['กำลังแข่ง', 'bg-violet-100 text-violet-700 border-violet-200'],
+                                                    'bracket_generated' => ['จัดสายแล้ว', 'bg-sky-100 text-sky-700 border-sky-200'],
+                                                    'checkin_open' => ['กำลัง Check-in', 'bg-blue-100 text-blue-700 border-blue-200'],
                                                     'completed' => ['จบแล้ว', 'bg-slate-100 text-slate-600 border-slate-200'],
                                                 ];
                                                 $label = $statusLabels[$t['status']] ?? [$t['status'], 'bg-slate-100 text-slate-600 border-slate-200'];
                                             ?>
                                             <span class="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase border <?php echo $label[1]; ?>"><?php echo htmlspecialchars($label[0]); ?></span>
                                         </td>
-                                        <td class="p-4 text-center font-bold font-display text-brand-orange text-base"><?php echo $t['team_count']; ?></td>
-                                        <td class="p-4 text-xs text-slate-400"><?php echo htmlspecialchars($t['created_at']); ?></td>
                                         <td class="p-4 text-right">
-                                            <a href="manage-tournament.php" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs text-slate-700 font-semibold transition-all">
-                                                <span>จัดการ</span>
-                                            </a>
+                                            <div class="flex justify-end gap-1"><a href="manage-tournament.php" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold">รายละเอียด</a><a href="manage-teams.php?tournament_id=<?php echo (int) $t['tournament_id']; ?>" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold">ทีม</a><a href="checkin-teams.php?tournament_id=<?php echo (int) $t['tournament_id']; ?>" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-semibold">Check-in</a></div>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
@@ -526,11 +554,11 @@ $openTournaments = $pdo->query("
             </div>
 
             <!-- TASKS -->
-            <?php if (count($pendingRegs) > 0 || count($readyForPlayoff) > 0): ?>
+            <?php if ($urgentTaskCount > 0 || count($readyForPlayoff) > 0): ?>
                 <div class="space-y-4">
                     <h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
                         <i class="fa-solid fa-list-check text-brand-orange"></i>
-                        งานที่ต้องดำเนินการ <span class="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-brand-orange font-sans"><?= count($pendingRegs) + count($readyForPlayoff) ?> งาน</span>
+                        งานที่ต้องดำเนินการ <span class="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-brand-orange font-sans"><?= $urgentTaskCount + count($readyForPlayoff) ?> งาน</span>
                     </h2>
 
                     <?php if (count($readyForPlayoff) > 0): ?>
@@ -551,6 +579,16 @@ $openTournaments = $pdo->query("
                                 </div>
                             <?php endforeach; ?>
                         </div>
+                    <?php endif; ?>
+
+                    <?php if ($incompleteCheckinCount > 0): ?>
+                        <a href="checkin-teams.php" class="p-4 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-3 text-rose-800 shadow-sm"><span><i class="fa-solid fa-user-clock text-rose-600 mr-2"></i><strong><?php echo (int) $incompleteCheckinCount; ?> ทีม</strong> Check-in ไม่ครบ ต้องตรวจสอบก่อนหมดเวลา</span><i class="fa-solid fa-arrow-right"></i></a>
+                    <?php endif; ?>
+                    <?php if ($pendingMatches > 0): ?>
+                        <a href="record-match.php" class="p-4 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-between gap-3 text-orange-800 shadow-sm"><span><i class="fa-solid fa-clock text-orange-600 mr-2"></i><strong><?php echo (int) $pendingMatches; ?> Match</strong> รอบันทึกผล</span><i class="fa-solid fa-arrow-right"></i></a>
+                    <?php endif; ?>
+                    <?php if ($upcomingTournamentCount > 0): ?>
+                        <a href="manage-tournament.php" class="p-4 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-between gap-3 text-violet-800 shadow-sm"><span><i class="fa-solid fa-calendar-check text-violet-600 mr-2"></i><strong><?php echo (int) $upcomingTournamentCount; ?> Tournament</strong> ใกล้เริ่มภายใน 7 วัน</span><i class="fa-solid fa-arrow-right"></i></a>
                     <?php endif; ?>
 
                     <?php if (count($pendingRegs) > 0): ?>
@@ -592,6 +630,9 @@ $openTournaments = $pdo->query("
                                 </table>
                             </div>
                         </div>
+                    <?php endif; ?>
+                    <?php if ($urgentTaskCount === 0 && count($readyForPlayoff) === 0): ?>
+                        <div class="p-6 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm"><i class="fa-solid fa-circle-check mr-2"></i>ไม่มีงานเร่งด่วนในขณะนี้</div>
                     <?php endif; ?>
                 </div>
             <?php endif; ?>

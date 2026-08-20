@@ -2,6 +2,8 @@
 // pages/tournaments.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_categories.php';
+ensureTournamentCategorySchema($pdo);
 
 // ตรวจสอบสถานะการเข้าสู่ระบบ
 $isLoggedIn = isLoggedIn();
@@ -13,7 +15,14 @@ $currentUser = [
 // ดึงรายการทัวร์นาเมนต์พร้อมชื่อเกมและรูปแบบการแข่งขันจากตาราง games
 try {
     $tournaments = $pdo->query("
-        SELECT t.*, t.name AS title, g.name AS game_name, g.play_mode 
+        SELECT t.*, t.name AS title, g.name AS game_name, g.play_mode,
+            (SELECT COUNT(*) FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id) AS registered_count,
+            (SELECT COUNT(*) FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id AND tr.status = 'approved') AS approved_count,
+            (SELECT COUNT(*) FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id AND tr.status = 'approved'
+                AND EXISTS (SELECT 1 FROM tournament_registration_members req WHERE req.tournament_registration_id = tr.tournament_registration_id AND req.is_required_for_checkin = 1)
+                AND NOT EXISTS (SELECT 1 FROM tournament_registration_members waiting WHERE waiting.tournament_registration_id = tr.tournament_registration_id AND waiting.is_required_for_checkin = 1 AND waiting.checkin_status NOT IN ('checked_in', 'waived'))) AS checkin_complete_count,
+            (SELECT COUNT(*) FROM matches m WHERE m.tournament_id = t.tournament_id) AS match_count,
+            (SELECT COUNT(*) FROM matches m WHERE m.tournament_id = t.tournament_id AND m.status IN ('completed', 'walkover')) AS completed_match_count
         FROM tournaments t
         LEFT JOIN games g ON g.game_id = t.game_id
         ORDER BY t.start_date DESC
@@ -373,6 +382,10 @@ try {
                         $tMode = !empty($t['play_mode']) ? $t['play_mode'] : 'ทีม (Team 5v5)';
                         $tStartDate = !empty($t['start_date']) ? date('d/m/Y', strtotime($t['start_date'])) : '-';
                         $tEndDate = !empty($t['end_date']) ? date('d/m/Y', strtotime($t['end_date'])) : '-';
+                        ensureDefaultTournamentCategories($pdo, (int) $tId);
+                        $categoryStmt = $pdo->prepare('SELECT category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
+                        $categoryStmt->execute(['tournament_id' => $tId]);
+                        $categories = $categoryStmt->fetchAll();
                         $staggerDelay = min($tIndex * 100, 800);
                         ?>
                         <div class="tournament-card rounded-3xl overflow-hidden flex flex-col justify-between shadow-2xl group"
@@ -400,6 +413,10 @@ try {
                                                 class="px-3.5 py-1.5 rounded-full bg-slate-800/90 backdrop-blur-md text-gray-300 text-[10px] font-black uppercase tracking-widest shadow-lg border border-white/10">
                                                 <i class="fa-solid fa-flag-checkered mr-1"></i> จบการแข่งขันแล้ว
                                             </span>
+                                        <?php elseif ($status === 'bracket_generated'): ?>
+                                            <span class="px-3.5 py-1.5 rounded-full bg-sky-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-sky-300"><i class="fa-solid fa-sitemap mr-1"></i> จัดสายแล้ว</span>
+                                        <?php elseif ($status === 'checkin_open'): ?>
+                                            <span class="px-3.5 py-1.5 rounded-full bg-amber-500/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-amber-300"><i class="fa-solid fa-user-check mr-1"></i> เปิด Check-in</span>
                                         <?php else: ?>
                                             <span
                                                 class="px-3.5 py-1.5 rounded-full bg-brand-orange/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest shadow-orange-glow flex items-center gap-1.5 border border-amber-300">
@@ -431,6 +448,13 @@ try {
                                         <?php echo htmlspecialchars($tTitle); ?>
                                     </h3>
 
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <?php foreach ($categories as $category): ?>
+                                            <?php $categoryClass = $category['category_code'] === 'female' ? 'bg-pink-500/15 border-pink-400/40 text-pink-200' : ($category['category_code'] === 'male' ? 'bg-blue-500/15 border-blue-400/40 text-blue-200' : 'bg-brand-orange/15 border-brand-orange/40 text-brand-orange'); ?>
+                                            <span class="px-2.5 py-1 rounded-full border text-[10px] font-bold <?php echo $categoryClass; ?>"><?php echo htmlspecialchars($category['label']); ?></span>
+                                        <?php endforeach; ?>
+                                    </div>
+
                                     <!-- กล่องสเปกข้อมูลทัวร์นาเมนต์แบบ Cyber HUD Strip -->
                                     <div class="p-3.5 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2 text-xs">
                                         <div class="flex items-center justify-between text-gray-300">
@@ -449,6 +473,15 @@ try {
                                             <span class="font-mono text-gray-200 text-[11px]">
                                                 <?php echo $tStartDate; ?>
                                             </span>
+                                        </div>
+
+                                        <div class="flex items-center justify-between text-gray-300 pt-1.5 border-t border-white/5">
+                                            <span class="text-gray-400 text-[11px]"><i class="fa-solid fa-users text-brand-orange mr-1"></i> สมัคร / อนุมัติ</span>
+                                            <span class="font-mono text-gray-200 text-[11px]"><?php echo (int) $t['registered_count']; ?> / <?php echo (int) $t['approved_count']; ?></span>
+                                        </div>
+                                        <div class="flex items-center justify-between text-gray-300 pt-1.5 border-t border-white/5">
+                                            <span class="text-gray-400 text-[11px]"><i class="fa-solid fa-user-check text-emerald-400 mr-1"></i> Check-in / Match</span>
+                                            <span class="font-mono text-gray-200 text-[11px]"><?php echo (int) $t['checkin_complete_count']; ?> / <?php echo (int) $t['completed_match_count']; ?>-<?php echo (int) $t['match_count']; ?></span>
                                         </div>
 
                                         <div class="flex items-center justify-between text-gray-300 pt-1.5 border-t border-white/5">

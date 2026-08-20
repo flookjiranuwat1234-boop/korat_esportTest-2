@@ -54,6 +54,20 @@ function snapshotTournamentRoster(PDO $pdo, int $registrationId, ?int $teamId, ?
 {
     ensureTournamentRosterTables($pdo);
     $rows = [];
+    $requiredRoles = null;
+    try {
+        $categoryStmt = $pdo->prepare('SELECT tc.checkin_required_roles
+            FROM tournament_registrations tr
+            LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+            WHERE tr.tournament_registration_id = :registration_id');
+        $categoryStmt->execute(['registration_id' => $registrationId]);
+        $configuredRoles = $categoryStmt->fetchColumn();
+        if ($configuredRoles !== false && trim((string) $configuredRoles) !== '') {
+            $requiredRoles = array_values(array_filter(array_map('trim', explode(',', strtolower($configuredRoles)))));
+        }
+    } catch (PDOException $exception) {
+        $requiredRoles = null;
+    }
     if ($playerId) {
         $rows[] = ['player_id' => $playerId, 'roles' => ['player'], 'starter' => 1, 'required' => 1];
     } elseif ($teamId) {
@@ -62,7 +76,9 @@ function snapshotTournamentRoster(PDO $pdo, int $registrationId, ?int $teamId, ?
         foreach ($stmt->fetchAll() as $member) {
             $roles = getTeamMemberRoles($pdo, (int) $member['team_member_id']);
             $isSubstitute = in_array('substitute', $roles, true) && !in_array('player', $roles, true);
-            $isRequired = in_array('player', $roles, true) || (!$roles && !$isSubstitute);
+            $isRequired = $requiredRoles !== null
+                ? (bool) array_intersect($requiredRoles, $roles)
+                : (in_array('player', $roles, true) || (!$roles && !$isSubstitute));
             $rows[] = [
                 'player_id' => (int) $member['player_id'],
                 'roles' => $roles,
@@ -101,4 +117,15 @@ function markRosterPlayerCheckedIn(PDO $pdo, int $registrationId, int $playerId,
     $pdo->prepare('UPDATE player_tournament_checkins SET checkin_status = \'checked_in\', checked_in_at = NOW(), checked_in_by = :admin_id
         WHERE tournament_registration_id = :registration_id AND player_id = :player_id')
         ->execute($params);
+
+    $remaining = $pdo->prepare('SELECT COUNT(*) FROM tournament_registration_members
+        WHERE tournament_registration_id = :registration_id
+          AND is_required_for_checkin = 1
+          AND checkin_status NOT IN (\'checked_in\', \'waived\')');
+    $remaining->execute(['registration_id' => $registrationId]);
+    if ((int) $remaining->fetchColumn() === 0) {
+        $pdo->prepare('UPDATE tournament_registrations SET checkin_status = \'checked_in\', checkin_at = NOW()
+            WHERE tournament_registration_id = :registration_id AND status = \'approved\'')
+            ->execute(['registration_id' => $registrationId]);
+    }
 }

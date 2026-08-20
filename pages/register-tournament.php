@@ -2,7 +2,11 @@
 // pages/register-tournament.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_roster.php';
+require_once '../includes/tournament_categories.php';
 requireLogin();
+ensureTournamentRosterTables($pdo);
+ensureTournamentCategorySchema($pdo);
 
 $isLoggedIn = isLoggedIn();
 $currentUser = [
@@ -61,11 +65,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     if ($check->fetch()) {
                         $error = 'คุณได้สมัครเข้าร่วมทัวร์นาเมนต์นี้ไปแล้ว';
                     } else {
+                        $categoryId = getTournamentCategoryId($pdo, $tournamentId, 'open');
                         $insert = $pdo->prepare("
-                            INSERT INTO tournament_registrations (tournament_id, player_id, team_id, status)
-                            VALUES (:tid, :pid, NULL, 'pending')
+                            INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status)
+                            VALUES (:tid, :category_id, :pid, NULL, 'open', 'pending')
                         ");
-                        $insert->execute(['tid' => $tournamentId, 'pid' => $myPlayerId]);
+                        $insert->execute(['tid' => $tournamentId, 'category_id' => $categoryId, 'pid' => $myPlayerId]);
+                        snapshotTournamentRoster($pdo, (int) $pdo->lastInsertId(), null, (int) $myPlayerId);
                         
                         $success = 'ส่งใบสมัครประเภทเดี่ยวเรียบร้อยแล้ว!';
                     }
@@ -97,16 +103,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     if ($check->fetch()) {
                         $error = 'ทีมนี้ได้รับการสมัครเข้าร่วมทัวร์นาเมนต์นี้ไปแล้ว';
                     } else {
+                        $categoryId = getTournamentCategoryId($pdo, $tournamentId, $teamCategory);
                         // บันทึกการสมัครพร้อมระบุ category (แยกระหว่างเกมและประเภทการแข่งขันโดยอิสระ)
                         $insert = $pdo->prepare("
-                            INSERT INTO tournament_registrations (tournament_id, team_id, player_id, category, status)
-                            VALUES (:tid, :teamid, NULL, :category, 'pending')
+                            INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status)
+                            VALUES (:tid, :category_id, :teamid, NULL, :category, 'pending')
                         ");
                         $insert->execute([
-                            'tid' => $tournamentId, 
+                            'tid' => $tournamentId,
+                            'category_id' => $categoryId,
                             'teamid' => $teamId,
                             'category' => $teamCategory
                         ]);
+                        snapshotTournamentRoster($pdo, (int) $pdo->lastInsertId(), $teamId, null);
                         
                         $success = 'ส่งใบสมัครด้วยทีม "' . htmlspecialchars($teamData['name']) . '" เรียบร้อยแล้ว!';
                     }
@@ -141,28 +150,50 @@ if ($selectedTournamentId) {
 
 $existingTeamMap = [];
 $existingSoloMap = [];
+function registrationStatusLabel($registration): array
+{
+    if (is_string($registration)) {
+        $registration = ['status' => $registration];
+    }
+    if (($registration['status'] ?? '') === 'rejected') {
+        return ['ไม่ผ่านการอนุมัติ', 'bg-rose-500/20 border-rose-500/40 text-rose-200', 'fa-circle-xmark'];
+    }
+    if (($registration['status'] ?? '') === 'pending') {
+        return ['รออนุมัติ', 'bg-amber-500/20 border-amber-500/40 text-amber-200', 'fa-clock'];
+    }
+    if (($registration['checkin_status'] ?? '') === 'checked_in') {
+        return ['อนุมัติและเช็กอินแล้ว', 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300', 'fa-user-check'];
+    }
+    return ['อนุมัติ รอเช็กอิน', 'bg-sky-500/20 border-sky-500/40 text-sky-200', 'fa-circle-check'];
+}
 if (!empty($tournaments)) {
     $tIds = array_column($tournaments, 'tournament_id');
     if (!empty($tIds)) {
         $inT = implode(',', $tIds);
         
         $regTeams = $pdo->query("
-            SELECT tr.tournament_id, tr.team_id, tr.status 
+            SELECT tr.tournament_id, tr.team_id, tr.status, tr.checkin_status
             FROM tournament_registrations tr
             JOIN teams tm ON tm.team_id = tr.team_id
             WHERE tr.tournament_id IN ($inT) AND tm.captain_player_id = $myPlayerId
         ")->fetchAll();
         foreach ($regTeams as $rt) {
-            $existingTeamMap[$rt['tournament_id'] . '-' . $rt['team_id']] = $rt['status'];
+            $existingTeamMap[$rt['tournament_id'] . '-' . $rt['team_id']] = [
+                'status' => $rt['status'],
+                'checkin_status' => $rt['checkin_status'],
+            ];
         }
 
         $regSolos = $pdo->query("
-            SELECT tournament_id, status 
+            SELECT tournament_id, status, checkin_status
             FROM tournament_registrations 
             WHERE tournament_id IN ($inT) AND player_id = $myPlayerId
         ")->fetchAll();
         foreach ($regSolos as $rs) {
-            $existingSoloMap[$rs['tournament_id']] = $rs['status'];
+            $existingSoloMap[$rs['tournament_id']] = [
+                'status' => $rs['status'],
+                'checkin_status' => $rs['checkin_status'],
+            ];
         }
     }
 }
@@ -345,7 +376,8 @@ $csrfToken = generateCsrfToken();
                                     </div>
                                     <div>
                                         <?php if (isset($existingSoloMap[$t['tournament_id']])): ?>
-                                            <span class="px-4 py-2 rounded-xl bg-emerald-500/20 border text-emerald-300 text-xs font-bold">สมัครแล้ว</span>
+                                            <?php [$label, $badgeClass, $icon] = registrationStatusLabel($existingSoloMap[$t['tournament_id']]); ?>
+                                            <span class="px-4 py-2 rounded-xl border text-xs font-bold <?= $badgeClass; ?>"><i class="fa-solid <?= $icon; ?> mr-1"></i><?= $label; ?></span>
                                         <?php else: ?>
                                             <form method="POST">
                                                 <input type="hidden" name="csrf_token" value="<?= $csrfToken; ?>">
@@ -381,9 +413,10 @@ $csrfToken = generateCsrfToken();
                                             </div>
 
                                             <?php if (isset($existingTeamMap[$key])): ?>
+                                                <?php [$label, $badgeClass, $icon] = registrationStatusLabel($existingTeamMap[$key]); ?>
                                                 <div class="pt-2">
-                                                    <span class="px-4 py-2 rounded-xl bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/40 inline-block">
-                                                        <i class="fa-solid fa-circle-check"></i> ทีมนี้สมัครทัวร์นาเมนต์นี้เรียบร้อยแล้ว
+                                                    <span class="px-4 py-2 rounded-xl text-xs font-bold border inline-block <?= $badgeClass; ?>">
+                                                        <i class="fa-solid <?= $icon; ?>"></i> <?= $label; ?>
                                                     </span>
                                                 </div>
                                             <?php else: ?>

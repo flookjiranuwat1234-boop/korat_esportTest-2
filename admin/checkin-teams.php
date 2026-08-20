@@ -3,8 +3,10 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/tournament_roster.php';
+require_once '../includes/tournament_categories.php';
 requireRole('admin');
 ensureTournamentRosterTables($pdo);
+ensureTournamentCategorySchema($pdo);
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
 $currentUser = [
@@ -51,75 +53,55 @@ if ($tournamentId) {
     }
 }
 
-// เช็คอินด้วยการกรอกรหัส / สแกน QR
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'checkin') {
+// เช็คอินสมาชิกจาก Tournament Roster ทีละคน
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_checkin') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
     } else {
-        $token = trim($_POST['token'] ?? '');
+        $registrationId = (int) ($_POST['registration_id'] ?? 0);
+        $playerId = (int) ($_POST['player_id'] ?? 0);
+        $stmt = $pdo->prepare('SELECT tr.tournament_registration_id, tr.tournament_id, tr.status, p.display_name,
+                u.username, t.name AS team_name
+            FROM tournament_registration_members trm
+            JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+            JOIN players p ON p.player_id = trm.player_id
+            LEFT JOIN users u ON u.user_id = p.user_id
+            LEFT JOIN teams t ON t.team_id = tr.team_id
+            WHERE tr.tournament_registration_id = :registration_id AND trm.player_id = :player_id
+              AND tr.tournament_id = :tournament_id');
+        $stmt->execute(['registration_id' => $registrationId, 'player_id' => $playerId, 'tournament_id' => $tournamentId]);
+        $member = $stmt->fetch();
+        $windowStmt = $pdo->prepare('SELECT checkin_open_at, checkin_close_at FROM tournaments WHERE tournament_id = :tournament_id');
+        $windowStmt->execute(['tournament_id' => $tournamentId]);
+        $window = $windowStmt->fetch();
+        $now = time();
+        $windowOpen = (!$window['checkin_open_at'] || strtotime($window['checkin_open_at']) <= $now)
+            && (!$window['checkin_close_at'] || strtotime($window['checkin_close_at']) >= $now);
 
-        if ($isSolo) {
-            // เช็คอินแบบเดี่ยว (Solo)
-            $stmt = $pdo->prepare("
-                SELECT tr.tournament_registration_id, tr.player_id, tr.checkin_status, u.username AS participant_name
-                FROM tournament_registrations tr
-                JOIN players p ON p.player_id = tr.player_id
-                JOIN users u ON u.user_id = p.user_id
-                WHERE tr.qr_code_token = :token AND tr.tournament_id = :tid AND tr.status = 'approved'
-            ");
-            $stmt->execute(['token' => $token, 'tid' => $tournamentId]);
-            $reg = $stmt->fetch();
-
-            if (!$reg) {
-                $error = 'ไม่พบรหัสเช็คอินนี้ในทัวร์นาเมนต์เดี่ยวนี้ (ตรวจสอบสถานะการอนุมัติอีกครั้ง)';
-            } elseif ($reg['checkin_status'] == 'checked_in') {
-                $error = 'ผู้เล่น "' . $reg['participant_name'] . '" ได้ทำการเช็คอินไปแล้วก่อนหน้านี้';
-            } else {
-                $pdo->prepare("
-                    UPDATE tournament_registrations
-                    SET checkin_status = 'checked_in', checkin_at = NOW()
-                    WHERE tournament_registration_id = :id
-                ")->execute(['id' => $reg['tournament_registration_id']]);
-
-                snapshotTournamentRoster($pdo, (int) $reg['tournament_registration_id'], null, (int) $reg['player_id']);
-                markRosterPlayerCheckedIn($pdo, (int) $reg['tournament_registration_id'], (int) $reg['player_id'], (int) $_SESSION['user_id']);
-
-                $success = 'เช็คอินผู้เล่นเดี่ยว "' . $reg['participant_name'] . '" เรียบร้อยแล้ว!';
-            }
+        if (!$member || $member['status'] !== 'approved') {
+            $error = 'ไม่พบสมาชิกใน Tournament Roster ที่ได้รับอนุมัติ';
+        } elseif (!$windowOpen) {
+            $error = 'อยู่นอกช่วงเวลา Check-in ของ Tournament นี้';
         } else {
-            // เช็คอินแบบทีม (Team)
-            $stmt = $pdo->prepare("
-                SELECT tr.tournament_registration_id, tr.team_id, tr.checkin_status, t.name AS participant_name
-                FROM tournament_registrations tr
-                JOIN teams t ON t.team_id = tr.team_id
-                WHERE tr.qr_code_token = :token AND tr.tournament_id = :tid AND tr.status = 'approved'
-            ");
-            $stmt->execute(['token' => $token, 'tid' => $tournamentId]);
-            $reg = $stmt->fetch();
-
-            if (!$reg) {
-                $error = 'ไม่พบรหัสเช็คอินนี้ในทัวร์นาเมนต์ทีมนี้ (ตรวจสอบสถานะการอนุมัติทีมอีกครั้ง)';
-            } elseif ($reg['checkin_status'] == 'checked_in') {
-                $error = 'ทีม "' . $reg['participant_name'] . '" ได้ทำการเช็คอินไปแล้วก่อนหน้านี้';
-            } else {
-                $pdo->prepare("
-                    UPDATE tournament_registrations
-                    SET checkin_status = 'checked_in', checkin_at = NOW()
-                    WHERE tournament_registration_id = :id
-                ")->execute(['id' => $reg['tournament_registration_id']]);
-
-                snapshotTournamentRoster($pdo, (int) $reg['tournament_registration_id'], (int) $reg['team_id'], null);
-                $memberStmt = $pdo->prepare('SELECT player_id FROM tournament_registration_members
-                    WHERE tournament_registration_id = :registration_id AND is_required_for_checkin = 1');
-                $memberStmt->execute(['registration_id' => $reg['tournament_registration_id']]);
-                foreach ($memberStmt->fetchAll(PDO::FETCH_COLUMN) as $playerId) {
-                    markRosterPlayerCheckedIn($pdo, (int) $reg['tournament_registration_id'], (int) $playerId, (int) $_SESSION['user_id']);
-                }
-
-                $success = 'เช็คอินทีม "' . $reg['participant_name'] . '" เรียบร้อยแล้ว!';
-            }
+            markRosterPlayerCheckedIn($pdo, $registrationId, $playerId, (int) $_SESSION['user_id']);
+            $success = 'เช็คอิน ' . ($member['display_name'] ?: $member['username']) . ' รายบุคคลเรียบร้อยแล้ว';
         }
     }
+} elseif ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'checkin') {
+    $token = trim($_POST['token'] ?? '');
+    $lookupStmt = $pdo->prepare('SELECT COALESCE(t.name, u.username, \'ผู้สมัครเดี่ยว\') AS participant_name
+        FROM tournament_registrations tr
+        LEFT JOIN teams t ON t.team_id = tr.team_id
+        LEFT JOIN players p ON p.player_id = tr.player_id
+        LEFT JOIN users u ON u.user_id = p.user_id
+        WHERE tr.tournament_id = :tournament_id AND tr.qr_code_token = :token AND tr.status = \'approved\'');
+    $lookupStmt->execute(['tournament_id' => $tournamentId, 'token' => $token]);
+    $lookupName = $lookupStmt->fetchColumn();
+    if ($lookupName) {
+        header('Location: checkin-teams.php?tournament_id=' . $tournamentId . '&team_search=' . urlencode($lookupName));
+        exit;
+    }
+    $error = 'ไม่พบ QR Token ของ Registration ที่ได้รับอนุมัติใน Tournament นี้';
 }
 
 // ดึงทัวร์นาเมนต์ที่กำลังแข่งหรือเปิดรับสมัคร พร้อม gender_category และ play_mode
@@ -387,7 +369,7 @@ $csrfToken = generateCsrfToken();
                                 <i class="fa-solid fa-qrcode text-brand-orange text-xl"></i>
                                 สแกน QR Code หรือกรอกรหัสเช็คอิน
                             </h2>
-                            <p class="text-xs text-slate-500 mt-1">ใช้เครื่องสแกนบาร์โค้ดส่องยิง หรือกรอกรหัส Token 10 ตัวอักษรเพื่อเช็คอิน</p>
+                            <p class="text-xs text-slate-500 mt-1">QR ใช้ค้นหา Registration ส่วนการ Check-in ต้องกดให้สมาชิกใน Tournament Roster ทีละคน</p>
                         </div>
 
                         <div class="px-3 py-1.5 rounded-full bg-slate-100 text-slate-900 text-xs font-bold flex items-center gap-2">
@@ -539,9 +521,43 @@ $csrfToken = generateCsrfToken();
                                             <?php echo htmlspecialchars($r['qr_code_token'] ?? '-'); ?>
                                         </td>
                                         <td class="p-3.5 text-center">
-                                            <span class="inline-block px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
-                                                รอรายงานตัว
+                                            <?php $progress = getRegistrationCheckinProgress($pdo, (int) $r['tournament_registration_id']); ?>
+                                            <span class="inline-block px-2.5 py-0.5 rounded-full <?php echo $progress['checked_in'] > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-50 text-slate-600 border-slate-200'; ?> border text-[10px] font-bold">
+                                                <?php echo $progress['checked_in']; ?>/<?php echo $progress['required']; ?> คน
                                             </span>
+                                        </td>
+                                    </tr>
+                                    <?php
+                                        $memberStmt = $pdo->prepare('SELECT trm.player_id, trm.is_required_for_checkin, trm.member_roles,
+                                                trm.checkin_status, p.display_name, u.username
+                                            FROM tournament_registration_members trm
+                                            JOIN players p ON p.player_id = trm.player_id
+                                            LEFT JOIN users u ON u.user_id = p.user_id
+                                            WHERE trm.tournament_registration_id = :registration_id
+                                            ORDER BY trm.is_required_for_checkin DESC, trm.is_starter DESC, u.username');
+                                        $memberStmt->execute(['registration_id' => $r['tournament_registration_id']]);
+                                        $rosterMembers = $memberStmt->fetchAll();
+                                    ?>
+                                    <tr class="bg-slate-50/70">
+                                        <td colspan="3" class="p-3">
+                                            <div class="flex flex-wrap gap-2">
+                                                <?php foreach ($rosterMembers as $member): ?>
+                                                    <?php $memberChecked = in_array($member['checkin_status'], ['checked_in', 'waived'], true); ?>
+                                                    <span class="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] <?php echo $memberChecked ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
+                                                        <?php echo htmlspecialchars($member['display_name'] ?: $member['username']); ?><?php echo $member['is_required_for_checkin'] ? ' *' : ''; ?>
+                                                        <?php if (!$memberChecked): ?>
+                                                            <form method="POST" class="inline">
+                                                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
+                                                                <input type="hidden" name="action" value="player_checkin">
+                                                                <input type="hidden" name="registration_id" value="<?php echo (int) $r['tournament_registration_id']; ?>">
+                                                                <input type="hidden" name="player_id" value="<?php echo (int) $member['player_id']; ?>">
+                                                                <button type="submit" class="font-bold underline">เช็กอิน</button>
+                                                            </form>
+                                                        <?php else: ?>✓<?php endif; ?>
+                                                    </span>
+                                                <?php endforeach; ?>
+                                            </div>
+                                            <p class="mt-1 text-[10px] text-slate-400">* สมาชิกที่ต้อง Check-in ตาม Tournament Roster</p>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
