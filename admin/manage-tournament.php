@@ -482,12 +482,8 @@ if (isset($_GET['ajax_get_registrations'])) {
     $summary = getTournamentRegistrationSummary($pdo, $tournamentId, $categoryId);
     $registrations = getTournamentRegistrationRowsForOverview($pdo, $tournamentId, $categoryId);
 
-    if (!$registrations) {
-        echo '<div class="p-8 text-center text-slate-400 text-sm">ยังไม่มีผู้สมัครใน Tournament นี้</div>';
-        exit;
-    }
-
     echo '<div class="space-y-4">';
+    echo '<div><h4 class="text-sm font-bold text-slate-900">สรุปผู้สมัครและความพร้อม</h4><p class="mt-1 text-xs text-slate-500">ข้อมูลใบสมัคร Roster การ Check-in และความพร้อมจัดสายของ Tournament นี้</p></div>';
     echo '<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">';
     $summaryCards = [
         ['label' => 'ทั้งหมด', 'value' => $summary['total'], 'class' => 'bg-slate-100 text-slate-700'],
@@ -502,6 +498,11 @@ if (isset($_GET['ajax_get_registrations'])) {
         echo '<div class="rounded-xl border border-slate-200 p-3 ' . $card['class'] . '"><div class="text-[10px] font-bold uppercase tracking-[0.18em]">' . htmlspecialchars($card['label']) . '</div><div class="mt-2 text-2xl font-black">' . (int) $card['value'] . '</div></div>';
     }
     echo '</div>';
+
+    if (!$registrations) {
+        echo '<div class="p-8 text-center text-slate-400 text-sm">ยังไม่มีผู้สมัครใน Tournament นี้</div>';
+        exit;
+    }
 
     echo '<div class="flex justify-between items-center gap-3 pt-2 border-t border-slate-100">';
     echo '<div class="text-sm font-bold text-slate-700">รายการทีม/ผู้แข่งขัน</div>';
@@ -1197,6 +1198,19 @@ $csrfToken = generateCsrfToken();
         .admin-action-group { padding: 0.35rem 0.75rem 0.25rem; color: #94a3b8; font-size: 0.625rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
         .admin-action-menu > button, .admin-action-menu > a, .admin-action-menu > form > button { min-height: 2.5rem; width: 100%; display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 0.75rem; border-radius: 0.5rem; text-align: left; font-size: 0.75rem; font-weight: 600; line-height: 1.25rem; }
         .admin-action-menu > button i, .admin-action-menu > a i, .admin-action-menu > form > button i { width: 1rem; text-align: center; flex: 0 0 1rem; }
+        .tournament-workflow-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1rem; }
+        .tournament-workflow-card { min-width: 0; cursor: default; transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease; }
+        .tournament-workflow-card--total:hover { border-color: rgba(51, 65, 85, 0.85); box-shadow: 0 8px 24px rgba(51, 65, 85, 0.16), 0 0 12px rgba(51, 65, 85, 0.12); }
+        .tournament-workflow-card--registration:hover { border-color: rgba(16, 185, 129, 0.85); box-shadow: 0 8px 24px rgba(16, 185, 129, 0.18), 0 0 12px rgba(16, 185, 129, 0.14); }
+        .tournament-workflow-card--checkin:hover { border-color: rgba(37, 99, 235, 0.85); box-shadow: 0 8px 24px rgba(37, 99, 235, 0.18), 0 0 12px rgba(37, 99, 235, 0.14); }
+        .tournament-workflow-card--draw:hover { border-color: rgba(14, 165, 233, 0.85); box-shadow: 0 8px 24px rgba(14, 165, 233, 0.18), 0 0 12px rgba(14, 165, 233, 0.14); }
+        .tournament-workflow-card--ongoing:hover { border-color: rgba(124, 58, 237, 0.85); box-shadow: 0 8px 24px rgba(124, 58, 237, 0.18), 0 0 12px rgba(124, 58, 237, 0.14); }
+        .tournament-workflow-card--completed:hover { border-color: rgba(71, 85, 105, 0.85); box-shadow: 0 8px 24px rgba(71, 85, 105, 0.18), 0 0 12px rgba(71, 85, 105, 0.14); }
+        @media (hover: hover) and (pointer: fine) { .tournament-workflow-card:hover { transform: translateY(-3px); } }
+        @media (prefers-reduced-motion: reduce) { .tournament-workflow-card { transition: none; } .tournament-workflow-card:hover { transform: none; } }
+        @media (max-width: 1023px) { .tournament-workflow-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+        @media (max-width: 639px) { .tournament-workflow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 420px) { .tournament-workflow-grid { grid-template-columns: minmax(0, 1fr); } }
     </style>
     <script>
         const tournamentsList = <?php echo json_encode($tournaments, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE); ?>;
@@ -2086,9 +2100,20 @@ $csrfToken = generateCsrfToken();
                 </div>
             <?php endif; ?>
 
-            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-                <?php foreach ([['Tournament ทั้งหมด', $summaryTournaments['total_count'], 'manage-tournament.php', 'slate'], ['เปิดรับสมัคร', $summaryTournaments['registration_open_count'], '?status=registration_open', 'emerald'], ['กำลัง Check-in', $summaryTournaments['checkin_open_count'], '?status=checkin_open', 'blue'], ['พร้อมจัดสาย', $summaryTournaments['bracket_generated_count'], '?status=bracket_generated', 'sky'], ['กำลังแข่งขัน', $summaryTournaments['ongoing_count'], '?status=ongoing', 'violet'], ['แข่งขันจบแล้ว', $summaryTournaments['completed_count'], '?status=completed', 'purple']] as $summary): ?>
-                    <a href="<?php echo $summary[2]; ?>" class="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 hover:border-brand-orange transition-colors"><span class="block text-[11px] font-bold text-slate-500"><?php echo $summary[0]; ?></span><strong class="block mt-2 text-2xl font-display text-<?php echo $summary[3]; ?>-600"><?php echo (int) $summary[1]; ?></strong><span class="text-[10px] text-slate-400">รายการ</span></a>
+            <div class="tournament-workflow-grid">
+                <?php foreach ([
+                    ['Tournament ทั้งหมด', $summaryTournaments['total_count'], 'manage-tournament.php', 'slate', 'fa-layer-group', 'ภาพรวมจำนวน Tournament ทั้งหมด', 'total'],
+                    ['เปิดรับสมัคร', $summaryTournaments['registration_open_count'], '?status=registration_open', 'emerald', 'fa-door-open', 'Tournament ที่เปิดให้สมัคร', 'registration'],
+                    ['กำลัง Check-in', $summaryTournaments['checkin_open_count'], '?status=checkin_open', 'blue', 'fa-user-check', 'Tournament ที่อยู่ในช่วง Check-in', 'checkin'],
+                    ['พร้อมจัดสาย', $summaryTournaments['bracket_generated_count'], '?status=bracket_generated', 'sky', 'fa-sitemap', 'Tournament ที่พร้อมจัดสายการแข่งขัน', 'draw'],
+                    ['กำลังแข่งขัน', $summaryTournaments['ongoing_count'], '?status=ongoing', 'violet', 'fa-gamepad', 'Tournament ที่เริ่มการแข่งขันแล้ว', 'ongoing'],
+                    ['แข่งขันจบแล้ว', $summaryTournaments['completed_count'], '?status=completed', 'purple', 'fa-flag-checkered', 'Tournament ที่ดำเนินการแข่งขันเสร็จแล้ว', 'completed'],
+                ] as $summary): ?>
+                    <a href="<?php echo $summary[2]; ?>" title="<?php echo htmlspecialchars($summary[5]); ?>" class="tournament-workflow-card tournament-workflow-card--<?php echo $summary[6]; ?> bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+                        <span class="flex items-center gap-2 text-[11px] font-bold text-slate-500"><i class="fa-solid <?php echo $summary[4]; ?> text-<?php echo $summary[3]; ?>-600" aria-hidden="true"></i><?php echo $summary[0]; ?></span>
+                        <strong class="block mt-2 text-2xl font-display text-<?php echo $summary[3]; ?>-600"><?php echo (int) $summary[1]; ?></strong>
+                        <span class="text-[10px] text-slate-400">รายการ</span>
+                    </a>
                 <?php endforeach; ?>
             </div>
 
@@ -2218,52 +2243,52 @@ $csrfToken = generateCsrfToken();
                                         <i class="fa-solid fa-circle-info"></i> รายละเอียด
                                     </button>
                                     <div class="relative">
-                                        <button type="button" class="admin-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white transition-all hover:bg-brand-glow" data-action-menu="tournament-menu-<?php echo (int) $t['tournament_id']; ?>" aria-expanded="false" aria-controls="tournament-menu-<?php echo (int) $t['tournament_id']; ?>">
+                                        <button type="button" class="admin-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white transition-all hover:bg-brand-glow" data-action-menu="tournament-menu-<?php echo (int) $t['tournament_id']; ?>" aria-haspopup="menu" aria-expanded="false" aria-controls="tournament-menu-<?php echo (int) $t['tournament_id']; ?>">
                                             <i class="fa-solid fa-ellipsis"></i> จัดการ
                                         </button>
-                                        <div id="tournament-menu-<?php echo (int) $t['tournament_id']; ?>" class="admin-action-menu admin-action-menu-panel fixed z-[70] hidden rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
+                                        <div id="tournament-menu-<?php echo (int) $t['tournament_id']; ?>" class="admin-action-menu admin-action-menu-panel fixed z-[45] hidden rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
                                             <div class="admin-action-group">การตั้งค่า</div>
-                                    <button type="button" 
+                                    <button type="button" role="menuitem"
                                         onclick="openEditModal(<?php echo $t['tournament_id']; ?>)" 
                                         title="แก้ไข"
                                         class="admin-action-item text-slate-700 hover:bg-slate-50 cursor-pointer">
                                         <i class="fa-solid fa-pen-to-square text-slate-400"></i> แก้ไข Tournament
                                     </button>
-                                    <button type="button" onclick="openCategoryModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
+                                    <button type="button" role="menuitem" onclick="openCategoryModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
                                         class="admin-action-item text-slate-700 hover:bg-slate-50">
                                         <i class="fa-solid fa-sliders text-slate-400"></i> จัดการ Category
                                     </button>
 
                                             <div class="my-1 border-t border-slate-100"></div>
                                             <div class="admin-action-group">ผู้สมัครและข้อมูล</div>
-                                    <button type="button" onclick="openRegistrationModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
+                                    <button type="button" role="menuitem" onclick="openRegistrationModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
                                         class="admin-action-item text-slate-700 hover:bg-slate-50">
                                         <i class="fa-solid fa-users text-slate-400"></i> ดูสรุปผู้สมัคร
                                     </button>
-                                    <a href="manage-teams.php?tournament_id=<?php echo (int) $t['tournament_id']; ?>" class="admin-action-item text-slate-700 hover:bg-slate-50">
+                                    <a role="menuitem" href="manage-teams.php?tournament_id=<?php echo (int) $t['tournament_id']; ?>" class="admin-action-item text-slate-700 hover:bg-slate-50">
                                         <i class="fa-solid fa-people-group text-slate-400"></i> จัดการผู้สมัคร/ทีมแข่งขัน
                                     </a>
-                                    <a href="?export_results_csv=<?php echo $t['tournament_id']; ?>" title="ส่งออก CSV"
+                                    <a role="menuitem" href="?export_results_csv=<?php echo $t['tournament_id']; ?>" title="ส่งออก CSV"
                                         class="admin-action-item text-slate-700 hover:bg-slate-50">
                                         <i class="fa-solid fa-file-csv text-slate-400"></i> ส่งออก CSV
                                     </a>
                                             <div class="my-1 border-t border-slate-100"></div>
                                     <?php if ($canDraw): ?>
-                                        <button type="button" onclick="openDrawModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
+                                        <button type="button" role="menuitem" onclick="openDrawModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
                                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-sm">
                                             <i class="fa-solid fa-sitemap"></i> จัดสายอัตโนมัติ
                                         </button>
                                     <?php elseif ($t['status'] == 'bracket_generated' && $t['format'] == 'group_playoff'): ?>
-                                        <a href="?generate_playoff=<?php echo $t['tournament_id']; ?>" onclick="return confirm('ยืนยันสร้างสาย Playoff จากอันดับ Group?')"
+                                        <a role="menuitem" href="?generate_playoff=<?php echo $t['tournament_id']; ?>" onclick="return confirm('ยืนยันสร้างสาย Playoff จากอันดับ Group?')"
                                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-sm">
                                             <i class="fa-solid fa-forward"></i> สร้างสาย Playoff
                                         </a>
                                     <?php endif; ?>
                                     <?php if (in_array($t['status'], ['bracket_generated', 'ongoing', 'completed'], true)): ?>
                                         <?php if ((int) $t['total_matches_count'] > 0): ?>
-                                            <button type="button" onclick="openBracketModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')" class="w-full text-left inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 text-xs font-semibold"><i class="fa-solid fa-sitemap"></i> ดู Group / Bracket</button>
+                                            <button type="button" role="menuitem" onclick="openBracketModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')" class="w-full text-left inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 text-xs font-semibold"><i class="fa-solid fa-sitemap"></i> ดู Group / Bracket</button>
                                         <?php endif; ?>
-                                        <button onclick="openResultModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>', '<?php echo htmlspecialchars(addslashes($t['game_name'])); ?>')"
+                                        <button role="menuitem" onclick="openResultModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>', '<?php echo htmlspecialchars(addslashes($t['game_name'])); ?>')"
                                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold transition-all cursor-pointer">
                                             <i class="fa-solid fa-ranking-star"></i> ดูผล
                                         </button>
@@ -2721,12 +2746,17 @@ $csrfToken = generateCsrfToken();
             const toggles = document.querySelectorAll('.admin-action-toggle');
             const menus = document.querySelectorAll('.admin-action-menu');
 
-            function closeMenus() {
+            function closeMenus(returnFocus = false) {
+                let openToggle = null;
                 menus.forEach(menu => {
+                    if (!menu.classList.contains('hidden')) {
+                        openToggle = document.querySelector(`[data-action-menu="${menu.id}"]`);
+                    }
                     menu.classList.add('hidden');
                     const toggle = document.querySelector(`[data-action-menu="${menu.id}"]`);
                     if (toggle) toggle.setAttribute('aria-expanded', 'false');
                 });
+                if (returnFocus && openToggle) openToggle.focus();
             }
 
             function openMenu(toggle) {
@@ -2762,9 +2792,11 @@ $csrfToken = generateCsrfToken();
                     openMenu(toggle);
                 });
             });
-            menus.forEach(menu => menu.addEventListener('click', event => event.stopPropagation()));
+            menus.forEach(menu => menu.addEventListener('click', event => {
+                if (event.target.closest('a, button')) closeMenus();
+            }, true));
             document.addEventListener('click', closeMenus);
-            document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenus(); });
+            document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenus(true); });
             window.addEventListener('resize', closeMenus);
             window.addEventListener('scroll', closeMenus, true);
         });
