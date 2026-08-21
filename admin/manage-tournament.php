@@ -1136,6 +1136,13 @@ $csrfToken = generateCsrfToken();
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- ...existing code... -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js"></script>
+<!-- ...existing code... -->
     <script>
         tailwind.config = {
             theme: {
@@ -1416,27 +1423,65 @@ $csrfToken = generateCsrfToken();
                 pages[step] = page;
                 form.insertBefore(page, footer);
             }
-            const nodes = [...form.children].filter(node => node !== footer && node !== stepper && !node.matches('input[type="hidden"]') && !node.classList.contains('tournament-step-page'));
-            const fields = node => [...node.querySelectorAll('input, select, textarea')].map(input => input.name || input.id || '');
+           // ...existing code...
+            const nodes = [...form.children].filter(node =>
+                node !== footer &&
+                node !== stepper &&
+                !node.matches('input[type="hidden"]') &&
+                !node.classList.contains('tournament-step-page') &&
+                !node.hidden
+            );
+
+            const fields = node =>
+                [...node.querySelectorAll('input, select, textarea')]
+                    .map(input => input.name || input.id || '');
+
             const targetStep = names => {
                 if (names.some(name => name.includes('category_') || name === 'category_codes[]')) return 3;
-                if (names.some(name => name.includes('registration_') || name.includes('checkin_') || name === 'start_date' || name === 'end_date' || name.includes('venue_') || name === 'tournament_days_json')) return 4;
+                if (names.some(name =>
+                    name.includes('registration_') ||
+                    name.includes('checkin_') ||
+                    name === 'start_date' ||
+                    name === 'end_date' ||
+                    name.includes('venue_') ||
+                    name === 'tournament_days_json'
+                )) return 4;
                 if (names.some(name => name === 'tournament_image')) return 1;
                 if (names.some(name => name.includes('rules'))) return 5;
-                if (names.some(name => name === 'game_id' || name === 'format' || name === 'best_of' || name === 'max_teams' || name === 'seed_method')) return 2;
+                if (names.some(name =>
+                    name === 'game_id' ||
+                    name === 'format' ||
+                    name === 'best_of' ||
+                    name === 'max_teams' ||
+                    name === 'seed_method'
+                )) return 2;
+
                 return 1;
             };
-            const appendNode = (node, step) => { if (node) pages[step].appendChild(node); };
+
+            const appendNode = (node, step) => {
+                if (node && !node.hidden) {
+                    pages[step].appendChild(node);
+                }
+            };
+
             nodes.forEach(node => {
                 const nodeFields = fields(node);
-                const directChildren = [...node.children];
+                const directChildren = [...node.children].filter(child => !child.hidden);
                 const childTargets = directChildren.map(child => targetStep(fields(child)));
+
                 if (directChildren.length > 1 && new Set(childTargets).size > 1) {
-                    directChildren.forEach((child, index) => appendNode(child, childTargets[index]));
+                    directChildren.forEach((child, index) => {
+                        appendNode(child, childTargets[index]);
+                    });
+
+                    node.remove();
                     return;
                 }
+
                 appendNode(node, targetStep(nodeFields));
             });
+// ...existing code...
             form.dataset.stepPagesReady = '1';
         }
 
@@ -1562,7 +1607,39 @@ $csrfToken = generateCsrfToken();
             if (values.checkin_close_at && values.start_date && values.checkin_close_at > values.start_date) fail('checkin_close_at', 'เวลาปิด Check-in ต้องไม่เกินเวลาเริ่มการแข่งขัน');
             return valid;
         }
+// ...existing code...
+        function setupThaiDateTimePickers() {
+            if (typeof flatpickr !== 'function') return;
 
+            document.querySelectorAll(
+                '#createModal input[type="datetime-local"], #editModal input[type="datetime-local"]'
+            ).forEach(input => {
+                if (input.dataset.thaiDateTimeReady === '1') return;
+
+                flatpickr(input, {
+                    locale: 'th',
+                    enableTime: true,
+                    time_24hr: true,
+                    minuteIncrement: 5,
+                    allowInput: true,
+                    disableMobile: true,
+                    dateFormat: 'Y-m-d\\TH:i',
+                    altInput: true,
+                    altFormat: 'j F Y เวลา H:i น.',
+                    onChange: () => {
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                });
+
+                input.dataset.thaiDateTimeReady = '1';
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            prepareTournamentDayForms();
+            setupThaiDateTimePickers();
+        });
+// ...existing code...
         document.addEventListener('DOMContentLoaded', prepareTournamentDayForms);
 
         function loadEditFormData(tournamentId) {
@@ -2192,7 +2269,7 @@ $csrfToken = generateCsrfToken();
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันปิดรับสมัคร</label>
                         <input type="datetime-local" name="registration_end" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
                     </div>
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วัน Lock Tournament Roster</label><input type="datetime-local" name="roster_lock_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
+                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันล็อกรายชื่อผู้เข้าแข่งขัน</label><input type="datetime-local" name="roster_lock_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเริ่มแข่งขัน</label>
                         <input type="datetime-local" name="start_date" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
