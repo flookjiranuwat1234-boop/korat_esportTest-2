@@ -91,6 +91,13 @@ if (!in_array($selectedYear, $availableYears)) {
     $selectedYear = $availableYears[0];
 }
 
+$dashboardSearch = trim((string) ($_GET['search'] ?? ''));
+$dashboardGame = (int) ($_GET['game_id'] ?? 0);
+$dashboardCategory = trim((string) ($_GET['category'] ?? ''));
+$dashboardStatus = trim((string) ($_GET['status'] ?? ''));
+$dashboardMonth = (int) ($_GET['month'] ?? 0);
+$dashboardNow = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
+
 $tournamentCountYear = $pdo->prepare("SELECT COUNT(*) FROM tournaments WHERE YEAR(created_at) = :y");
 $tournamentCountYear->execute(['y' => $selectedYear]);
 $tournamentCountYear = $tournamentCountYear->fetchColumn();
@@ -98,6 +105,33 @@ $tournamentCountYear = $tournamentCountYear->fetchColumn();
 $ongoingCountYear = $pdo->prepare("SELECT COUNT(*) FROM tournaments WHERE YEAR(created_at) = :y AND status = 'ongoing'");
 $ongoingCountYear->execute(['y' => $selectedYear]);
 $ongoingCountYear = $ongoingCountYear->fetchColumn();
+
+$monthlyTournamentCounts = array_fill(1, 12, 0);
+$monthlyStmt = $pdo->prepare("SELECT MONTH(start_date) AS month_number, COUNT(*) AS tournament_count
+    FROM tournaments WHERE YEAR(start_date) = :year AND start_date IS NOT NULL
+    GROUP BY MONTH(start_date) ORDER BY month_number");
+$monthlyStmt->execute(['year' => $selectedYear]);
+foreach ($monthlyStmt->fetchAll(PDO::FETCH_ASSOC) as $monthRow) {
+    $monthlyTournamentCounts[(int) $monthRow['month_number']] = (int) $monthRow['tournament_count'];
+}
+
+$memberChartData = [
+    ['label' => 'นักกีฬาตัวจริง', 'value' => (int) $confirmedAthleteCount, 'color' => '#10B981', 'url' => 'manage-members.php?profile=confirmed'],
+    ['label' => 'มีโปรไฟล์แต่ยังไม่แข่งขัน', 'value' => (int) $profileOnlyNoTournamentCount, 'color' => '#3B82F6', 'url' => 'manage-members.php'],
+    ['label' => 'ยังไม่มีโปรไฟล์', 'value' => (int) $noProfileCount, 'color' => '#94A3B8', 'url' => 'manage-members.php'],
+];
+$workflowChartData = [
+    ['label' => 'เปิดรับสมัคร', 'value' => (int) $openTournamentCount, 'color' => '#10B981', 'icon' => 'fa-door-open', 'description' => 'Tournament ที่เปิดให้สมัคร'],
+    ['label' => 'รออนุมัติ', 'value' => (int) $pendingRegistrationCount, 'color' => '#F59E0B', 'icon' => 'fa-user-clock', 'description' => 'ใบสมัครที่รอ Admin ตรวจสอบ'],
+    ['label' => 'กำลัง Check-in', 'value' => (int) $checkinTournamentCount, 'color' => '#3B82F6', 'icon' => 'fa-user-check', 'description' => 'Tournament ที่อยู่ในช่วง Check-in'],
+    ['label' => 'Check-in ไม่ครบ', 'value' => (int) $incompleteCheckinCount, 'color' => '#F43F5E', 'icon' => 'fa-triangle-exclamation', 'description' => 'Registration ที่ยังเช็กอินไม่ครบ'],
+    ['label' => 'พร้อมจัดสาย', 'value' => (int) $readyForDrawCount, 'color' => '#0EA5E9', 'icon' => 'fa-sitemap', 'description' => 'Tournament ที่พร้อมสร้าง Bracket'],
+    ['label' => 'กำลังแข่งขัน', 'value' => (int) $ongoingCountYear, 'color' => '#8B5CF6', 'icon' => 'fa-gamepad', 'description' => 'Tournament ที่กำลังแข่งขัน'],
+    ['label' => 'Match รอผล', 'value' => (int) $pendingMatches, 'color' => '#F97316', 'icon' => 'fa-clock', 'description' => 'Match ที่รอบันทึกผล'],
+    ['label' => 'แข่งขันจบแล้ว', 'value' => (int) $completedTournamentCount, 'color' => '#64748B', 'icon' => 'fa-flag-checkered', 'description' => 'Tournament ที่จบการแข่งขันแล้ว'],
+];
+$dashboardGames = $pdo->query("SELECT game_id, name FROM games WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$dashboardCategories = $pdo->query("SELECT DISTINCT category_code, label FROM tournament_categories WHERE is_active = 1 ORDER BY label")->fetchAll(PDO::FETCH_ASSOC);
 
 $tournamentsByYear = $pdo->prepare("
     SELECT t.tournament_id, t.name, t.status, t.created_at, t.image_path, t.start_date, g.name AS game_name,
@@ -112,9 +146,14 @@ $tournamentsByYear = $pdo->prepare("
     FROM tournaments t
     JOIN games g ON g.game_id = t.game_id
     WHERE YEAR(t.created_at) = :y
+      AND (:search = '' OR t.name LIKE :search_like)
+      AND (:game_id = 0 OR t.game_id = :game_id)
+      AND (:status = '' OR t.status = :status)
+      AND (:month = 0 OR MONTH(t.start_date) = :month)
+      AND (:category = '' OR EXISTS (SELECT 1 FROM tournament_categories fc WHERE fc.tournament_id = t.tournament_id AND fc.is_active = 1 AND (fc.category_code = :category OR fc.label = :category)))
     ORDER BY t.created_at DESC
 ");
-$tournamentsByYear->execute(['y' => $selectedYear]);
+$tournamentsByYear->execute(['y' => $selectedYear, 'search' => $dashboardSearch, 'search_like' => '%' . $dashboardSearch . '%', 'game_id' => $dashboardGame, 'status' => $dashboardStatus, 'month' => $dashboardMonth, 'category' => $dashboardCategory]);
 $tournamentsByYear = $tournamentsByYear->fetchAll();
 
 $pendingRegs = $pdo->query("
@@ -222,6 +261,79 @@ $openTournaments = $pdo->query("
         .progress-bar-fill {
             width: 0%;
             transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .workflow-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 1rem;
+        }
+        .workflow-stage {
+            min-width: 0;
+            background: #fff;
+            border: 1px solid var(--workflow-border);
+            border-top: 4px solid var(--workflow-accent);
+            border-radius: 0.875rem;
+            padding: 0.875rem;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+            cursor: default;
+            transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+        }
+        .workflow-panel__header { flex-wrap: wrap; }
+        @media (hover: hover) and (pointer: fine) {
+            .workflow-stage--registration:hover { border-color: rgba(16, 185, 129, 0.85); box-shadow: 0 8px 24px rgba(16, 185, 129, 0.18), 0 0 12px rgba(16, 185, 129, 0.14); }
+            .workflow-stage--checkin:hover { border-color: rgba(37, 99, 235, 0.85); box-shadow: 0 8px 24px rgba(37, 99, 235, 0.18), 0 0 12px rgba(37, 99, 235, 0.14); }
+            .workflow-stage--competition:hover { border-color: rgba(124, 58, 237, 0.85); box-shadow: 0 8px 24px rgba(124, 58, 237, 0.18), 0 0 12px rgba(124, 58, 237, 0.14); }
+            .workflow-stage--completed:hover { border-color: rgba(51, 65, 85, 0.85); box-shadow: 0 8px 24px rgba(51, 65, 85, 0.18), 0 0 12px rgba(51, 65, 85, 0.14); }
+        }
+        @media (hover: hover) and (pointer: fine) {
+            .workflow-stage:hover { transform: translateY(-3px); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .workflow-stage { transition: none; }
+            .workflow-stage:hover { transform: none; }
+        }
+        .workflow-stage__header {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.55rem;
+        }
+        .workflow-stage__number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            width: 1.75rem;
+            height: 1.75rem;
+            border-radius: 999px;
+            background: var(--workflow-soft);
+            color: var(--workflow-accent);
+            font: 700 0.75rem/1 'Orbitron', sans-serif;
+        }
+        .workflow-stage__icon { align-self: center; color: var(--workflow-accent); font-size: 1.1rem; }
+        .workflow-stage__total { margin-left: auto; color: var(--workflow-accent); font: 700 1.35rem/1 'Orbitron', sans-serif; }
+        .workflow-status-list { display: grid; gap: 0.35rem; margin-top: 0.65rem; }
+        .workflow-status-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            min-height: 2.1rem;
+            padding: 0.35rem 0.55rem;
+            border: 1px solid transparent;
+            border-radius: 0.55rem;
+            color: #475569;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+        .workflow-status-badge { min-width: 1.55rem; padding: 0.15rem 0.35rem; border-radius: 999px; background: var(--workflow-soft); color: var(--workflow-accent); text-align: center; font: 700 0.7rem/1.2 'Orbitron', sans-serif; }
+        .workflow-status-badge.is-zero { background: #f1f5f9; color: #94a3b8; }
+        .workflow-manage-link { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.25rem; padding: 0.45rem 0.75rem; border-radius: 0.5rem; background: #fff7ed; color: #ea580c; font-size: 0.72rem; font-weight: 700; }
+        .workflow-manage-link:hover { background: #ffedd5; }
+        @media (max-width: 1023px) {
+            .workflow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 639px) {
+            .workflow-grid { grid-template-columns: minmax(0, 1fr); }
         }
     </style>
 </head>
@@ -452,24 +564,38 @@ $openTournaments = $pdo->query("
 
             </div>
 
-            <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-                    <div><h2 class="font-bold font-display text-slate-900">สถานะ Tournament Workflow</h2><p class="text-xs text-slate-500 mt-1">แยกจำนวนตาม Tournament, Registration และ Match อย่างชัดเจน</p></div>
-                    <a href="manage-tournament.php" class="text-xs font-bold text-brand-orange hover:underline">เปิดศูนย์จัดการ</a>
+            <section class="workflow-panel bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <div class="workflow-panel__header flex items-center justify-between border-b border-slate-100 pb-3 mb-4 gap-3">
+                    <div class="min-w-0"><h2 class="font-bold font-display text-slate-900">สถานะ Tournament Workflow</h2><p class="text-xs text-slate-500 mt-1">สรุปจำนวน Tournament, ใบสมัคร, Check-in และ Match ตามสถานะปัจจุบัน</p></div>
+                    <a href="manage-tournament.php" aria-label="เปิดศูนย์จัดการ Tournament" class="workflow-manage-link shrink-0"><i class="fa-solid fa-screwdriver-wrench" aria-hidden="true"></i><span>เปิดศูนย์จัดการ</span></a>
                 </div>
-                <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-                    <?php $workflow = [
-                        ['เปิดรับสมัคร', $openTournamentCount, 'manage-tournament.php', 'bg-emerald-50 text-emerald-700'],
-                        ['รออนุมัติ', $pendingRegistrationCount, 'manage-teams.php', 'bg-amber-50 text-amber-700'],
-                        ['กำลัง Check-in', $checkinTournamentCount, 'checkin-teams.php', 'bg-blue-50 text-blue-700'],
-                        ['Check-in ไม่ครบ', $incompleteCheckinCount, 'checkin-teams.php', 'bg-rose-50 text-rose-700'],
-                        ['พร้อมจัดสาย', $readyForDrawCount, 'manage-tournament.php', 'bg-sky-50 text-sky-700'],
-                        ['กำลังแข่งขัน', $ongoingCountYear, 'manage-tournament.php', 'bg-violet-50 text-violet-700'],
-                        ['Match รอผล', $pendingMatches, 'record-match.php', 'bg-orange-50 text-orange-700'],
-                        ['แข่งขันจบแล้ว', $completedTournamentCount, 'manage-tournament.php', 'bg-slate-100 text-slate-700'],
-                    ]; foreach ($workflow as $item): ?>
-                        <a href="<?php echo $item[2]; ?>" class="rounded-xl p-3 <?php echo $item[3]; ?> border border-current/10 hover:shadow-sm transition-shadow"><b class="block text-2xl font-display"><?php echo (int) $item[1]; ?></b><span class="block text-[11px] font-bold leading-tight"><?php echo $item[0]; ?></span></a>
-                    <?php endforeach; ?>
+                <div class="workflow-grid">
+                    <div class="workflow-stage workflow-stage--registration" style="--workflow-accent:#059669;--workflow-border:#a7f3d0;--workflow-soft:#ecfdf5;">
+                        <div class="workflow-stage__header"><span class="workflow-stage__number">1</span><i class="workflow-stage__icon fa-solid fa-door-open"></i><strong class="text-slate-900">รับสมัคร</strong><span class="workflow-stage__total"><?php echo (int) $workflowChartData[0]['value'] + (int) $workflowChartData[1]['value']; ?></span></div>
+                        <div class="workflow-status-list">
+                            <div class="workflow-status-item" title="Tournament ที่อยู่ในช่วงเปิดรับสมัคร"><span>เปิดรับสมัคร</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[0]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[0]['value']; ?></span></div>
+                            <div class="workflow-status-item" title="ใบสมัครที่ Admin ยังไม่ได้ตรวจสอบ"><span>รออนุมัติ</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[1]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[1]['value']; ?></span></div>
+                        </div>
+                    </div>
+                    <div class="workflow-stage workflow-stage--checkin" style="--workflow-accent:#2563eb;--workflow-border:#bfdbfe;--workflow-soft:#eff6ff;">
+                        <div class="workflow-stage__header"><span class="workflow-stage__number">2</span><i class="workflow-stage__icon fa-solid fa-user-check"></i><strong class="text-slate-900">Check-in</strong><span class="workflow-stage__total"><?php echo (int) $workflowChartData[2]['value'] + (int) $workflowChartData[3]['value']; ?></span></div>
+                        <div class="workflow-status-list">
+                            <div class="workflow-status-item" title="Tournament ที่อยู่ในช่วงรายงานตัว"><span>กำลัง Check-in</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[2]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[2]['value']; ?></span></div>
+                            <div class="workflow-status-item" title="ทีมที่ยังรายงานตัวไม่ครบตามเงื่อนไข"><span>Check-in ไม่ครบ</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[3]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[3]['value']; ?></span></div>
+                        </div>
+                    </div>
+                    <div class="workflow-stage workflow-stage--competition" style="--workflow-accent:#7c3aed;--workflow-border:#ddd6fe;--workflow-soft:#f5f3ff;">
+                        <div class="workflow-stage__header"><span class="workflow-stage__number">3</span><i class="workflow-stage__icon fa-solid fa-sitemap"></i><strong class="text-slate-900">จัดการแข่งขัน</strong><span class="workflow-stage__total"><?php echo (int) $workflowChartData[4]['value'] + (int) $workflowChartData[5]['value'] + (int) $workflowChartData[6]['value']; ?></span></div>
+                        <div class="workflow-status-list">
+                            <div class="workflow-status-item" title="Tournament ที่มีผู้สมัครพร้อมสำหรับจัดสาย"><span>พร้อมจัดสาย</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[4]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[4]['value']; ?></span></div>
+                            <div class="workflow-status-item" title="Tournament ที่เริ่มการแข่งขันแล้ว"><span>กำลังแข่งขัน</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[5]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[5]['value']; ?></span></div>
+                            <div class="workflow-status-item" title="คู่แข่งขันที่ยังไม่ได้บันทึกผล"><span>Match รอผล</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[6]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[6]['value']; ?></span></div>
+                        </div>
+                    </div>
+                    <div class="workflow-stage workflow-stage--completed" style="--workflow-accent:#475569;--workflow-border:#cbd5e1;--workflow-soft:#f8fafc;">
+                        <div class="workflow-stage__header"><span class="workflow-stage__number">4</span><i class="workflow-stage__icon fa-solid fa-flag-checkered"></i><strong class="text-slate-900">เสร็จสิ้น</strong><span class="workflow-stage__total"><?php echo (int) $workflowChartData[7]['value']; ?></span></div>
+                        <div class="workflow-status-list"><div class="workflow-status-item" title="Tournament ที่ดำเนินการแข่งขันเสร็จแล้ว"><span>แข่งขันจบแล้ว</span><span class="workflow-status-badge<?php echo (int) $workflowChartData[7]['value'] === 0 ? ' is-zero' : ''; ?>"><?php echo (int) $workflowChartData[7]['value']; ?></span></div></div>
+                    </div>
                 </div>
             </section>
 
