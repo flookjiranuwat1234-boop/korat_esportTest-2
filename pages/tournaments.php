@@ -12,9 +12,39 @@ $currentUser = [
     'role' => $_SESSION['role'] ?? null,
 ];
 
+$gameFilter = (int) ($_GET['game_id'] ?? 0);
+$categoryFilter = trim((string) ($_GET['category'] ?? ''));
+$modeFilter = trim((string) ($_GET['mode'] ?? ''));
+$statusFilter = trim((string) ($_GET['status'] ?? ''));
+$dateFilter = trim((string) ($_GET['date'] ?? ''));
+$allowedTournamentStatuses = ['draft', 'registration_open', 'registration_closed', 'ongoing', 'completed', 'cancelled'];
+$tournamentWhere = ['1=1'];
+$tournamentParams = [];
+if ($gameFilter > 0) {
+    $tournamentWhere[] = 't.game_id = :game_id';
+    $tournamentParams['game_id'] = $gameFilter;
+}
+if ($categoryFilter !== '') {
+    $tournamentWhere[] = 'EXISTS (SELECT 1 FROM tournament_categories filter_category WHERE filter_category.tournament_id = t.tournament_id AND filter_category.category_code = :category)';
+    $tournamentParams['category'] = $categoryFilter;
+}
+if ($modeFilter !== '') {
+    $tournamentWhere[] = 'g.play_mode = :play_mode';
+    $tournamentParams['play_mode'] = $modeFilter;
+}
+if (in_array($statusFilter, $allowedTournamentStatuses, true)) {
+    $tournamentWhere[] = 't.status = :status';
+    $tournamentParams['status'] = $statusFilter;
+}
+if ($dateFilter === 'upcoming') {
+    $tournamentWhere[] = 't.start_date >= NOW()';
+} elseif ($dateFilter === 'past') {
+    $tournamentWhere[] = 't.end_date < NOW()';
+}
+
 // ดึงรายการทัวร์นาเมนต์พร้อมชื่อเกมและรูปแบบการแข่งขันจากตาราง games
 try {
-    $tournaments = $pdo->query("
+    $tournamentStmt = $pdo->prepare("
         SELECT t.*, t.name AS title, g.name AS game_name, g.play_mode,
             (SELECT COUNT(*) FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id) AS registered_count,
             (SELECT COUNT(*) FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id AND tr.status = 'approved') AS approved_count,
@@ -25,12 +55,24 @@ try {
             (SELECT COUNT(*) FROM matches m WHERE m.tournament_id = t.tournament_id AND m.status IN ('completed', 'walkover')) AS completed_match_count
         FROM tournaments t
         LEFT JOIN games g ON g.game_id = t.game_id
+        WHERE " . implode(' AND ', $tournamentWhere) . "
         ORDER BY t.start_date DESC
-    ")->fetchAll();
+    ");
+    $tournamentStmt->execute($tournamentParams);
+    $tournaments = $tournamentStmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
-    // Fallback หากโครงสร้างตารางแตกต่างออกไป
-    $tournaments = $pdo->query("SELECT *, name AS title FROM tournaments ORDER BY start_date DESC")->fetchAll();
+    $tournaments = [];
 }
+$games = $pdo->query('SELECT game_id, name FROM games ORDER BY name ASC')->fetchAll(PDO::FETCH_ASSOC);
+$categoryOptions = $pdo->query('SELECT DISTINCT category_code, label FROM tournament_categories WHERE is_active = 1 ORDER BY label ASC')->fetchAll(PDO::FETCH_ASSOC);
+$statusLabels = [
+    'draft' => 'เตรียมเปิดรับสมัคร',
+    'registration_open' => 'เปิดรับสมัคร',
+    'registration_closed' => 'ปิดรับสมัคร',
+    'ongoing' => 'กำลังแข่งขัน',
+    'completed' => 'แข่งขันจบแล้ว',
+    'cancelled' => 'ยกเลิก',
+];
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
@@ -363,6 +405,14 @@ try {
 
         <!-- ================= 3. TOURNAMENTS GRID SECTION ================= -->
         <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 mb-24 w-full">
+            <form method="GET" class="mb-8 grid grid-cols-1 gap-3 rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-md sm:grid-cols-2 lg:grid-cols-6">
+                <select name="game_id" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกเกม</option><?php foreach ($games as $game): ?><option value="<?= (int) $game['game_id'] ?>" <?= $gameFilter === (int) $game['game_id'] ? 'selected' : '' ?>><?= htmlspecialchars($game['name']) ?></option><?php endforeach; ?></select>
+                <select name="category" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุก Category</option><?php foreach ($categoryOptions as $category): ?><option value="<?= htmlspecialchars($category['category_code']) ?>" <?= $categoryFilter === $category['category_code'] ? 'selected' : '' ?>><?= htmlspecialchars($category['label'] ?: $category['category_code']) ?></option><?php endforeach; ?></select>
+                <select name="mode" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกโหมด</option><option value="solo" <?= $modeFilter === 'solo' ? 'selected' : '' ?>>Solo</option><option value="team" <?= $modeFilter === 'team' ? 'selected' : '' ?>>Team</option></select>
+                <select name="status" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกสถานะ</option><?php foreach ($statusLabels as $statusValue => $statusLabel): ?><option value="<?= $statusValue ?>" <?= $statusFilter === $statusValue ? 'selected' : '' ?>><?= $statusLabel ?></option><?php endforeach; ?></select>
+                <select name="date" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกช่วงเวลา</option><option value="upcoming" <?= $dateFilter === 'upcoming' ? 'selected' : '' ?>>กำลังจะเริ่ม</option><option value="past" <?= $dateFilter === 'past' ? 'selected' : '' ?>>จบแล้ว</option></select>
+                <div class="flex gap-2"><button type="submit" class="flex-1 rounded-xl bg-brand-orange px-3 py-2.5 text-xs font-bold text-white hover:bg-brand-glow">กรอง</button><a href="tournaments.php" class="flex-1 rounded-xl bg-white/10 px-3 py-2.5 text-center text-xs font-bold text-gray-300 hover:bg-white/15">ล้าง</a></div>
+            </form>
             <?php if (empty($tournaments)): ?>
                 <div
                     class="glass-panel p-20 text-center text-gray-300 rounded-3xl max-w-xl mx-auto border border-brand-orange/40 shadow-orange-glow animate-fade-up">
@@ -374,7 +424,7 @@ try {
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                     <?php foreach ($tournaments as $tIndex => $t):
                         $imgSrc = !empty($t['image_path']) ? '../assets/' . htmlspecialchars($t['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop';
-                        $status = $t['status'] ?? 'upcoming';
+                        $status = $t['status'] ?? 'draft';
                         $tId = $t['tournament_id'] ?? ($t['id'] ?? 0);
                         $tTitle = $t['title'] ?? 'ทัวร์นาเมนต์อีสปอร์ต';
                         $tPrize = $t['prize_pool'] ?? 0;
@@ -382,7 +432,6 @@ try {
                         $tMode = !empty($t['play_mode']) ? $t['play_mode'] : 'ทีม (Team 5v5)';
                         $tStartDate = !empty($t['start_date']) ? date('d/m/Y', strtotime($t['start_date'])) : '-';
                         $tEndDate = !empty($t['end_date']) ? date('d/m/Y', strtotime($t['end_date'])) : '-';
-                        ensureDefaultTournamentCategories($pdo, (int) $tId);
                         $categoryStmt = $pdo->prepare('SELECT category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
                         $categoryStmt->execute(['tournament_id' => $tId]);
                         $categories = $categoryStmt->fetchAll();
@@ -403,7 +452,7 @@ try {
 
                                     <!-- ป้ายสถานะทัวร์นาเมนต์ -->
                                     <div class="absolute top-4 left-4 z-10 badge-pop-in">
-                                        <?php if ($status === 'ongoing' || $status === 'active'): ?>
+                                        <?php if ($status === 'ongoing'): ?>
                                             <span
                                                 class="px-3.5 py-1.5 rounded-full bg-rose-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest shadow-[0_0_15px_rgba(225,29,72,0.6)] flex items-center gap-1.5 border border-rose-400">
                                                 <span class="w-2 h-2 rounded-full bg-white animate-ping"></span> กำลังแข่งขัน (LIVE)
@@ -413,14 +462,14 @@ try {
                                                 class="px-3.5 py-1.5 rounded-full bg-slate-800/90 backdrop-blur-md text-gray-300 text-[10px] font-black uppercase tracking-widest shadow-lg border border-white/10">
                                                 <i class="fa-solid fa-flag-checkered mr-1"></i> จบการแข่งขันแล้ว
                                             </span>
-                                        <?php elseif ($status === 'bracket_generated'): ?>
-                                            <span class="px-3.5 py-1.5 rounded-full bg-sky-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-sky-300"><i class="fa-solid fa-sitemap mr-1"></i> จัดสายแล้ว</span>
-                                        <?php elseif ($status === 'checkin_open'): ?>
-                                            <span class="px-3.5 py-1.5 rounded-full bg-amber-500/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-amber-300"><i class="fa-solid fa-user-check mr-1"></i> เปิด Check-in</span>
+                                        <?php elseif ($status === 'registration_closed'): ?>
+                                            <span class="px-3.5 py-1.5 rounded-full bg-sky-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-sky-300"><i class="fa-solid fa-lock mr-1"></i> ปิดรับสมัคร</span>
+                                        <?php elseif ($status === 'cancelled'): ?>
+                                            <span class="px-3.5 py-1.5 rounded-full bg-rose-700/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-rose-300"><i class="fa-solid fa-ban mr-1"></i> ยกเลิก</span>
                                         <?php else: ?>
                                             <span
                                                 class="px-3.5 py-1.5 rounded-full bg-brand-orange/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest shadow-orange-glow flex items-center gap-1.5 border border-amber-300">
-                                                <i class="fa-solid fa-door-open text-amber-200"></i> เปิดรับสมัคร
+                                                <i class="fa-solid fa-door-open text-amber-200"></i> <?= htmlspecialchars($statusLabels[$status] ?? $status) ?>
                                             </span>
                                         <?php endif; ?>
                                     </div>

@@ -218,9 +218,26 @@ function bumpPlayerRankings($pdo, $gameId, $teamId, $category, $result, $tournam
 
 function recordRankingHistoryForMatch(PDO $pdo, array $match, int $gameId, ?int $categoryId): void
 {
-    $history = $pdo->prepare('INSERT INTO ranking_history
-        (game_id, tournament_id, tournament_category_id, match_id, player_id, team_id, result_code, points)
-        VALUES (:game_id, :tournament_id, :category_id, :match_id, :player_id, :team_id, :result_code, :points)');
+    $historyColumns = $pdo->query('SHOW COLUMNS FROM ranking_history')->fetchAll(PDO::FETCH_COLUMN);
+    $historyFields = ['game_id', 'tournament_id', 'tournament_category_id', 'player_id', 'team_id', 'points'];
+    $historyValues = [':game_id', ':tournament_id', ':category_id', ':player_id', ':team_id', ':points'];
+    if (in_array('match_id', $historyColumns, true)) {
+        $historyFields[] = 'match_id';
+        $historyValues[] = ':match_id';
+    }
+    if (in_array('result_code', $historyColumns, true)) {
+        $historyFields[] = 'result_code';
+        $historyValues[] = ':result_code';
+    } elseif (in_array('reason', $historyColumns, true)) {
+        $historyFields[] = 'reason';
+        $historyValues[] = ':reason';
+    }
+    if (in_array('created_by', $historyColumns, true)) {
+        $historyFields[] = 'created_by';
+        $historyValues[] = ':created_by';
+    }
+    $history = $pdo->prepare('INSERT INTO ranking_history (' . implode(', ', $historyFields) . ')
+        VALUES (' . implode(', ', $historyValues) . ')');
     $winner = (int) ($match['winner_team_id'] ?? 0);
     $isDraw = !$winner && $match['team1_score'] !== null && (int) $match['team1_score'] === (int) $match['team2_score'];
     $participants = [
@@ -233,16 +250,38 @@ function recordRankingHistoryForMatch(PDO $pdo, array $match, int $gameId, ?int 
         $isTeamStmt->execute(['id' => $participant['id']]);
         $isTeam = (int) $isTeamStmt->fetchColumn() > 0;
         $points = resultToStats($participant['result'])[0];
+        $historyParams = [
+            'game_id' => $gameId,
+            'tournament_id' => $match['tournament_id'],
+            'category_id' => $categoryId,
+            'player_id' => null,
+            'team_id' => null,
+            'points' => $points,
+        ];
+        if (in_array('match_id', $historyColumns, true)) {
+            $historyParams['match_id'] = $match['match_id'] ?? null;
+        }
+        if (in_array('result_code', $historyColumns, true)) {
+            $historyParams['result_code'] = $participant['result'];
+        } elseif (in_array('reason', $historyColumns, true)) {
+            $historyParams['reason'] = $participant['result'];
+        }
+        if (in_array('created_by', $historyColumns, true)) {
+            $historyParams['created_by'] = (int) ($_SESSION['user_id'] ?? 0);
+        }
         if ($isTeam) {
             $members = $pdo->prepare('SELECT DISTINCT trm.player_id FROM tournament_registration_members trm
                 JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
                 WHERE tr.tournament_id = :tournament_id AND tr.team_id = :team_id AND tr.status = \'approved\'');
             $members->execute(['tournament_id' => $match['tournament_id'], 'team_id' => $participant['id']]);
             foreach ($members->fetchAll(PDO::FETCH_COLUMN) as $playerId) {
-                $history->execute(['game_id' => $gameId, 'tournament_id' => $match['tournament_id'], 'category_id' => $categoryId, 'match_id' => $match['match_id'] ?? null, 'player_id' => $playerId, 'team_id' => $participant['id'], 'result_code' => $participant['result'], 'points' => $points]);
+                $historyParams['player_id'] = $playerId;
+                $historyParams['team_id'] = $participant['id'];
+                $history->execute($historyParams);
             }
         } else {
-            $history->execute(['game_id' => $gameId, 'tournament_id' => $match['tournament_id'], 'category_id' => $categoryId, 'match_id' => $match['match_id'] ?? null, 'player_id' => $participant['id'], 'team_id' => null, 'result_code' => $participant['result'], 'points' => $points]);
+            $historyParams['player_id'] = $participant['id'];
+            $history->execute($historyParams);
         }
     }
 }

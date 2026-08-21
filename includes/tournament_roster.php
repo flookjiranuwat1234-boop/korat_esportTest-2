@@ -10,7 +10,7 @@ function ensureTournamentRosterTables(PDO $pdo): void
     ensureTeamMemberRolesTable($pdo);
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS tournament_registration_members (
-        tournament_registration_member_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
         tournament_registration_id INT UNSIGNED NOT NULL,
         player_id INT UNSIGNED NOT NULL,
         member_roles VARCHAR(255) NULL,
@@ -19,7 +19,7 @@ function ensureTournamentRosterTables(PDO $pdo): void
         checkin_status VARCHAR(30) NOT NULL DEFAULT 'not_checked_in',
         checkin_at DATETIME NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (tournament_registration_member_id),
+        PRIMARY KEY (id),
         UNIQUE KEY registration_member_unique (tournament_registration_id, player_id),
         KEY registration_member_player_idx (player_id),
         CONSTRAINT registration_member_registration_fk FOREIGN KEY (tournament_registration_id)

@@ -65,7 +65,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     if ($check->fetch()) {
                         $error = 'คุณได้สมัครเข้าร่วมทัวร์นาเมนต์นี้ไปแล้ว';
                     } else {
-                        $categoryId = getTournamentCategoryId($pdo, $tournamentId, 'open');
+                        $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code FROM tournament_categories
+                            WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY (category_code = \'open\') DESC, tournament_category_id LIMIT 1');
+                        $categoryStmt->execute(['tournament_id' => $tournamentId]);
+                        $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
+                        if (!$category) {
+                            $error = 'Tournament นี้ยังไม่มี Competition Category ที่เปิดใช้งาน';
+                        } else {
+                        $categoryId = (int) $category['tournament_category_id'];
                         $insert = $pdo->prepare("
                             INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status)
                             VALUES (:tid, :category_id, :pid, NULL, 'open', 'pending')
@@ -75,14 +82,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         
                         $success = 'ส่งใบสมัครประเภทเดี่ยวเรียบร้อยแล้ว!';
                     }
+                    }
                 }
             } else {
                 $teamId = (int) $_POST['team_id'];
-                $teamCategory = $_POST['team_category'] ?? 'open';
-
-                if (!in_array($teamCategory, ['open', 'male', 'female'])) {
-                    $teamCategory = 'open';
-                }
+                $categoryId = (int) ($_POST['tournament_category_id'] ?? 0);
+                $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code FROM tournament_categories
+                    WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1');
+                $categoryStmt->execute(['category_id' => $categoryId, 'tournament_id' => $tournamentId]);
+                $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
+                $teamCategory = $category['category_code'] ?? '';
                 
                 // ตรวจสอบว่าเป็นกัปตันทีมจริงหรือไม่
                 $verify = $pdo->prepare("
@@ -93,7 +102,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $verify->execute(['tid' => $teamId, 'pid' => $myPlayerId]);
                 $teamData = $verify->fetch();
 
-                if (!$teamData) {
+                if (!$category) {
+                    $error = 'Competition Category นี้ไม่ได้เปิดใน Tournament ที่เลือก';
+                } elseif (!$teamData) {
                     $error = 'คุณไม่ใช่กัปตันของทีมนี้';
                 } else {
                     // ตรวจสอบว่าสมัครทัวร์นี้ด้วยทีมนี้ไปหรือยัง
@@ -103,7 +114,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     if ($check->fetch()) {
                         $error = 'ทีมนี้ได้รับการสมัครเข้าร่วมทัวร์นาเมนต์นี้ไปแล้ว';
                     } else {
-                        $categoryId = getTournamentCategoryId($pdo, $tournamentId, $teamCategory);
                         // บันทึกการสมัครพร้อมระบุ category (แยกระหว่างเกมและประเภทการแข่งขันโดยอิสระ)
                         $insert = $pdo->prepare("
                             INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status)
@@ -150,6 +160,15 @@ if ($selectedTournamentId) {
 
 $existingTeamMap = [];
 $existingSoloMap = [];
+$tournamentCategories = [];
+if (!empty($tournaments)) {
+    $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label, starters_count, substitutes_count, checkin_required_roles
+        FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
+    foreach ($tournaments as $availableTournament) {
+        $categoryStmt->execute(['tournament_id' => $availableTournament['tournament_id']]);
+        $tournamentCategories[(int) $availableTournament['tournament_id']] = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+}
 function registrationStatusLabel($registration): array
 {
     if (is_string($registration)) {
@@ -428,10 +447,11 @@ $csrfToken = generateCsrfToken();
 
                                                     <div class="sm:col-span-2">
                                                         <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">เลือกประเภทการแข่งขันสำหรับทีมนี้:</label>
-                                                        <select name="team_category" class="w-full bg-black/60 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange">
-                                                            <option value="open">Open (ทั่วไป / ผสม)</option>
-                                                            <option value="male">ทีมชาย (Male)</option>
-                                                            <option value="female">ทีมหญิง (Female)</option>
+                                                        <select name="tournament_category_id" required class="w-full bg-black/60 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange">
+                                                            <option value="">เลือก Category</option>
+                                                            <?php foreach (($tournamentCategories[(int) $t['tournament_id']] ?? []) as $category): ?>
+                                                                <option value="<?= (int) $category['tournament_category_id'] ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']) ?></option>
+                                                            <?php endforeach; ?>
                                                         </select>
                                                     </div>
 

@@ -27,8 +27,13 @@ foreach ($rawGames as $g) {
 
 $gameId = isset($_GET['game_id']) ? (int)$_GET['game_id'] : (!empty($games) ? $games[0]['game_id'] : 0);
 $type = isset($_GET['type']) && $_GET['type'] === 'player' ? 'player' : 'team';
-$category = isset($_GET['category']) ? $_GET['category'] : 'open';
+$category = isset($_GET['category']) ? trim((string) $_GET['category']) : 'all';
 $search = trim($_GET['search'] ?? '');
+$categoryOptions = $pdo->prepare($type === 'player'
+    ? 'SELECT DISTINCT category FROM player_rankings WHERE game_id = :game_id ORDER BY category'
+    : 'SELECT DISTINCT category FROM team_rankings WHERE game_id = :game_id ORDER BY category');
+$categoryOptions->execute(['game_id' => $gameId]);
+$categoryOptions = $categoryOptions->fetchAll(PDO::FETCH_COLUMN);
 
 $rankings = [];
 
@@ -63,7 +68,7 @@ if ($type === 'team') {
         $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 } else {
-    // โหมดอันดับผู้เล่น (ตัด pr.category ออกเพื่อป้องกัน Error)
+    // โหมดอันดับผู้เล่น แยกตาม Category เมื่อข้อมูล Ranking มี Category
     if ($gameId > 0) {
         $sql = "
             SELECT pr.*, p.display_name, p.avatar_path,
@@ -82,7 +87,12 @@ if ($type === 'team') {
             $params['search'] = "%{$search}%";
         }
 
-        $sql .= " GROUP BY pr.player_id ORDER BY total_points DESC, wins DESC";
+        if ($category !== 'all' && $category !== '') {
+            $sql .= " AND pr.category = :category";
+            $params['category'] = $category;
+        }
+
+        $sql .= " GROUP BY pr.player_id, pr.game_id, pr.category ORDER BY total_points DESC, wins DESC";
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -334,12 +344,13 @@ if ($type === 'team') {
             </div>
 
             <!-- Category Filter Bar -->
-            <?php if ($type === 'team'): ?>
+            <?php if ($categoryOptions): ?>
                 <div class="glass-panel px-6 py-3 rounded-2xl flex flex-wrap items-center gap-2 border border-white/10">
                     <span class="text-xs font-bold text-gray-400 uppercase mr-3"><i class="fa-solid fa-filter text-brand-orange mr-1"></i> กรองประเภท:</span>
-                    <a href="?game_id=<?= $gameId ?>&type=team&category=open" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'open') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">Open</a>
-                    <a href="?game_id=<?= $gameId ?>&type=team&category=male" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'male') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">ทีมชาย</a>
-                    <a href="?game_id=<?= $gameId ?>&type=team&category=female" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'female') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">ทีมหญิง</a>
+                    <a href="?game_id=<?= $gameId ?>&type=<?= $type ?>&category=all" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'all') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">ทั้งหมด</a>
+                    <?php foreach ($categoryOptions as $categoryOption): ?>
+                        <a href="?game_id=<?= $gameId ?>&type=<?= $type ?>&category=<?= urlencode($categoryOption) ?>" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === $categoryOption) ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>"><?= htmlspecialchars($categoryOption) ?></a>
+                    <?php endforeach; ?>
                 </div>
             <?php endif; ?>
         </section>

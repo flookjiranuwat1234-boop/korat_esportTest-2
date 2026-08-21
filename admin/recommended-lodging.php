@@ -12,29 +12,19 @@ $currentUser = [
 
 $error = '';
 $success = '';
-
-// ==========================================
-// AUTO SETUP: ตรวจสอบและสร้างคอลัมน์เพิ่มอัตโนมัติ (image_path และ distance)
-// ==========================================
-try {
-    $cols = $pdo->query("SHOW COLUMNS FROM accommodations")->fetchAll(PDO::FETCH_COLUMN);
-    if (!in_array('image_path', $cols)) {
-        $pdo->exec("ALTER TABLE accommodations ADD COLUMN image_path VARCHAR(255) NULL AFTER address");
-    }
-    if (!in_array('distance', $cols)) {
-        $pdo->exec("ALTER TABLE accommodations ADD COLUMN distance VARCHAR(50) NULL AFTER image_path");
-    }
-} catch (Exception $e) {
-    // ซ่อนข้อผิดพลาดกรณีไม่มีสิทธิ์ ALTER TABLE
-}
+$search = trim((string) ($_GET['q'] ?? ''));
+$tournamentFilter = (int) ($_GET['tournament_id'] ?? 0);
+$sort = $_GET['sort'] ?? 'latest';
 
 // ฟังก์ชันช่วยอัปโหลดรูปภาพที่พัก
 function uploadAccommodationImage($file) {
     if (isset($file) && $file['error'] == UPLOAD_ERR_OK) {
-        $allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-        if (in_array($file['type'], $allowedTypes)) {
-            $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $fileName = 'hotel_' . uniqid() . '.' . $ext;
+        if ($file['size'] > 5 * 1024 * 1024) throw new RuntimeException('ไฟล์รูปต้องมีขนาดไม่เกิน 5MB');
+        $mimeType = mime_content_type($file['tmp_name']);
+        $allowedTypes = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+        $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        if (isset($allowedTypes[$mimeType]) && in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+            $fileName = 'hotel_' . bin2hex(random_bytes(8)) . '.' . $allowedTypes[$mimeType];
             $uploadDir = '../assets/uploads/';
             if (!is_dir($uploadDir)) {
                 mkdir($uploadDir, 0755, true);
@@ -45,6 +35,7 @@ function uploadAccommodationImage($file) {
             }
         }
     }
+    if (isset($file) && $file['error'] !== UPLOAD_ERR_NO_FILE) throw new RuntimeException('อัปโหลดรูปภาพไม่สำเร็จหรือชนิดไฟล์ไม่ถูกต้อง');
     return null;
 }
 
@@ -55,30 +46,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
     } else {
+        $accommodationId = (int) ($_POST['accommodation_id'] ?? 0);
         $name = trim($_POST['name'] ?? '');
         $address = trim($_POST['address'] ?? '');
         $distance = trim($_POST['distance'] ?? '');
         $linkUrl = trim($_POST['link_url'] ?? '');
+        $tournamentId = (int) ($_POST['tournament_id'] ?? 0);
         
-        // อัปโหลดรูปภาพ
-        $imagePath = uploadAccommodationImage($_FILES['hotel_image'] ?? null);
-
-        if (empty($name)) {
+        if (empty($name) || mb_strlen($name) > 150) {
             $error = 'กรุณากรอกชื่อที่พัก';
+        } elseif ($tournamentId <= 0) {
+            $error = 'กรุณาเลือก Tournament และสถานที่แข่งขัน';
+        } elseif ($distance !== '' && (!is_numeric($distance) || (float) $distance < 0)) {
+            $error = 'ระยะทางต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป';
+        } elseif ($linkUrl !== '' && !preg_match('#^https://(www\.)?google\.com/maps/|^https://maps\.app\.goo\.gl/#i', $linkUrl)) {
+            $error = 'ลิงก์ต้องเป็น Google Maps URL ที่ปลอดภัย';
         } else {
             try {
-                $stmt = $pdo->prepare("
-                    INSERT INTO accommodations (name, address, image_path, distance, link_url)
-                    VALUES (:name, :address, :image_path, :distance, :link_url)
-                ");
-                $stmt->execute([
-                    'name' => $name,
-                    'address' => $address,
-                    'image_path' => $imagePath,
-                    'distance' => $distance,
-                    'link_url' => $linkUrl
-                ]);
-                $success = 'เพิ่มข้อมูลที่พักแนะนำเรียบร้อยแล้ว';
+                $imagePath = uploadAccommodationImage($_FILES['hotel_image'] ?? null);
+                $duplicate = $pdo->prepare('SELECT accommodation_id FROM accommodations WHERE LOWER(name) = LOWER(:name) AND link_url = :link_url AND accommodation_id <> :id LIMIT 1');
+                $duplicate->execute(['name' => $name, 'link_url' => $linkUrl, 'id' => $accommodationId]);
+                if ($duplicate->fetchColumn()) throw new RuntimeException('พบที่พักชื่อและลิงก์เดียวกันอยู่แล้ว กรุณาแก้ไขรายการเดิม');
+                if ($accommodationId > 0) {
+                    $sql = 'UPDATE accommodations SET tournament_id = :tournament_id, name = :name, address = :address, distance = :distance, link_url = :link_url';
+                    $params = compact('tournamentId', 'name', 'address', 'distance', 'linkUrl', 'accommodationId');
+                    if ($imagePath) { $sql .= ', image_path = :image_path'; $params['imagePath'] = $imagePath; }
+                    $sql .= ' WHERE accommodation_id = :accommodationId';
+                    $pdo->prepare($sql)->execute(['tournament_id' => $tournamentId, 'name' => $name, 'address' => $address, 'distance' => $distance ?: null, 'link_url' => $linkUrl ?: null, 'image_path' => $imagePath, 'accommodationId' => $accommodationId]);
+                    $success = 'แก้ไขข้อมูลที่พักเรียบร้อยแล้ว';
+                } else {
+                    $pdo->prepare('INSERT INTO accommodations (tournament_id, name, address, image_path, distance, link_url) VALUES (:tournament_id, :name, :address, :image_path, :distance, :link_url)')->execute(['tournament_id' => $tournamentId, 'name' => $name, 'address' => $address, 'image_path' => $imagePath, 'distance' => $distance ?: null, 'link_url' => $linkUrl ?: null]);
+                    $success = 'เพิ่มข้อมูลที่พักแนะนำเรียบร้อยแล้ว';
+                }
             } catch (PDOException $e) {
                 $error = 'เกิดข้อผิดพลาดในการบันทึก: ' . $e->getMessage();
             }
@@ -86,11 +85,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     }
 }
 
-// ==========================================
-// 2. จัดการลบข้อมูลที่พัก
-// ==========================================
-if (isset($_GET['delete'])) {
-    $deleteId = (int) $_GET['delete'];
+// ลบข้อมูลที่พักด้วย POST เท่านั้น
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_lodging') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
+    }
+    $deleteId = (int) ($_POST['accommodation_id'] ?? 0);
+    if (!$error && $deleteId > 0) {
     try {
         $stmtDel = $pdo->prepare("DELETE FROM accommodations WHERE accommodation_id = :id");
         $stmtDel->execute(['id' => $deleteId]);
@@ -98,10 +99,21 @@ if (isset($_GET['delete'])) {
     } catch (PDOException $e) {
         $error = 'เกิดข้อผิดพลาดในการลบข้อมูล: ' . $e->getMessage();
     }
+    }
 }
 
 // ดึงรายการที่พักทั้งหมดจากตาราง accommodations
-$accommodations = $pdo->query("SELECT * FROM accommodations ORDER BY accommodation_id DESC")->fetchAll();
+$tournaments = $pdo->query('SELECT tournament_id, name, venue_address, venue_lat_lng FROM tournaments ORDER BY start_date DESC, tournament_id DESC')->fetchAll(PDO::FETCH_ASSOC);
+$where = ['1=1']; $params = [];
+if ($search !== '') { $where[] = '(a.name LIKE :search OR a.address LIKE :search)'; $params['search'] = '%' . $search . '%'; }
+if ($tournamentFilter > 0) { $where[] = 'a.tournament_id = :tournament_id'; $params['tournament_id'] = $tournamentFilter; }
+$orderBy = $sort === 'distance_asc' ? 'CAST(a.distance AS DECIMAL(10,2)) ASC' : ($sort === 'distance_desc' ? 'CAST(a.distance AS DECIMAL(10,2)) DESC' : 'a.accommodation_id DESC');
+$accommodationStmt = $pdo->prepare("SELECT a.*, t.name AS tournament_name, t.venue_address, t.venue_lat_lng FROM accommodations a LEFT JOIN tournaments t ON t.tournament_id = a.tournament_id WHERE " . implode(' AND ', $where) . " ORDER BY {$orderBy}");
+$accommodationStmt->execute($params);
+$accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
+$allAccommodationCount = (int) $pdo->query('SELECT COUNT(*) FROM accommodations')->fetchColumn();
+$activeAccommodationCount = $allAccommodationCount;
+$tournamentAccommodationCount = (int) $pdo->query('SELECT COUNT(DISTINCT tournament_id) FROM accommodations WHERE tournament_id IS NOT NULL')->fetchColumn();
 $csrfToken = generateCsrfToken();
 ?>
 <!DOCTYPE html>
@@ -146,6 +158,8 @@ $csrfToken = generateCsrfToken();
             color: #FF5500;
             border-left: 4px solid #FF5500;
         }
+        .lodging-action-item { min-height: 2.5rem; width: 100%; display: flex; align-items: center; padding: .625rem .75rem; border-radius: .5rem; text-align: left; font-size: .75rem; font-weight: 600; color: #334155; }
+        .lodging-action-item:hover { background: #f8fafc; }
     </style>
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
@@ -231,7 +245,7 @@ $csrfToken = generateCsrfToken();
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
                     จัดการที่พักแนะนำ <span class="text-brand-orange">(RECOMMENDED LODGING)</span>
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">เพิ่มรูปภาพ ระยะทาง และลิงก์แผนที่โรงแรมสำหรับนักกีฬา</p>
+                <p class="text-xs text-slate-500 mt-0.5">เพิ่มและจัดการที่พักใกล้สถานที่แข่งขัน</p>
             </div>
             
             <a href="../pages/lodging.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">
@@ -255,6 +269,26 @@ $csrfToken = generateCsrfToken();
                     <span><?php echo htmlspecialchars($success); ?></span>
                 </div>
             <?php endif; ?>
+
+            <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">ที่พักทั้งหมด</div><div class="mt-2 text-2xl font-black text-slate-900"><?= $allAccommodationCount ?></div></div>
+                <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">กำลังแสดงบนเว็บไซต์</div><div class="mt-2 text-2xl font-black text-emerald-700"><?= $activeAccommodationCount ?></div><div class="mt-1 text-[10px] text-emerald-700">ระบบยังไม่มี Field status</div></div>
+                <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Tournament ที่มีที่พัก</div><div class="mt-2 text-2xl font-black text-slate-900"><?= $tournamentAccommodationCount ?></div></div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <form method="GET" class="flex flex-col gap-3 xl:flex-row"><input type="text" name="q" value="<?= htmlspecialchars($search) ?>" placeholder="ค้นหาชื่อที่พักหรือที่อยู่" class="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none"><select name="tournament_id" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="">ทุก Tournament</option><?php foreach ($tournaments as $tournament): ?><option value="<?= (int) $tournament['tournament_id'] ?>" <?= $tournamentFilter === (int) $tournament['tournament_id'] ? 'selected' : '' ?>><?= htmlspecialchars($tournament['name']) ?></option><?php endforeach; ?></select><select name="sort" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="latest" <?= $sort === 'latest' ? 'selected' : '' ?>>ล่าสุด</option><option value="distance_asc" <?= $sort === 'distance_asc' ? 'selected' : '' ?>>ใกล้ที่สุด</option><option value="distance_desc" <?= $sort === 'distance_desc' ? 'selected' : '' ?>>ไกลที่สุด</option></select><button type="submit" class="rounded-xl bg-brand-orange px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-glow">ค้นหา</button><a href="recommended-lodging.php" class="rounded-xl bg-slate-100 px-5 py-2.5 text-center text-sm font-bold text-slate-600 hover:bg-slate-200">ล้างตัวกรอง</a></form>
+            </section>
+
+            <div class="flex items-center justify-between gap-3"><div><h2 class="text-base font-bold font-display text-slate-900"><i class="fa-solid fa-hotel mr-2 text-brand-orange"></i>รายการที่พักแนะนำ</h2><p class="mt-1 text-xs text-slate-500">ระยะทางอ้างอิงจากสถานที่แข่งขันของ Tournament ที่เลือก</p></div><button type="button" onclick="openLodgingForm()" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-plus"></i>เพิ่มที่พักแนะนำ</button></div>
+
+            <?php if (!$accommodations): ?><div class="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500"><?= ($search !== '' || $tournamentFilter > 0) ? 'ไม่พบที่พักตามเงื่อนไขที่ค้นหา' : 'ยังไม่มีข้อมูลที่พักแนะนำ' ?><div class="mt-4"><button type="button" onclick="openLodgingForm()" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white">+ เพิ่มที่พักแนะนำ</button></div></div><?php else: ?>
+                <div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                    <?php foreach ($accommodations as $item): ?><article class="relative rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="h-44 overflow-hidden rounded-xl bg-slate-100"><?php if (!empty($item['image_path'])): ?><img src="../assets/<?= htmlspecialchars($item['image_path']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="h-full w-full object-cover"><?php else: ?><div class="flex h-full items-center justify-center text-4xl text-slate-300"><i class="fa-solid fa-hotel"></i></div><?php endif; ?></div><h3 class="mt-3 truncate font-bold text-slate-900"><?= htmlspecialchars($item['name']) ?></h3><p class="mt-1 line-clamp-2 text-xs text-slate-500"><?= htmlspecialchars($item['address'] ?: 'ไม่มีที่อยู่') ?></p><div class="mt-3 rounded-xl bg-orange-50 p-3 text-xs"><div class="font-bold text-brand-orange"><?= htmlspecialchars($item['tournament_name'] ?: 'ไม่ระบุ Tournament') ?></div><div class="mt-1 text-slate-600">สนาม: <?= htmlspecialchars($item['venue_address'] ?: 'ไม่มีข้อมูลสถานที่') ?></div><div class="mt-1 font-bold text-slate-700">ระยะทาง: <?= htmlspecialchars($item['distance'] ?: 'ไม่มีข้อมูล') ?> กม.</div></div><div class="mt-4 flex justify-end gap-2 border-t border-slate-100 pt-3"><?php if (!empty($item['link_url'])): ?><a href="<?= htmlspecialchars($item['link_url']) ?>" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">เปิดแผนที่</a><?php endif; ?><button type="button" onclick="openLodgingDetail(<?= (int) $item['accommodation_id'] ?>)" class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">รายละเอียด</button><button type="button" onclick="openLodgingActionMenu(this)" class="lodging-action-toggle rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white" aria-expanded="false">จัดการ</button></div><div class="lodging-action-menu fixed z-[70] hidden w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><button type="button" onclick="openLodgingForm(<?= (int) $item['accommodation_id'] ?>)" class="lodging-action-item">แก้ไขข้อมูล</button><?php if (!empty($item['link_url'])): ?><a href="<?= htmlspecialchars($item['link_url']) ?>" target="_blank" rel="noopener noreferrer" class="lodging-action-item">เปิด Google Maps</a><?php endif; ?><div class="my-1 border-t border-slate-100"></div><form method="POST" onsubmit="return confirm('ยืนยันลบที่พักนี้หรือไม่?')"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="delete_lodging"><input type="hidden" name="accommodation_id" value="<?= (int) $item['accommodation_id'] ?>"><button type="submit" class="lodging-action-item text-rose-600">ลบที่พัก</button></form></div></article><?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if (false): ?>
 
             <!-- FORM: เพิ่มที่พักแนะนำใหม่ -->
             <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
@@ -392,8 +426,29 @@ $csrfToken = generateCsrfToken();
                 </div>
             </div>
 
+            <?php endif; ?>
         </main>
     </div>
 
+    <div id="lodgingFormModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="lodgingFormTitle" class="font-bold text-slate-900">เพิ่มที่พักแนะนำ</h3><button type="button" onclick="closeLodgingForm()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form id="lodgingForm" method="POST" enctype="multipart/form-data" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_lodging"><input type="hidden" name="accommodation_id" id="lodgingId"><div><label class="mb-1 block text-xs font-bold text-slate-700">ชื่อโรงแรม/ที่พัก</label><input name="name" id="lodgingName" required maxlength="150" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"></div><div><label class="mb-1 block text-xs font-bold text-slate-700">Tournament และสถานที่แข่งขัน</label><select name="tournament_id" id="lodgingTournament" required onchange="showLodgingVenue(this)" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="">เลือก Tournament</option><?php foreach ($tournaments as $tournament): ?><option value="<?= (int) $tournament['tournament_id'] ?>" data-venue="<?= htmlspecialchars($tournament['venue_address'] ?: 'ไม่มีข้อมูลสถานที่แข่งขัน', ENT_QUOTES) ?>"><?= htmlspecialchars($tournament['name']) ?></option><?php endforeach; ?></select><div id="lodgingVenue" class="mt-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">เลือก Tournament เพื่อดูสถานที่แข่งขัน</div></div><div class="grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label class="mb-1 block text-xs font-bold text-slate-700">ระยะทาง (กม.)</label><input type="number" min="0" step="0.1" name="distance" id="lodgingDistance" placeholder="เช่น 1.5" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><p class="mt-1 text-[11px] text-slate-400">เช่น 1.5 กม. จากสถานที่แข่งขัน</p></div><div><label class="mb-1 block text-xs font-bold text-slate-700">ลิงก์ Google Maps</label><input type="url" name="link_url" id="lodgingLink" placeholder="https://www.google.com/maps/..." class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><button type="button" onclick="testLodgingMap()" class="mt-2 text-xs font-bold text-blue-700 hover:underline">ทดสอบลิงก์แผนที่</button></div></div><div><label class="mb-1 block text-xs font-bold text-slate-700">ที่อยู่/ทำเลที่ตั้ง</label><textarea name="address" id="lodgingAddress" required rows="3" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"></textarea></div><div><label class="mb-1 block text-xs font-bold text-slate-700">รูปภาพ <span class="font-normal text-slate-400">JPG, PNG, WEBP ไม่เกิน 5MB</span></label><input type="file" name="hotel_image" id="lodgingImage" accept="image/jpeg,image/png,image/webp" onchange="previewLodgingImage(this)" class="w-full text-xs"><div id="lodgingImageName" class="mt-2 text-xs text-slate-500"></div><div id="lodgingImagePreview" class="mt-2"></div></div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeLodgingForm()" class="rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700">ยกเลิก</button><button type="submit" id="lodgingSubmit" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-glow">บันทึกที่พัก</button></div></form></div></div>
+
+    <div id="lodgingDetailModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="lodgingDetailTitle" class="font-bold text-slate-900">รายละเอียดที่พัก</h3><button type="button" onclick="closeLodgingDetail()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div class="p-6"><img id="lodgingDetailImage" class="mb-4 hidden max-h-72 w-full rounded-xl object-cover"><div id="lodgingDetailContent" class="space-y-3 text-sm"></div></div><div class="flex justify-end border-t border-slate-100 bg-slate-50 px-6 py-4"><button type="button" onclick="closeLodgingDetail()" class="rounded-lg bg-slate-200 px-4 py-2 text-xs font-bold">ปิด</button></div></div></div>
+
+    <script>
+        const lodgingData = <?= json_encode(array_column($accommodations, null, 'accommodation_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+        const tournamentData = <?= json_encode(array_column($tournaments, null, 'tournament_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+        let lodgingDirty = false;
+        function showLodgingModal(id) { const element = document.getElementById(id); element.classList.remove('hidden'); element.classList.add('flex'); }
+        function hideLodgingModal(id) { const element = document.getElementById(id); element.classList.add('hidden'); element.classList.remove('flex'); }
+        function openLodgingForm(id = 0) { const item = lodgingData[id] || {}; document.getElementById('lodgingFormTitle').textContent = id ? 'แก้ไขที่พักแนะนำ' : 'เพิ่มที่พักแนะนำ'; document.getElementById('lodgingId').value = id || ''; document.getElementById('lodgingName').value = item.name || ''; document.getElementById('lodgingAddress').value = item.address || ''; document.getElementById('lodgingDistance').value = item.distance || ''; document.getElementById('lodgingLink').value = item.link_url || ''; document.getElementById('lodgingTournament').value = item.tournament_id || ''; document.getElementById('lodgingImage').value = ''; document.getElementById('lodgingImageName').textContent = item.image_path ? 'รูปเดิม: ' + item.image_path : ''; document.getElementById('lodgingImagePreview').innerHTML = item.image_path ? `<img src="../assets/${item.image_path}" class="max-h-36 rounded-lg object-cover">` : ''; showLodgingVenue(document.getElementById('lodgingTournament')); lodgingDirty = false; showLodgingModal('lodgingFormModal'); }
+        function closeLodgingForm() { if (lodgingDirty && !window.confirm('มีข้อมูลที่แก้ไขแล้วยังไม่ได้บันทึก ต้องการปิดหน้าต่างหรือไม่?')) return; hideLodgingModal('lodgingFormModal'); lodgingDirty = false; }
+        function showLodgingVenue(select) { const option = select.options[select.selectedIndex]; document.getElementById('lodgingVenue').textContent = option?.dataset.venue ? 'สถานที่แข่งขัน: ' + option.dataset.venue : 'เลือก Tournament เพื่อดูสถานที่แข่งขัน'; }
+        function previewLodgingImage(input) { const file = input.files?.[0]; document.getElementById('lodgingImageName').textContent = file ? file.name + ' (' + Math.round(file.size / 1024) + ' KB)' : ''; if (!file) return; if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) { input.value = ''; document.getElementById('lodgingImagePreview').innerHTML = '<p class="text-xs text-rose-600">กรุณาเลือก JPG, PNG หรือ WEBP ขนาดไม่เกิน 5MB</p>'; return; } const reader = new FileReader(); reader.onload = event => { document.getElementById('lodgingImagePreview').innerHTML = `<img src="${event.target.result}" class="max-h-36 rounded-lg object-cover">`; }; reader.readAsDataURL(file); }
+        function testLodgingMap() { const value = document.getElementById('lodgingLink').value.trim(); if (!/^https:\/\/(www\.)?google\.com\/maps\//i.test(value) && !/^https:\/\/maps\.app\.goo\.gl\//i.test(value)) { alert('กรุณาระบุ Google Maps URL ที่ขึ้นต้นด้วย https://'); return; } window.open(value, '_blank', 'noopener,noreferrer'); }
+        function openLodgingDetail(id) { const item = lodgingData[id]; if (!item) return; document.getElementById('lodgingDetailTitle').textContent = item.name; const image = document.getElementById('lodgingDetailImage'); if (item.image_path) { image.src = '../assets/' + item.image_path; image.classList.remove('hidden'); } else image.classList.add('hidden'); document.getElementById('lodgingDetailContent').innerHTML = `<div><b>Tournament</b><div>${item.tournament_name || 'ไม่มีข้อมูล'}</div></div><div><b>สถานที่แข่งขัน</b><div>${item.venue_address || 'ไม่มีข้อมูล'}</div></div><div><b>ระยะทาง</b><div>${item.distance || 'ไม่มีข้อมูล'} กม.</div></div><div><b>ที่อยู่</b><div>${item.address || 'ไม่มีข้อมูล'}</div></div>${item.link_url ? `<a href="${item.link_url}" target="_blank" rel="noopener noreferrer" class="inline-flex rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">เปิด Google Maps</a>` : ''}`; showLodgingModal('lodgingDetailModal'); }
+        function closeLodgingDetail() { hideLodgingModal('lodgingDetailModal'); }
+        function openLodgingActionMenu(button) { const menu = button.parentElement.parentElement.querySelector('.lodging-action-menu'); if (!menu) return; document.querySelectorAll('.lodging-action-menu').forEach(item => item.classList.add('hidden')); const opening = menu.classList.contains('hidden'); if (!opening) return; document.body.appendChild(menu); menu.classList.remove('hidden'); const rect = button.getBoundingClientRect(); const width = menu.offsetWidth || 208; const height = menu.offsetHeight || 180; menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`; menu.style.top = `${rect.bottom + height + 8 <= window.innerHeight - 8 ? rect.bottom + 8 : Math.max(8, rect.top - height - 8)}px`; button.setAttribute('aria-expanded', 'true'); }
+        document.addEventListener('DOMContentLoaded', () => { document.getElementById('lodgingForm')?.querySelectorAll('input, textarea, select').forEach(field => field.addEventListener('input', () => { lodgingDirty = true; })); document.querySelectorAll('.lodging-action-menu').forEach(menu => menu.addEventListener('click', event => event.stopPropagation())); document.addEventListener('click', () => document.querySelectorAll('.lodging-action-menu').forEach(menu => menu.classList.add('hidden'))); document.querySelectorAll('[id$="Modal"]').forEach(modal => modal.addEventListener('click', event => { if (event.target === modal) hideLodgingModal(modal.id); })); document.addEventListener('keydown', event => { if (event.key === 'Escape') { document.querySelectorAll('.lodging-action-menu').forEach(menu => menu.classList.add('hidden')); closeLodgingForm(); closeLodgingDetail(); } }); document.getElementById('lodgingForm')?.addEventListener('submit', () => { const button = document.getElementById('lodgingSubmit'); button.disabled = true; button.textContent = 'กำลังบันทึก...'; }); });
+    </script>
 </body>
 </html>

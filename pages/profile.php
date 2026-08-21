@@ -144,27 +144,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manag
 }
 
 // ================= 3. ตอบรับ / ปฏิเสธ คำเชิญเข้าทีม =================
-if (isset($_GET['accept_invite'])) {
-    $invId = (int) $_GET['accept_invite'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'accept_invite') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) { $error = 'คำขอไม่ถูกต้อง'; }
+    $invId = (int) ($_POST['team_member_id'] ?? 0);
+    if (!$error) {
     $pdo->prepare("UPDATE team_members SET is_active = 1 WHERE team_member_id = :id AND player_id = :pid")
         ->execute(['id' => $invId, 'pid' => $playerId]);
     $success = 'ตอบรับคำเชิญเข้าร่วมทีมเรียบร้อยแล้ว!';
+    }
 }
 
-if (isset($_GET['reject_invite'])) {
-    $invId = (int) $_GET['reject_invite'];
-    $pdo->prepare("DELETE FROM team_members WHERE team_member_id = :id AND player_id = :pid")
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reject_invite') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) { $error = 'คำขอไม่ถูกต้อง'; }
+    $invId = (int) ($_POST['team_member_id'] ?? 0);
+    if (!$error) {
+    $pdo->prepare("UPDATE team_members SET is_active = 0, left_at = COALESCE(left_at, NOW()) WHERE team_member_id = :id AND player_id = :pid")
         ->execute(['id' => $invId, 'pid' => $playerId]);
     $success = 'ปฏิเสธคำเชิญเรียบร้อยแล้ว';
+    }
 }
 
 // ================= 4. ยุบทีมแบบ Soft Delete เพื่อรักษาประวัติการแข่งขัน =================
-if (isset($_GET['delete_team_id'])) {
-    $delTeamId = (int) $_GET['delete_team_id'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_team') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) { $error = 'คำขอไม่ถูกต้อง'; }
+    $delTeamId = (int) ($_POST['team_id'] ?? 0);
     $chkCap = $pdo->prepare("SELECT team_id FROM teams WHERE team_id = :tid AND captain_player_id = :pid");
     $chkCap->execute(['tid' => $delTeamId, 'pid' => $playerId]);
 
-    if ($chkCap->fetch()) {
+    if (!$error && $chkCap->fetch()) {
         $pdo->beginTransaction();
         $pdo->prepare("UPDATE team_members SET is_active = 0, left_at = COALESCE(left_at, NOW()) WHERE team_id = :tid AND is_active = 1")
             ->execute(['tid' => $delTeamId]);
@@ -187,44 +194,40 @@ $invitesStmt->execute(['pid' => $playerId]);
 $myInvites = $invitesStmt->fetchAll();
 
 // ================= 6. ดึงสถิติการแข่ง & ประวัติแมตช์ =================
-$myTeamsStmt = $pdo->prepare("SELECT team_id FROM team_members WHERE player_id = :pid AND is_active = 1");
-$myTeamsStmt->execute(['pid' => $playerId]);
-$myTeamIds = $myTeamsStmt->fetchAll(PDO::FETCH_COLUMN);
-
-$totalMatches = 0; $totalWins = 0; $totalLosses = 0; $matchHistory = [];
-
-if (count($myTeamIds) > 0) {
-    $inClause = implode(',', array_fill(0, count($myTeamIds), '?'));
-    
-    $hStmt = $pdo->prepare("
-        SELECT m.*, t1.name AS team1_name, t2.name AS team2_name, tour.name AS tournament_name
-        FROM matches m
-        JOIN tournaments tour ON tour.tournament_id = m.tournament_id
-        LEFT JOIN teams t1 ON t1.team_id = m.team1_id
-        LEFT JOIN teams t2 ON t2.team_id = m.team2_id
-        WHERE (m.team1_id IN ($inClause) OR m.team2_id IN ($inClause))
-          AND m.status IN ('completed', 'walkover')
-        ORDER BY m.completed_at DESC
-    ");
-    $hStmt->execute(array_merge($myTeamIds, $myTeamIds));
-    $matchHistory = $hStmt->fetchAll();
-
-    $totalMatches = count($matchHistory);
-    foreach ($matchHistory as $mh) {
-        if (in_array($mh['winner_team_id'], $myTeamIds)) { $totalWins++; } else { $totalLosses++; }
-    }
+$hStmt = $pdo->prepare("SELECT DISTINCT m.*, tr.team_id AS roster_team_id, tr.player_id AS roster_player_id,
+    t1.name AS team1_name, t2.name AS team2_name, tour.name AS tournament_name,
+    tr.tournament_category_id, trm.member_roles
+    FROM tournament_registration_members trm
+    JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+    JOIN matches m ON m.tournament_id = tr.tournament_id
+        AND (m.team1_id = tr.team_id OR m.team2_id = tr.team_id OR m.team1_id = tr.player_id OR m.team2_id = tr.player_id)
+    JOIN tournaments tour ON tour.tournament_id = m.tournament_id
+    LEFT JOIN teams t1 ON t1.team_id = m.team1_id
+    LEFT JOIN teams t2 ON t2.team_id = m.team2_id
+    WHERE trm.player_id = :player_id AND tr.status = 'approved'
+      AND m.status IN ('completed', 'walkover')
+    ORDER BY m.completed_at DESC");
+$hStmt->execute(['player_id' => $playerId]);
+$matchHistory = $hStmt->fetchAll();
+$totalMatches = count($matchHistory); $totalWins = 0; $totalLosses = 0;
+foreach ($matchHistory as $mh) {
+    $participantId = (int) ($mh['roster_team_id'] ?: $mh['roster_player_id']);
+    $won = $participantId > 0 && (int) $mh['winner_team_id'] === $participantId;
+    if ($won) $totalWins++; else $totalLosses++;
 }
 $winRate = $totalMatches > 0 ? round(($totalWins / $totalMatches) * 100, 1) : 0;
 
 // ดึงรายการสมัครทัวร์นาเมนต์
 $registrations = $pdo->prepare("
-    SELECT tr.*, t.name AS tournament_name, t.venue_address, tm.name AS team_name, g.name AS game_name
+    SELECT DISTINCT tr.*, t.name AS tournament_name, t.venue_address, tm.name AS team_name, g.name AS game_name,
+        trm.member_roles, trm.is_starter, trm.is_required_for_checkin, trm.checkin_status AS roster_checkin_status,
+        trm.checkin_at AS roster_checkin_at
     FROM tournament_registrations tr
     JOIN tournaments t ON t.tournament_id = tr.tournament_id
     JOIN games g ON g.game_id = t.game_id
-    JOIN teams tm ON tm.team_id = tr.team_id
-    JOIN team_members tm_mb ON tm_mb.team_id = tm.team_id
-    WHERE tm_mb.player_id = :pid AND tm_mb.is_active = 1
+    LEFT JOIN teams tm ON tm.team_id = tr.team_id
+    JOIN tournament_registration_members trm ON trm.tournament_registration_id = tr.tournament_registration_id
+    WHERE trm.player_id = :pid AND trm.roster_status = 'active'
     ORDER BY tr.registered_at DESC
 ");
 $registrations->execute(['pid' => $playerId]);
@@ -365,15 +368,13 @@ $csrfToken = generateCsrfToken();
                                 </div>
 
                                 <div class="flex items-center gap-2">
-                                    <a href="?accept_invite=<?= $inv['team_member_id'] ?>" 
-                                       class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md">
+                                                <form method="POST" class="inline"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars(generateCsrfToken()) ?>"><input type="hidden" name="action" value="accept_invite"><input type="hidden" name="team_member_id" value="<?= (int) $inv['team_member_id'] ?>"><button type="submit" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md">
                                         <i class="fa-solid fa-check mr-1"></i> ตอบรับ
-                                    </a>
-                                    <a href="?reject_invite=<?= $inv['team_member_id'] ?>" 
+                                    </button></form>
+                                    <form method="POST" class="inline" onsubmit="return confirm('ปฏิเสธคำเชิญนี้ใช่หรือไม่?')"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars(generateCsrfToken()) ?>"><input type="hidden" name="action" value="reject_invite"><input type="hidden" name="team_member_id" value="<?= (int) $inv['team_member_id'] ?>"><button type="submit" class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-rose-600 text-gray-300 hover:text-white text-xs font-bold transition-all">
                                        onclick="return confirm('ปฏิเสธคำเชิญนี้ใช่หรือไม่?')"
-                                       class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-rose-600 text-gray-300 hover:text-white text-xs font-bold transition-all">
                                         <i class="fa-solid fa-xmark"></i>
-                                    </a>
+                                    </button></form>
                                 </div>
                             </div>
                         <?php endforeach; ?>
@@ -506,7 +507,7 @@ $csrfToken = generateCsrfToken();
                             </thead>
                             <tbody class="divide-y divide-white/5">
                                 <?php foreach ($matchHistory as $mh): ?>
-                                    <?php $isWon = in_array($mh['winner_team_id'], $myTeamIds); ?>
+                                    <?php $profileParticipantId = (int) ($mh['roster_team_id'] ?: $mh['roster_player_id']); $isWon = $profileParticipantId > 0 && (int) $mh['winner_team_id'] === $profileParticipantId; ?>
                                     <tr class="hover:bg-white/5 transition-colors">
                                         <td class="p-3 font-bold text-white"><?= htmlspecialchars($mh['tournament_name']) ?></td>
                                         <td class="p-3 text-gray-300">
@@ -583,7 +584,7 @@ $csrfToken = generateCsrfToken();
                                                     <img src="https://quickchart.io/qr?text=<?= urlencode($reg['qr_code_token']); ?>&size=160" alt="Check-in QR Code" class="w-36 h-36 mx-auto">
                                                 </div>
                                                 <div class="font-mono text-xs text-gray-300">
-                                                    TOKEN: <span class="font-bold text-white tracking-widest bg-white/10 px-2 py-1 rounded border border-white/10"><?= htmlspecialchars($reg['qr_code_token']) ?></span>
+                                                    รหัสอ้างอิง: <span class="font-bold text-white tracking-widest bg-white/10 px-2 py-1 rounded border border-white/10">****<?= htmlspecialchars(substr((string) $reg['qr_code_token'], -4)) ?></span>
                                                 </div>
                                             </div>
 
@@ -723,11 +724,14 @@ $csrfToken = generateCsrfToken();
                                         <i class="fa-solid fa-gear"></i>
                                         <span>จัดการทีม</span>
                                     </button>
-                                    <a href="?delete_team_id=<?= $team['team_id'] ?>" 
-                                       onclick="return confirm('คุณแน่ใจหรือไม่ที่จะลบทีมนี้อย่างถาวร?')"
-                                       class="py-2.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition-all">
-                                        <i class="fa-solid fa-trash-can"></i>
-                                    </a>
+                                    <form method="POST" class="inline" onsubmit="return confirm('คุณแน่ใจหรือไม่ที่จะยุบทีมนี้?')">
+                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(generateCsrfToken()) ?>">
+                                        <input type="hidden" name="action" value="delete_team">
+                                        <input type="hidden" name="team_id" value="<?= (int) $team['team_id'] ?>">
+                                        <button type="submit" class="py-2.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition-all">
+                                            <i class="fa-solid fa-trash-can"></i>
+                                        </button>
+                                    </form>
                                 <?php endif; ?>
                             </div>
                         </div>

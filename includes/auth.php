@@ -55,7 +55,12 @@ function loginUser($pdo, $username, $password)
     }
 
     if ($user['status'] === 'suspended') {
-        throw new Exception("บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ");
+        $reason = trim((string) ($user['suspension_reason'] ?? ''));
+        $suspendedAt = !empty($user['suspended_at']) ? date('d/m/Y H:i:s', strtotime($user['suspended_at'])) : '';
+        $message = 'บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ';
+        if ($reason !== '') $message .= ' เหตุผล: ' . $reason;
+        if ($suspendedAt !== '') $message .= ' (ระงับเมื่อ ' . $suspendedAt . ')';
+        throw new Exception($message);
     }
     if ($user['status'] !== 'active') {
         throw new Exception("บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ");
@@ -102,7 +107,30 @@ function logoutUser()
 // เช็คว่า login อยู่หรือยัง
 function isLoggedIn()
 {
-    return isset($_SESSION['user_id']);
+    if (!isset($_SESSION['user_id'])) {
+        return false;
+    }
+
+    global $pdo;
+    if (isset($pdo) && $pdo instanceof PDO) {
+        static $checkedUserId = null;
+        static $isActive = null;
+        $userId = (int) $_SESSION['user_id'];
+        if ($checkedUserId !== $userId) {
+            $stmt = $pdo->prepare('SELECT status FROM users WHERE user_id = :user_id LIMIT 1');
+            $stmt->execute(['user_id' => $userId]);
+            $isActive = $stmt->fetchColumn() === 'active';
+            $checkedUserId = $userId;
+        }
+
+        if (!$isActive) {
+            $_SESSION = [];
+            session_destroy();
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // ถ้ายังไม่ login ให้เด้งไปหน้า login เลย ใช้ต้นไฟล์ที่ต้องการป้องกัน
@@ -117,14 +145,16 @@ function requireLogin()
     // ใช้งานระบบต่อหลังจาก Admin ระงับบัญชีแล้ว
     global $pdo;
     if (isset($pdo) && $pdo instanceof PDO) {
-        $stmt = $pdo->prepare("SELECT status FROM users WHERE user_id = :user_id LIMIT 1");
+        $stmt = $pdo->prepare("SELECT status, suspension_reason, suspended_at FROM users WHERE user_id = :user_id LIMIT 1");
         $stmt->execute(['user_id' => $_SESSION['user_id']]);
-        $accountStatus = $stmt->fetchColumn();
+        $account = $stmt->fetch(PDO::FETCH_ASSOC);
+        $accountStatus = $account['status'] ?? null;
 
         if ($accountStatus !== 'active') {
             $_SESSION = [];
             session_destroy();
-            header('Location: ../auth/login.php?suspended=1');
+            $statusParam = $accountStatus === 'suspended' ? 'suspended' : 'disabled';
+            header('Location: ../auth/login.php?account_status=' . $statusParam);
             exit;
         }
     }

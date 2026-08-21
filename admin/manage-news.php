@@ -14,6 +14,13 @@ $currentUser = [
 $error = '';
 $success = '';
 $editingNews = null;
+$search = trim((string) ($_GET['q'] ?? ''));
+$statusFilter = trim((string) ($_GET['status'] ?? ''));
+$dateFrom = trim((string) ($_GET['date_from'] ?? ''));
+$dateTo = trim((string) ($_GET['date_to'] ?? ''));
+$page = max(1, (int) ($_GET['page'] ?? 1));
+$perPage = 20;
+$allowedStatuses = ['draft', 'published'];
 
 // เพิ่ม/แก้ไขข่าว
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save') {
@@ -21,12 +28,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save') 
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
         $newsId = (int) ($_POST['news_id'] ?? 0);
-        $title = trim($_POST['title']);
-        $content = trim($_POST['content']);
-        $status = $_POST['status'];
+        $title = trim((string) ($_POST['title'] ?? ''));
+        $content = trim((string) ($_POST['content'] ?? ''));
+        $status = (string) ($_POST['status'] ?? 'draft');
 
-        if ($title == '' || $content == '') {
-            $error = 'กรุณากรอกหัวข้อและเนื้อหาข่าว';
+        if ($title === '' || mb_strlen($title) > 200 || $content === '') {
+            $error = $title === '' || mb_strlen($title) > 200
+                ? 'กรุณากรอกหัวข้อข่าวไม่เกิน 200 ตัวอักษร'
+                : 'กรุณากรอกเนื้อหาข่าว';
+        } elseif (!in_array($status, $allowedStatuses, true)) {
+            $error = 'สถานะข่าวไม่ถูกต้อง';
         } else {
             try {
                 $imagePath = handleImageUpload($_FILES['image'] ?? null, 'news');
@@ -68,16 +79,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save') 
     }
 }
 
-// ลบข่าว
-if (isset($_GET['delete'])) {
-    $newsId = (int) $_GET['delete'];
-    $stmt = $pdo->prepare("SELECT image_path FROM news WHERE news_id = :id");
-    $stmt->execute(['id' => $newsId]);
-    $imagePath = $stmt->fetchColumn();
-
-    $pdo->prepare("DELETE FROM news WHERE news_id = :id")->execute(['id' => $newsId]);
-    deleteUploadedImage($imagePath);
-    $success = 'ลบข่าวเรียบร้อยแล้ว';
+// เปลี่ยนสถานะ/ลบข่าว ต้องใช้ POST เท่านั้น
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['change_status', 'delete'], true)) {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $newsId = (int) ($_POST['news_id'] ?? 0);
+        $action = $_POST['action'];
+        $newsStmt = $pdo->prepare('SELECT title, image_path, status FROM news WHERE news_id = :id');
+        $newsStmt->execute(['id' => $newsId]);
+        $targetNews = $newsStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$targetNews) {
+            $error = 'ไม่พบข่าวที่ต้องการดำเนินการ';
+        } elseif ($action === 'change_status') {
+            $newStatus = (string) ($_POST['status'] ?? '');
+            if (!in_array($newStatus, $allowedStatuses, true)) {
+                $error = 'สถานะข่าวไม่ถูกต้อง';
+            } else {
+                $pdo->prepare('UPDATE news SET status = :status WHERE news_id = :id')
+                    ->execute(['status' => $newStatus, 'id' => $newsId]);
+                $success = $newStatus === 'published' ? 'เผยแพร่ข่าวเรียบร้อยแล้ว' : 'ยกเลิกการเผยแพร่ข่าวแล้ว';
+            }
+        } else {
+            $pdo->prepare('DELETE FROM news WHERE news_id = :id')->execute(['id' => $newsId]);
+            $imageInUse = $pdo->prepare('SELECT COUNT(*) FROM news WHERE image_path = :image AND image_path IS NOT NULL AND image_path <> \'\'');
+            $imageInUse->execute(['image' => $targetNews['image_path']]);
+            if ((int) $imageInUse->fetchColumn() === 0) deleteUploadedImage($targetNews['image_path']);
+            $success = 'ลบข่าวเรียบร้อยแล้ว';
+        }
+    }
 }
 
 // โหลดข่าวที่จะแก้ไข (ถ้ามี ?edit=)
@@ -87,10 +117,46 @@ if (isset($_GET['edit'])) {
     $editingNews = $stmt->fetch();
 }
 
-$newsList = $pdo->query("
-    SELECT n.*, u.username FROM news n JOIN users u ON u.user_id = n.created_by
-    ORDER BY n.created_at DESC
-")->fetchAll();
+$where = ['1=1'];
+$params = [];
+if ($search !== '') {
+    $where[] = '(n.title LIKE :search OR n.content LIKE :search)';
+    $params['search'] = '%' . $search . '%';
+}
+if (in_array($statusFilter, $allowedStatuses, true)) {
+    $where[] = 'n.status = :status_filter';
+    $params['status_filter'] = $statusFilter;
+}
+if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+    $where[] = 'n.created_at >= :date_from';
+    $params['date_from'] = $dateFrom . ' 00:00:00';
+}
+if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+    $where[] = 'n.created_at <= :date_to';
+    $params['date_to'] = $dateTo . ' 23:59:59';
+}
+$whereSql = implode(' AND ', $where);
+$countStmt = $pdo->prepare("SELECT COUNT(*) FROM news n WHERE {$whereSql}");
+$countStmt->execute($params);
+$totalNews = (int) $countStmt->fetchColumn();
+$totalPages = max(1, (int) ceil($totalNews / $perPage));
+$page = min($page, $totalPages);
+$newsStmt = $pdo->prepare("SELECT n.*, u.username FROM news n LEFT JOIN users u ON u.user_id = n.created_by
+    WHERE {$whereSql} ORDER BY n.created_at DESC LIMIT " . (($page - 1) * $perPage) . ', ' . $perPage);
+$newsStmt->execute($params);
+$newsList = $newsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$summaryStmt = $pdo->query("SELECT COUNT(*) AS total,
+    SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS published,
+    SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft
+    FROM news");
+$summary = $summaryStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'published' => 0, 'draft' => 0];
+$formNews = $editingNews ?: ['news_id' => 0, 'title' => '', 'content' => '', 'image_path' => '', 'status' => 'draft'];
+
+function formatAdminNewsDate(?string $date): string
+{
+    return $date ? date('d/m/Y H:i', strtotime($date)) : 'ไม่มีข้อมูล';
+}
 
 $csrfToken = generateCsrfToken();
 ?>
@@ -136,6 +202,9 @@ $csrfToken = generateCsrfToken();
             color: #FF5500;
             border-left: 4px solid #FF5500;
         }
+        .news-action-item { min-height: 2.5rem; width: 100%; display: flex; align-items: center; gap: .625rem; padding: .625rem .75rem; border-radius: .5rem; text-align: left; font-size: .75rem; font-weight: 600; line-height: 1.25rem; color: #334155; }
+        .news-action-item:hover { background: #f8fafc; }
+        .news-action-item i { width: 1rem; text-align: center; color: #94a3b8; }
     </style>
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
@@ -231,6 +300,22 @@ $csrfToken = generateCsrfToken();
 
         <main class="p-8 space-y-8 flex-1">
 
+            <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <a href="manage-news.php" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-brand-orange"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">ข่าวทั้งหมด</div><div class="mt-2 text-2xl font-black text-slate-900"><?= (int) $summary['total'] ?></div></a>
+                <a href="?status=published" class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm hover:border-emerald-400"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">เผยแพร่แล้ว</div><div class="mt-2 text-2xl font-black text-emerald-700"><?= (int) $summary['published'] ?></div></a>
+                <a href="?status=draft" class="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm hover:border-amber-400"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">ฉบับร่าง</div><div class="mt-2 text-2xl font-black text-amber-700"><?= (int) $summary['draft'] ?></div></a>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <form method="GET" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
+                    <input type="text" name="q" value="<?= htmlspecialchars($search) ?>" placeholder="ค้นหาหัวข้อหรือเนื้อหา" class="xl:col-span-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
+                    <select name="status" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none"><option value="">ทุกสถานะ</option><option value="draft" <?= $statusFilter === 'draft' ? 'selected' : '' ?>>ฉบับร่าง</option><option value="published" <?= $statusFilter === 'published' ? 'selected' : '' ?>>เผยแพร่แล้ว</option></select>
+                    <input type="date" name="date_from" value="<?= htmlspecialchars($dateFrom) ?>" aria-label="วันที่เริ่มต้น" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
+                    <input type="date" name="date_to" value="<?= htmlspecialchars($dateTo) ?>" aria-label="วันที่สิ้นสุด" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
+                    <div class="flex gap-2"><button type="submit" class="flex-1 rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-magnifying-glass"></i> ค้นหา</button><a href="manage-news.php" class="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-center text-sm font-bold text-slate-600 hover:bg-slate-200">ล้างตัวกรอง</a></div>
+                </form>
+            </section>
+
             <!-- Alert Messages -->
             <?php if ($error): ?>
                 <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3">
@@ -246,7 +331,13 @@ $csrfToken = generateCsrfToken();
                 </div>
             <?php endif; ?>
 
-            <!-- FORM: เพิ่ม/แก้ไขข่าวสาร -->
+            <div class="flex items-center justify-between gap-3">
+                <div><h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2"><i class="fa-solid fa-list text-brand-orange"></i>รายการข่าวสาร</h2><p class="mt-1 text-xs text-slate-500">ทั้งหมด <?= number_format($totalNews) ?> รายการ</p></div>
+                <button type="button" onclick="openNewsFormModal()" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-glow"><i class="fa-solid fa-plus"></i>เพิ่มข่าวใหม่</button>
+            </div>
+
+            <?php if (false): ?>
+            <!-- Legacy form markup retained but hidden; the shared modal below is the active form. -->
             <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <div class="border-b border-slate-100 pb-4 flex items-center justify-between">
                     <div>
@@ -332,13 +423,9 @@ $csrfToken = generateCsrfToken();
                 </form>
             </div>
 
-            <!-- TABLE: รายการข่าวทั้งหมด -->
-            <div class="space-y-4">
-                <h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
-                    <i class="fa-solid fa-list text-brand-orange"></i>
-                    รายการข่าวสารทั้งหมด
-                </h2>
+            <?php endif; ?>
 
+            <!-- TABLE: รายการข่าวทั้งหมด -->
                 <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-sm text-slate-600">
@@ -357,7 +444,8 @@ $csrfToken = generateCsrfToken();
                                     <tr>
                                         <td colspan="6" class="p-8 text-center text-slate-400">
                                             <i class="fa-solid fa-newspaper text-3xl mb-2 block opacity-40"></i>
-                                            ยังไม่มีรายการข่าวสารในระบบ
+                                            <?= ($search !== '' || $statusFilter !== '' || $dateFrom !== '' || $dateTo !== '') ? 'ไม่พบข่าวตามเงื่อนไขที่ค้นหา' : 'ยังไม่มีข่าวสารในระบบ' ?>
+                                            <?php if ($totalNews === 0 && $search === '' && $statusFilter === '' && $dateFrom === '' && $dateTo === ''): ?><div class="mt-4"><button type="button" onclick="openNewsFormModal()" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-plus"></i>เพิ่มข่าวใหม่</button></div><?php endif; ?>
                                         </td>
                                     </tr>
                                 <?php endif; ?>
@@ -376,8 +464,9 @@ $csrfToken = generateCsrfToken();
                                     </td>
 
                                     <!-- หัวข้อข่าว -->
-                                    <td class="p-4 font-bold text-slate-900 max-w-xs truncate">
-                                        <?php echo htmlspecialchars($n['title']); ?>
+                                    <td class="p-4 font-bold text-slate-900 max-w-xs">
+                                        <div class="max-w-xs truncate" title="<?= htmlspecialchars($n['title']) ?>"><?= htmlspecialchars($n['title']); ?></div>
+                                        <div class="mt-1 max-w-xs truncate text-[11px] font-normal text-slate-400"><?= htmlspecialchars(mb_strimwidth(strip_tags($n['content']), 0, 100, '...')) ?></div>
                                     </td>
 
                                     <!-- สถานะ -->
@@ -397,21 +486,28 @@ $csrfToken = generateCsrfToken();
 
                                     <!-- วันที่ -->
                                     <td class="p-4 text-xs text-slate-400">
-                                        <?php echo htmlspecialchars($n['created_at']); ?>
+                                        <?php echo formatAdminNewsDate($n['created_at']); ?>
                                     </td>
 
                                     <!-- จัดการ -->
-                                    <td class="p-4 text-right space-x-1">
-                                        <a href="?edit=<?php echo $n['news_id']; ?>" 
-                                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-semibold transition-all">
-                                            <i class="fa-solid fa-pen-to-square"></i> แก้ไข
-                                        </a>
-
-                                        <a href="?delete=<?php echo $n['news_id']; ?>" 
-                                            onclick="return confirm('คุณแน่ใจหรือไม่ที่จะลบข่าวนี้?')"
-                                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition-all">
-                                            <i class="fa-solid fa-trash"></i> ลบ
-                                        </a>
+                                    <td class="p-4 text-right whitespace-nowrap">
+                                        <div class="flex justify-end gap-2">
+                                            <button type="button" onclick="openNewsDetailModal(<?= (int) $n['news_id'] ?>)" class="inline-flex h-9 items-center gap-2 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-200"><i class="fa-solid fa-circle-info"></i>รายละเอียด</button>
+                                            <div class="relative">
+                                                <button type="button" class="news-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white hover:bg-brand-glow" data-menu-id="news-menu-<?= (int) $n['news_id'] ?>" aria-expanded="false" aria-controls="news-menu-<?= (int) $n['news_id'] ?>"><i class="fa-solid fa-ellipsis"></i>จัดการ</button>
+                                                <div id="news-menu-<?= (int) $n['news_id'] ?>" class="news-action-menu fixed z-[70] hidden w-56 rounded-xl border border-slate-200 bg-white p-2 text-left shadow-xl" role="menu">
+                                                    <button type="button" onclick="openNewsFormModal(<?= (int) $n['news_id'] ?>)" class="news-action-item"><i class="fa-solid fa-pen-to-square"></i>แก้ไขข่าว</button>
+                                                    <button type="button" onclick="openNewsPreview(<?= (int) $n['news_id'] ?>)" class="news-action-item"><i class="fa-solid fa-eye"></i>ดูตัวอย่าง</button>
+                                                    <?php if ($n['status'] === 'draft'): ?>
+                                                        <form method="POST"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="change_status"><input type="hidden" name="news_id" value="<?= (int) $n['news_id'] ?>"><input type="hidden" name="status" value="published"><button type="submit" class="news-action-item text-emerald-700"><i class="fa-solid fa-upload"></i>เผยแพร่</button></form>
+                                                    <?php else: ?>
+                                                        <form method="POST"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="change_status"><input type="hidden" name="news_id" value="<?= (int) $n['news_id'] ?>"><input type="hidden" name="status" value="draft"><button type="submit" class="news-action-item"><i class="fa-solid fa-eye-slash"></i>ยกเลิกการเผยแพร่</button></form>
+                                                    <?php endif; ?>
+                                                    <div class="my-1 border-t border-slate-100"></div>
+                                                    <form method="POST" onsubmit="return openNewsDeleteConfirm(this, <?= htmlspecialchars(json_encode($n['title'], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES) ?>)"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="news_id" value="<?= (int) $n['news_id'] ?>"><button type="submit" class="news-action-item text-rose-600"><i class="fa-solid fa-trash"></i>ลบข่าว</button></form>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>
@@ -419,10 +515,139 @@ $csrfToken = generateCsrfToken();
                         </table>
                     </div>
                 </div>
-            </div>
+
+            <?php if ($totalPages > 1): ?>
+                <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs shadow-sm">
+                    <span class="text-slate-500">หน้า <?= $page ?> / <?= $totalPages ?></span>
+                    <div class="flex flex-wrap gap-1">
+                        <?php for ($pageNumber = 1; $pageNumber <= $totalPages; $pageNumber++): ?>
+                            <a href="?<?= http_build_query(['q' => $search, 'status' => $statusFilter, 'date_from' => $dateFrom, 'date_to' => $dateTo, 'page' => $pageNumber]) ?>" class="rounded-lg px-3 py-1.5 font-bold <?= $pageNumber === $page ? 'bg-brand-orange text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200' ?>"><?= $pageNumber ?></a>
+                        <?php endfor; ?>
+                    </div>
+                </div>
+            <?php endif; ?>
 
         </main>
     </div>
+
+    <div id="newsDetailModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="newsDetailTitle" class="font-bold text-slate-900">รายละเอียดข่าว</h3><button type="button" onclick="closeNewsDetailModal()" class="text-slate-400 hover:text-slate-700"><i class="fa-solid fa-xmark"></i></button></div><article class="p-6"><img id="newsDetailImage" class="mb-4 hidden max-h-72 w-full rounded-xl object-cover"><p id="newsDetailMeta" class="text-xs text-slate-400"></p><div id="newsDetailContent" class="mt-5 whitespace-pre-line text-sm leading-7 text-slate-700"></div></article><div class="flex justify-end border-t border-slate-100 bg-slate-50 px-6 py-4"><button type="button" onclick="closeNewsDetailModal()" class="rounded-lg bg-slate-200 px-4 py-2 text-xs font-bold text-slate-700">ปิด</button></div></div></div>
+
+    <div id="newsFormModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 p-4">
+        <div class="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="newsFormTitle" class="font-bold text-slate-900">เพิ่มข่าวใหม่</h3><button type="button" onclick="closeNewsFormModal()" class="p-1 text-slate-400 hover:text-slate-700"><i class="fa-solid fa-xmark text-lg"></i></button></div>
+            <form id="newsForm" method="POST" enctype="multipart/form-data" class="space-y-4 overflow-y-auto p-6">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save"><input type="hidden" name="news_id" id="newsFormId">
+                <div><label class="mb-1 block text-xs font-bold text-slate-700">หัวข้อข่าว</label><input type="text" name="title" id="newsFormTitleInput" maxlength="200" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none"></div>
+                <div><label class="mb-1 block text-xs font-bold text-slate-700">เนื้อหาข่าว</label><textarea name="content" id="newsFormContent" rows="9" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none"></textarea></div>
+                <div><label class="mb-1 block text-xs font-bold text-slate-700">รูปปกข่าว <span class="font-normal text-slate-400">JPG, PNG, WEBP ไม่เกิน 5MB</span></label><input type="file" name="image" id="newsFormImage" accept="image/jpeg,image/png,image/webp" class="w-full text-xs" onchange="previewNewsImage(this)"><div id="newsImageName" class="mt-2 text-xs text-slate-500"></div><div id="newsImagePreview" class="mt-2"></div></div>
+                <div><label class="mb-1 block text-xs font-bold text-slate-700">สถานะการเผยแพร่</label><select name="status" id="newsFormStatus" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="draft">ฉบับร่าง</option><option value="published">เผยแพร่</option></select></div>
+                <div class="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-white pt-4"><button type="button" onclick="openNewsPreview()" class="rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-200"><i class="fa-solid fa-eye"></i> ดูตัวอย่าง</button><button type="button" onclick="closeNewsFormModal()" class="rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-600">ยกเลิก</button><button type="submit" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-floppy-disk"></i> บันทึกข่าว</button></div>
+            </form>
+        </div>
+    </div>
+
+    <div id="newsPreviewModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 px-6 py-4"><h3 class="font-bold text-slate-900">ตัวอย่างข่าว</h3><button type="button" onclick="closeNewsPreview()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><article class="p-6"><img id="previewNewsImage" class="mb-4 hidden max-h-72 w-full rounded-xl object-cover"><h1 id="previewNewsTitle" class="text-xl font-black text-slate-900"></h1><p class="mt-1 text-xs text-slate-400">ผู้เขียน: <?= htmlspecialchars($currentUser['username'] ?? 'Admin') ?> | <?= date('d/m/Y H:i') ?></p><div id="previewNewsContent" class="mt-5 whitespace-pre-line text-sm leading-7 text-slate-700"></div></article></div></div>
+
+    <div id="newsDeleteModal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><h3 class="font-bold text-slate-900"><i class="fa-solid fa-triangle-exclamation mr-2 text-rose-600"></i>ยืนยันการลบข่าว</h3><p class="mt-3 text-sm text-slate-600">ข่าว <strong id="deleteNewsTitle" class="text-slate-900"></strong> จะหายจากหน้าสาธารณะและไม่สามารถกู้คืนได้</p><div class="mt-5 flex justify-end gap-2"><button type="button" onclick="closeNewsDeleteConfirm()" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700">ยกเลิก</button><button type="button" onclick="submitNewsDelete()" class="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white">ยืนยันลบข่าว</button></div></div></div>
+
+    <script>
+        const newsData = <?= json_encode(array_column(array_merge($newsList, $editingNews ? [$editingNews] : []), null, 'news_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+        let newsFormDirty = false;
+        let pendingDeleteForm = null;
+
+        function escapeNewsHtml(value) {
+            return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+        function openNewsFormModal(newsId = 0) {
+            const news = newsData[newsId] || {news_id: 0, title: '', content: '', image_path: '', status: 'draft'};
+            document.getElementById('newsFormTitle').textContent = newsId ? 'แก้ไขข่าวสาร' : 'เพิ่มข่าวใหม่';
+            document.getElementById('newsFormId').value = news.news_id || '';
+            document.getElementById('newsFormTitleInput').value = news.title || '';
+            document.getElementById('newsFormContent').value = news.content || '';
+            document.getElementById('newsFormStatus').value = news.status || 'draft';
+            document.getElementById('newsFormImage').value = '';
+            document.getElementById('newsImageName').textContent = news.image_path ? 'รูปปกเดิม: ' + news.image_path : '';
+            document.getElementById('newsImagePreview').innerHTML = news.image_path ? `<img src="../assets/${escapeNewsHtml(news.image_path)}" alt="" class="max-h-40 rounded-lg object-cover">` : '';
+            newsFormDirty = false;
+            document.getElementById('newsFormModal').classList.remove('hidden');
+            document.getElementById('newsFormModal').classList.add('flex');
+        }
+        function openNewsDetailModal(newsId) {
+            const news = newsData[newsId]; if (!news) return;
+            document.getElementById('newsDetailTitle').textContent = news.title || 'รายละเอียดข่าว';
+            document.getElementById('newsDetailMeta').textContent = 'ผู้เขียน: ' + (news.username || 'ไม่ระบุ') + ' | สร้างเมื่อ: ' + (news.created_at || 'ไม่มีข้อมูล') + ' | สถานะ: ' + (news.status === 'published' ? 'เผยแพร่แล้ว' : 'ฉบับร่าง');
+            document.getElementById('newsDetailContent').textContent = news.content || '';
+            const image = document.getElementById('newsDetailImage');
+            if (news.image_path) { image.src = '../assets/' + news.image_path; image.classList.remove('hidden'); } else image.classList.add('hidden');
+            document.getElementById('newsDetailModal').classList.remove('hidden'); document.getElementById('newsDetailModal').classList.add('flex');
+        }
+        function closeNewsDetailModal() { document.getElementById('newsDetailModal').classList.add('hidden'); document.getElementById('newsDetailModal').classList.remove('flex'); }
+        function closeNewsFormModal() {
+            if (newsFormDirty && !window.confirm('มีข้อมูลที่แก้ไขแล้วยังไม่ได้บันทึก ต้องการปิดหน้าต่างหรือไม่?')) return;
+            document.getElementById('newsFormModal').classList.add('hidden');
+            document.getElementById('newsFormModal').classList.remove('flex');
+            newsFormDirty = false;
+        }
+        function previewNewsImage(input) {
+            const file = input.files && input.files[0];
+            document.getElementById('newsImageName').textContent = file ? file.name + ' (' + Math.round(file.size / 1024) + ' KB)' : '';
+            if (!file) return;
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+                input.value = '';
+                document.getElementById('newsImagePreview').innerHTML = '<p class="text-xs text-rose-600">กรุณาเลือก JPG, PNG หรือ WEBP ขนาดไม่เกิน 5MB</p>';
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = event => { document.getElementById('newsImagePreview').innerHTML = `<img src="${event.target.result}" alt="" class="max-h-40 rounded-lg object-cover">`; };
+            reader.readAsDataURL(file);
+        }
+        function openNewsPreview(newsId = 0) {
+            const news = newsId ? newsData[newsId] : {title: document.getElementById('newsFormTitleInput').value, content: document.getElementById('newsFormContent').value};
+            if (!news) return;
+            document.getElementById('previewNewsTitle').textContent = news.title || 'ไม่มีหัวข้อข่าว';
+            document.getElementById('previewNewsContent').textContent = news.content || 'ไม่มีเนื้อหาข่าว';
+            const image = document.getElementById('previewNewsImage');
+            const selected = document.getElementById('newsFormImage').files[0];
+            if (selected) { image.src = URL.createObjectURL(selected); image.classList.remove('hidden'); }
+            else if (news.image_path) { image.src = '../assets/' + news.image_path; image.classList.remove('hidden'); }
+            else image.classList.add('hidden');
+            document.getElementById('newsPreviewModal').classList.remove('hidden');
+            document.getElementById('newsPreviewModal').classList.add('flex');
+        }
+        function closeNewsPreview() { document.getElementById('newsPreviewModal').classList.add('hidden'); document.getElementById('newsPreviewModal').classList.remove('flex'); }
+        function openNewsDeleteConfirm(form, title) { pendingDeleteForm = form; document.getElementById('deleteNewsTitle').textContent = title; document.getElementById('newsDeleteModal').classList.remove('hidden'); document.getElementById('newsDeleteModal').classList.add('flex'); return false; }
+        function closeNewsDeleteConfirm() { pendingDeleteForm = null; document.getElementById('newsDeleteModal').classList.add('hidden'); document.getElementById('newsDeleteModal').classList.remove('flex'); }
+        function submitNewsDelete() { if (!pendingDeleteForm) return; pendingDeleteForm.removeAttribute('onsubmit'); pendingDeleteForm.submit(); }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const menus = document.querySelectorAll('.news-action-menu');
+            const toggles = document.querySelectorAll('.news-action-toggle');
+            const closeMenus = () => { menus.forEach(menu => menu.classList.add('hidden')); toggles.forEach(toggle => toggle.setAttribute('aria-expanded', 'false')); };
+            toggles.forEach(toggle => {
+                toggle.addEventListener('click', event => {
+                    event.preventDefault(); event.stopPropagation();
+                    const menu = document.getElementById(toggle.dataset.menuId); if (!menu) return;
+                    const opening = menu.classList.contains('hidden'); closeMenus(); if (!opening) return;
+                    document.body.appendChild(menu); menu.classList.remove('hidden');
+                    const rect = toggle.getBoundingClientRect(); const width = menu.offsetWidth || 224; const height = menu.offsetHeight || 260;
+                    menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+                    menu.style.top = `${rect.bottom + height + 8 <= window.innerHeight - 8 ? rect.bottom + 8 : Math.max(8, rect.top - height - 8)}px`;
+                    toggle.setAttribute('aria-expanded', 'true');
+                });
+                toggle.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle.click(); } });
+            });
+            menus.forEach(menu => menu.addEventListener('click', event => event.stopPropagation()));
+            document.addEventListener('click', closeMenus);
+            document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeMenus(); closeNewsFormModal(); closeNewsPreview(); closeNewsDeleteConfirm(); } });
+            window.addEventListener('resize', closeMenus); window.addEventListener('scroll', closeMenus, true);
+            document.getElementById('newsForm')?.querySelectorAll('input, textarea, select').forEach(field => field.addEventListener('input', () => { newsFormDirty = true; }));
+            document.getElementById('newsFormModal')?.addEventListener('click', event => { if (event.target.id === 'newsFormModal') closeNewsFormModal(); });
+            document.getElementById('newsDetailModal')?.addEventListener('click', event => { if (event.target.id === 'newsDetailModal') closeNewsDetailModal(); });
+            document.getElementById('newsPreviewModal')?.addEventListener('click', event => { if (event.target.id === 'newsPreviewModal') closeNewsPreview(); });
+            document.getElementById('newsDeleteModal')?.addEventListener('click', event => { if (event.target.id === 'newsDeleteModal') closeNewsDeleteConfirm(); });
+            <?php if ($editingNews): ?>openNewsFormModal(<?= (int) $editingNews['news_id'] ?>);<?php endif; ?>
+        });
+    </script>
 
 </body>
 </html>

@@ -42,6 +42,7 @@ if ($selectedAlbumId > 0) {
                (SELECT image_path FROM gallery g2 WHERE g2.album_id = a.album_id AND g2.media_type = 'activity' AND g2.is_active = 1 ORDER BY g2.created_at DESC LIMIT 1) as cover_image,
                (SELECT COUNT(*) FROM gallery g3 WHERE g3.album_id = a.album_id AND g3.media_type = 'activity' AND g3.is_active = 1) as image_count
         FROM gallery_albums a
+        WHERE a.album_type = 'activity'
         ORDER BY a.created_at DESC
     ")->fetchAll();
 }

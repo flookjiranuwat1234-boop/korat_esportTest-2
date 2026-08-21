@@ -123,7 +123,7 @@ $mStmt = $pdo->prepare("SELECT DISTINCT m.*, COALESCE(t1.name, u1.username, 'ร
     LEFT JOIN teams t2 ON t2.team_id = m.team2_id
     LEFT JOIN players p2 ON p2.player_id = m.team2_id
     LEFT JOIN users u2 ON u2.user_id = p2.user_id
-    WHERE trm.player_id = :player_id AND tr.status = 'approved'
+    WHERE trm.player_id = :player_id AND trm.roster_status = 'active' AND tr.status = 'approved'
     ORDER BY m.scheduled_at IS NULL, m.scheduled_at, m.match_id");
 $mStmt->execute(['player_id' => $playerId]);
 $myMatches = $mStmt->fetchAll();
@@ -149,7 +149,7 @@ $tournamentHistoryStmt = $pdo->prepare('SELECT tr.tournament_registration_id, tr
     JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
     JOIN games g ON g.game_id = tour.game_id
     LEFT JOIN teams t ON t.team_id = tr.team_id
-    WHERE trm.player_id = :player_id
+    WHERE trm.player_id = :player_id AND trm.roster_status = \'active\'
     ORDER BY tour.start_date DESC, tr.tournament_registration_id DESC');
 $tournamentHistoryStmt->execute(['player_id' => $playerId]);
 $tournamentHistory = $tournamentHistoryStmt->fetchAll();

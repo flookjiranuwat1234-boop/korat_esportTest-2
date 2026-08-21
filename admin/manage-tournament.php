@@ -37,6 +37,95 @@ function displayGameName(string $name): string
     return trim((string) preg_replace('/\s*-\s*รุ่น.*$/u', '', $name));
 }
 
+function getTournamentRegistrationSummary(PDO $pdo, int $tournamentId, ?int $categoryId = null): array
+{
+    $params = ['tid' => $tournamentId];
+    $where = 'WHERE tr.tournament_id = :tid';
+    if ($categoryId) {
+        $where .= ' AND tr.tournament_category_id = :category_id';
+        $params['category_id'] = $categoryId;
+    }
+
+    $sql = "SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN tr.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN tr.status = 'approved' THEN 1 ELSE 0 END) AS approved,
+        SUM(CASE WHEN EXISTS (
+            SELECT 1 FROM tournament_registration_members trm
+            WHERE trm.tournament_registration_id = tr.tournament_registration_id
+              AND trm.is_required_for_checkin = 1
+              AND trm.checkin_status IN ('checked_in', 'waived')
+        ) AND NOT EXISTS (
+            SELECT 1 FROM tournament_registration_members trm2
+            WHERE trm2.tournament_registration_id = tr.tournament_registration_id
+              AND trm2.is_required_for_checkin = 1
+              AND trm2.checkin_status NOT IN ('checked_in', 'waived')
+        ) THEN 1 ELSE 0 END) AS checkin_complete,
+        SUM(CASE WHEN EXISTS (
+            SELECT 1 FROM tournament_registration_members trm3
+            WHERE trm3.tournament_registration_id = tr.tournament_registration_id
+              AND trm3.is_required_for_checkin = 1
+              AND trm3.checkin_status NOT IN ('checked_in', 'waived')
+        ) THEN 1 ELSE 0 END) AS checkin_incomplete,
+        SUM(CASE WHEN tr.participation_status = 'qualified_for_draw' THEN 1 ELSE 0 END) AS qualified_for_draw,
+        SUM(CASE WHEN tr.participation_status IN ('disqualified', 'walkover') THEN 1 ELSE 0 END) AS disqualified_or_wo
+    FROM tournament_registrations tr
+    $where";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    return [
+        'total' => (int) ($row['total'] ?? 0),
+        'pending' => (int) ($row['pending'] ?? 0),
+        'approved' => (int) ($row['approved'] ?? 0),
+        'checkin_complete' => (int) ($row['checkin_complete'] ?? 0),
+        'checkin_incomplete' => (int) ($row['checkin_incomplete'] ?? 0),
+        'qualified_for_draw' => (int) ($row['qualified_for_draw'] ?? 0),
+        'disqualified_or_wo' => (int) ($row['disqualified_or_wo'] ?? 0),
+    ];
+}
+
+function getTournamentRegistrationRowsForOverview(PDO $pdo, int $tournamentId, ?int $categoryId = null): array
+{
+    $params = ['tid' => $tournamentId];
+    $sql = "SELECT
+        tr.tournament_registration_id,
+        tr.tournament_category_id,
+        tr.status,
+        tr.participation_status,
+        tr.seed_no,
+        tr.registered_at,
+        tc.category_code,
+        tc.label AS category_label,
+        COALESCE(team.name, p.display_name, u.username, 'ผู้สมัครเดี่ยว') AS display_name,
+        COALESCE(captain_u.username, '-') AS captain_name,
+        COUNT(trm.id) AS roster_count,
+        SUM(CASE WHEN trm.is_required_for_checkin = 1 THEN 1 ELSE 0 END) AS required_count,
+        SUM(CASE WHEN trm.is_required_for_checkin = 1 AND trm.checkin_status IN ('checked_in', 'waived') THEN 1 ELSE 0 END) AS checked_count
+    FROM tournament_registrations tr
+    LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+    LEFT JOIN teams team ON team.team_id = tr.team_id
+    LEFT JOIN players p ON p.player_id = tr.player_id
+    LEFT JOIN users u ON u.user_id = p.user_id
+    LEFT JOIN players captain_p ON captain_p.player_id = team.captain_player_id
+    LEFT JOIN users captain_u ON captain_u.user_id = captain_p.user_id
+    LEFT JOIN tournament_registration_members trm ON trm.tournament_registration_id = tr.tournament_registration_id
+    WHERE tr.tournament_id = :tid";
+
+    if ($categoryId) {
+        $sql .= ' AND tr.tournament_category_id = :category_id';
+        $params['category_id'] = $categoryId;
+    }
+
+    $sql .= ' GROUP BY tr.tournament_registration_id, tr.tournament_category_id, tr.status, tr.participation_status, tr.seed_no, tr.registered_at, tc.category_code, tc.label, team.name, p.display_name, u.username, captain_u.username ORDER BY tr.registered_at DESC, tr.tournament_registration_id DESC';
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
 function saveTournamentFormCategories(PDO $pdo, int $tournamentId, array $input): void
 {
     $codes = array_values(array_unique(array_filter(array_map('strtolower', $input['category_codes'] ?? []))));
@@ -222,14 +311,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 WHERE tournament_category_id = :category_id AND roster_locked_at IS NULL');
             $registrationStmt->execute(['category_id' => $categoryId]);
             $memberUpdate = $pdo->prepare('UPDATE tournament_registration_members SET is_required_for_checkin = :required
-                WHERE tournament_registration_member_id = :member_id');
+                WHERE id = :member_id');
             foreach ($registrationStmt->fetchAll(PDO::FETCH_COLUMN) as $registrationId) {
-                $membersStmt = $pdo->prepare('SELECT tournament_registration_member_id, member_roles FROM tournament_registration_members
+                $membersStmt = $pdo->prepare('SELECT id, member_roles FROM tournament_registration_members
                     WHERE tournament_registration_id = :registration_id');
                 $membersStmt->execute(['registration_id' => $registrationId]);
                 foreach ($membersStmt->fetchAll() as $member) {
                     $memberRoles = array_values(array_filter(array_map('trim', explode(',', strtolower($member['member_roles'] ?? '')))));
-                    $memberUpdate->execute(['required' => array_intersect($requiredRoles, $memberRoles) ? 1 : 0, 'member_id' => $member['tournament_registration_member_id']]);
+                    $memberUpdate->execute(['required' => array_intersect($requiredRoles, $memberRoles) ? 1 : 0, 'member_id' => $member['id']]);
                 }
             }
         }
@@ -389,63 +478,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'waive
 
 if (isset($_GET['ajax_get_registrations'])) {
     $tournamentId = (int) $_GET['ajax_get_registrations'];
-    $stmt = $pdo->prepare('SELECT tr.tournament_registration_id, tr.status, tr.category, tr.registered_at, tr.roster_locked_at,
-            tr.participation_status, tr.checkin_status, tr.team_id, tr.player_id,
-            COALESCE(t.name, u.username, \'ผู้สมัครเดี่ยว\') AS participant_name,
-            captain_u.username AS captain_name
-        FROM tournament_registrations tr
-        LEFT JOIN teams t ON t.team_id = tr.team_id
-        LEFT JOIN players solo_p ON solo_p.player_id = tr.player_id
-        LEFT JOIN users u ON u.user_id = solo_p.user_id
-        LEFT JOIN players captain_p ON captain_p.player_id = t.captain_player_id
-        LEFT JOIN users captain_u ON captain_u.user_id = captain_p.user_id
-        WHERE tr.tournament_id = :tournament_id
-        ORDER BY tr.registered_at DESC, participant_name');
-    $stmt->execute(['tournament_id' => $tournamentId]);
-    $registrations = $stmt->fetchAll();
-    $csrf = htmlspecialchars(generateCsrfToken(), ENT_QUOTES, 'UTF-8');
+    $categoryId = isset($_GET['category_id']) ? (int) $_GET['category_id'] : null;
+    $summary = getTournamentRegistrationSummary($pdo, $tournamentId, $categoryId);
+    $registrations = getTournamentRegistrationRowsForOverview($pdo, $tournamentId, $categoryId);
+
     if (!$registrations) {
-        echo '<div class="p-8 text-center text-slate-400 text-sm">ยังไม่มีผู้สมัคร Tournament นี้</div>';
+        echo '<div class="p-8 text-center text-slate-400 text-sm">ยังไม่มีผู้สมัครใน Tournament นี้</div>';
         exit;
     }
+
+    echo '<div class="space-y-4">';
+    echo '<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">';
+    $summaryCards = [
+        ['label' => 'ทั้งหมด', 'value' => $summary['total'], 'class' => 'bg-slate-100 text-slate-700'],
+        ['label' => 'รอตรวจสอบ', 'value' => $summary['pending'], 'class' => 'bg-yellow-100 text-yellow-700'],
+        ['label' => 'อนุมัติแล้ว', 'value' => $summary['approved'], 'class' => 'bg-emerald-100 text-emerald-700'],
+        ['label' => 'Check-in ครบ', 'value' => $summary['checkin_complete'], 'class' => 'bg-emerald-100 text-emerald-700'],
+        ['label' => 'Check-in ไม่ครบ', 'value' => $summary['checkin_incomplete'], 'class' => 'bg-amber-100 text-amber-700'],
+        ['label' => 'พร้อมจัดสาย', 'value' => $summary['qualified_for_draw'], 'class' => 'bg-sky-100 text-sky-700'],
+        ['label' => 'ตัดสิทธิ์/WO', 'value' => $summary['disqualified_or_wo'], 'class' => 'bg-rose-100 text-rose-700'],
+    ];
+    foreach ($summaryCards as $card) {
+        echo '<div class="rounded-xl border border-slate-200 p-3 ' . $card['class'] . '"><div class="text-[10px] font-bold uppercase tracking-[0.18em]">' . htmlspecialchars($card['label']) . '</div><div class="mt-2 text-2xl font-black">' . (int) $card['value'] . '</div></div>';
+    }
+    echo '</div>';
+
+    echo '<div class="flex justify-between items-center gap-3 pt-2 border-t border-slate-100">';
+    echo '<div class="text-sm font-bold text-slate-700">รายการทีม/ผู้แข่งขัน</div>';
+    echo '<a href="manage-teams.php?tournament_id=' . $tournamentId . ($categoryId ? '&category_id=' . $categoryId : '') . '" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2 text-xs font-bold text-white hover:bg-brand-glow">จัดการผู้สมัครทั้งหมด</a>';
+    echo '</div>';
+
     foreach ($registrations as $registration) {
         $progress = getRegistrationCheckinProgress($pdo, (int) $registration['tournament_registration_id']);
-        $memberStmt = $pdo->prepare('SELECT trm.player_id, trm.member_roles, trm.is_starter, trm.is_required_for_checkin,
-                trm.checkin_status, trm.checkin_waived_reason, u.username
-            FROM tournament_registration_members trm
-            JOIN players p ON p.player_id = trm.player_id
-            JOIN users u ON u.user_id = p.user_id
-            WHERE trm.tournament_registration_id = :registration_id ORDER BY trm.is_starter DESC, u.username');
-        $memberStmt->execute(['registration_id' => $registration['tournament_registration_id']]);
-        $members = $memberStmt->fetchAll();
-        echo '<article class="border border-slate-200 rounded-xl p-4 space-y-3">';
-        echo '<div class="flex flex-wrap items-center justify-between gap-2"><div><h4 class="font-bold text-slate-900">' . htmlspecialchars($registration['participant_name']) . '</h4>';
-        echo '<p class="text-xs text-slate-500">Category: ' . htmlspecialchars($registration['category'] ?: 'open') . ' | Captain: ' . htmlspecialchars($registration['captain_name'] ?: '-') . '</p></div>';
-        echo '<span class="px-2 py-1 rounded-full bg-slate-100 text-xs font-bold">' . htmlspecialchars(adminRegistrationStatusLabel($registration['status'])) . '</span></div>';
-        echo '<div class="text-xs text-slate-600">Roster Check-in: <b>' . $progress['checked_in'] . '/' . $progress['required'] . '</b> คน | ' . htmlspecialchars($registration['participation_status']) . '</div>';
-        echo '<form method="POST" class="flex items-center gap-2 text-xs"><input type="hidden" name="csrf_token" value="' . $csrf . '"><input type="hidden" name="action" value="save_seed"><input type="hidden" name="registration_id" value="' . (int) $registration['tournament_registration_id'] . '"><label class="font-bold text-slate-500">Seed</label><input type="number" name="seed_no" min="1" placeholder="Ranking อัตโนมัติ" class="w-32 rounded border border-slate-200 px-2 py-1"><button class="rounded bg-slate-100 px-2 py-1 font-bold text-slate-700">บันทึก</button></form>';
-        if ($registration['roster_locked_at']) {
-            echo '<form method="POST" class="flex flex-wrap items-center gap-2 text-xs"><input type="hidden" name="csrf_token" value="' . $csrf . '"><input type="hidden" name="action" value="unlock_roster"><input type="hidden" name="registration_id" value="' . (int) $registration['tournament_registration_id'] . '"><span class="rounded bg-rose-50 px-2 py-1 font-bold text-rose-700">Roster Locked</span><input required name="unlock_reason" placeholder="เหตุผลปลดล็อก" class="min-w-[180px] flex-1 rounded border border-slate-200 px-2 py-1"><button class="rounded bg-sky-600 px-2 py-1 font-bold text-white">ปลดล็อก</button></form>';
-        }
-        if ($members) {
-            echo '<div class="grid gap-2">';
-            foreach ($members as $member) {
-                $checked = in_array($member['checkin_status'], ['checked_in', 'waived'], true);
-                echo '<div class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span><b>' . htmlspecialchars($member['username']) . '</b> <span class="text-slate-400">' . htmlspecialchars($member['member_roles'] ?: 'player') . '</span> ' . ($member['is_starter'] ? 'ตัวจริง' : 'สำรอง') . ($member['is_required_for_checkin'] ? ' | Required' : '') . '</span>';
-                echo '<span class="' . ($checked ? 'text-emerald-600' : 'text-rose-600') . '">' . ($checked ? ($member['checkin_status'] === 'waived' ? 'อนุโลมแล้ว' : 'เช็กอินแล้ว') : 'ยังไม่เช็กอิน');
-                if (!$checked && $member['is_required_for_checkin']) {
-                    echo '<button type="button" class="ml-2 px-2 py-1 rounded bg-sky-100 text-sky-700 font-bold" onclick="waiveMember(' . (int) $registration['tournament_registration_id'] . ',' . (int) $member['player_id'] . ')">อนุโลม</button>';
-                }
-                echo '</span></div>';
-            }
-            echo '</div>';
-        }
-        echo '<form method="POST" class="flex flex-wrap gap-2 pt-2 border-t border-slate-100"><input type="hidden" name="csrf_token" value="' . $csrf . '"><input type="hidden" name="action" value="registration_action"><input type="hidden" name="registration_id" value="' . (int) $registration['tournament_registration_id'] . '"><input name="status_note" placeholder="เหตุผล/หมายเหตุ" class="flex-1 min-w-[180px] rounded-lg border border-slate-200 px-3 py-2 text-xs">';
-        foreach (['approved' => 'อนุมัติ', 'rejected' => 'ไม่อนุมัติ', 'withdrawn' => 'ถอนทีม', 'disqualified' => 'ตัดสิทธิ์'] as $status => $label) {
-            echo '<button name="registration_status" value="' . $status . '" class="px-3 py-2 rounded-lg text-xs font-bold ' . ($status === 'approved' ? 'bg-emerald-500 text-white' : ($status === 'rejected' || $status === 'disqualified' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-700')) . '">' . $label . '</button>';
-        }
-        echo '</form></article>';
+        $requiredCount = (int) ($registration['required_count'] ?: $progress['required']);
+        $checkedCount = (int) ($registration['checked_count'] ?: $progress['checked_in']);
+        $categoryLabel = !empty($registration['category_label']) ? $registration['category_label'] : (!empty($registration['category_code']) ? $registration['category_code'] : 'Open');
+        $statusBadge = adminRegistrationStatusLabel($registration['status'] ?? 'pending');
+        $participationBadge = $registration['participation_status'] ?? 'registered';
+        echo '<article class="border border-slate-200 rounded-xl p-4 space-y-3 bg-white">';
+        echo '<div class="flex flex-wrap items-center justify-between gap-2"><div><h4 class="font-bold text-slate-900">' . htmlspecialchars($registration['display_name'] ?? '-') . '</h4><p class="text-xs text-slate-500">Category: ' . htmlspecialchars($categoryLabel) . ' | Captain: ' . htmlspecialchars($registration['captain_name'] ?? '-') . '</p></div>';
+        echo '<span class="px-2 py-1 rounded-full bg-slate-100 text-xs font-bold text-slate-700">' . htmlspecialchars($statusBadge) . '</span></div>';
+        echo '<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-600">';
+        echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">Roster</span><b>' . (int) ($registration['roster_count'] ?? 0) . ' คน</b></div>';
+        echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">Check-in</span><b>' . $checkedCount . '/' . $requiredCount . '</b></div>';
+        echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">พร้อมจัดสาย</span><b>' . htmlspecialchars($participationBadge) . '</b></div>';
+        echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">Group/Seed</span><b>' . ($registration['seed_no'] ? '#' . (int) $registration['seed_no'] : '-') . '</b></div>';
+        echo '</div>';
+        echo '<div class="flex justify-end gap-2 pt-1 border-t border-slate-100"><a href="manage-teams.php?tournament_id=' . $tournamentId . ($categoryId ? '&category_id=' . $categoryId : '') . '&registration_id=' . (int) $registration['tournament_registration_id'] . '" title="เปิดรายละเอียดใบสมัครในหน้าจัดการผู้สมัคร" class="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"><i class="fa-solid fa-arrow-up-right-from-square"></i>เปิดใบสมัคร</a></div>';
+        echo '</article>';
     }
+    echo '</div>';
     exit;
 }
 
@@ -1102,6 +1184,12 @@ $csrfToken = generateCsrfToken();
         #createModal > div, #editModal > div { overflow:hidden; display:flex; flex-direction:column; }
         #createModal form, #editModal form { overflow-y:auto; min-height:0; }
         #createModal form > div:last-child, #editModal form > div:last-child { position:sticky; bottom:0; background:#fff; z-index:11; }
+        .admin-action-menu { width: 14rem; padding: 0.5rem; }
+        .admin-action-item { min-height: 2.5rem; width: 100%; display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 0.75rem; border-radius: 0.5rem; text-align: left; font-size: 0.75rem; font-weight: 600; line-height: 1.25rem; }
+        .admin-action-item i { width: 1rem; text-align: center; flex: 0 0 1rem; }
+        .admin-action-group { padding: 0.35rem 0.75rem 0.25rem; color: #94a3b8; font-size: 0.625rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+        .admin-action-menu > button, .admin-action-menu > a, .admin-action-menu > form > button { min-height: 2.5rem; width: 100%; display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 0.75rem; border-radius: 0.5rem; text-align: left; font-size: 0.75rem; font-weight: 600; line-height: 1.25rem; }
+        .admin-action-menu > button i, .admin-action-menu > a i, .admin-action-menu > form > button i { width: 1rem; text-align: center; flex: 0 0 1rem; }
     </style>
     <script>
         const tournamentsList = <?php echo json_encode($tournaments, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE); ?>;
@@ -1561,13 +1649,15 @@ $csrfToken = generateCsrfToken();
 
         let currentRegistrationTid = null;
 
-        function openRegistrationModal(tournamentId, tournamentName) {
+        function openRegistrationModal(tournamentId, tournamentName, categoryId = null) {
             currentRegistrationTid = tournamentId;
             document.getElementById('registrationModalTitle').innerText = 'ผู้สมัคร: ' + tournamentName;
-            document.getElementById('registrationContent').innerHTML = '<div class="p-8 text-center text-slate-400 text-sm"><i class="fa-solid fa-spinner fa-spin text-lg mb-2"></i> กำลังโหลด roster...</div>';
+            document.getElementById('registrationContent').innerHTML = '<div class="p-8 text-center text-slate-400 text-sm"><i class="fa-solid fa-spinner fa-spin text-lg mb-2"></i> กำลังโหลดข้อมูลผู้สมัคร...</div>';
             document.getElementById('registrationModal').classList.remove('hidden');
             document.getElementById('registrationModal').classList.add('flex');
-            fetch(`?ajax_get_registrations=${tournamentId}`)
+            const params = new URLSearchParams({ ajax_get_registrations: tournamentId });
+            if (categoryId) params.set('category_id', categoryId);
+            fetch(`?${params.toString()}`)
                 .then(response => response.text())
                 .then(html => { document.getElementById('registrationContent').innerHTML = html; })
                 .catch(() => { document.getElementById('registrationContent').innerHTML = '<div class="p-8 text-center text-rose-600 text-sm">โหลดข้อมูลไม่สำเร็จ</div>'; });
@@ -1942,32 +2032,40 @@ $csrfToken = generateCsrfToken();
                                 <td class="p-4 text-right min-w-[280px]">
                                     <div class="flex flex-wrap justify-end gap-1">
                                     <button type="button" onclick="openTournamentDetail(<?php echo $t['tournament_id']; ?>)"
-                                        class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition-all">
+                                        class="inline-flex h-9 items-center gap-2 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-all hover:bg-slate-200">
                                         <i class="fa-solid fa-circle-info"></i> รายละเอียด
                                     </button>
-                                    <details class="relative inline-block">
-                                        <summary class="list-none cursor-pointer inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-xs font-semibold"><i class="fa-solid fa-ellipsis"></i> จัดการ</summary>
-                                        <div class="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-[180px] space-y-1 text-left">
-                                    <button type="button" onclick="openCategoryModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
-                                        class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 border border-cyan-200 text-xs font-semibold transition-all">
-                                        <i class="fa-solid fa-sliders"></i> Category
-                                    </button>
-                                    <a href="?export_results_csv=<?php echo $t['tournament_id']; ?>" title="CSV"
-                                        class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold transition-all">
-                                        <i class="fa-solid fa-file-csv"></i> CSV
-                                    </a>
-                                    
+                                    <div class="relative">
+                                        <button type="button" class="admin-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white transition-all hover:bg-brand-glow" data-action-menu="tournament-menu-<?php echo (int) $t['tournament_id']; ?>" aria-expanded="false" aria-controls="tournament-menu-<?php echo (int) $t['tournament_id']; ?>">
+                                            <i class="fa-solid fa-ellipsis"></i> จัดการ
+                                        </button>
+                                        <div id="tournament-menu-<?php echo (int) $t['tournament_id']; ?>" class="admin-action-menu admin-action-menu-panel fixed z-[70] hidden rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
+                                            <div class="admin-action-group">การตั้งค่า</div>
                                     <button type="button" 
                                         onclick="openEditModal(<?php echo $t['tournament_id']; ?>)" 
                                         title="แก้ไข"
-                                        class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-semibold transition-all cursor-pointer">
-                                        <i class="fa-solid fa-pen-to-square"></i> แก้ไข
+                                        class="admin-action-item text-slate-700 hover:bg-slate-50 cursor-pointer">
+                                        <i class="fa-solid fa-pen-to-square text-slate-400"></i> แก้ไข Tournament
+                                    </button>
+                                    <button type="button" onclick="openCategoryModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
+                                        class="admin-action-item text-slate-700 hover:bg-slate-50">
+                                        <i class="fa-solid fa-sliders text-slate-400"></i> จัดการ Category
                                     </button>
 
+                                            <div class="my-1 border-t border-slate-100"></div>
+                                            <div class="admin-action-group">ผู้สมัครและข้อมูล</div>
                                     <button type="button" onclick="openRegistrationModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
-                                        class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs text-slate-700 font-semibold transition-all">
-                                        <i class="fa-solid fa-users"></i> ทีม
+                                        class="admin-action-item text-slate-700 hover:bg-slate-50">
+                                        <i class="fa-solid fa-users text-slate-400"></i> ดูสรุปผู้สมัคร
                                     </button>
+                                    <a href="manage-teams.php?tournament_id=<?php echo (int) $t['tournament_id']; ?>" class="admin-action-item text-slate-700 hover:bg-slate-50">
+                                        <i class="fa-solid fa-people-group text-slate-400"></i> จัดการผู้สมัคร/ทีมแข่งขัน
+                                    </a>
+                                    <a href="?export_results_csv=<?php echo $t['tournament_id']; ?>" title="ส่งออก CSV"
+                                        class="admin-action-item text-slate-700 hover:bg-slate-50">
+                                        <i class="fa-solid fa-file-csv text-slate-400"></i> ส่งออก CSV
+                                    </a>
+                                            <div class="my-1 border-t border-slate-100"></div>
                                     <?php if ($canDraw): ?>
                                         <button type="button" onclick="openDrawModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
                                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-sm">
@@ -2279,13 +2377,13 @@ $csrfToken = generateCsrfToken();
 
     <!-- REGISTRATION MODAL -->
     <div id="registrationModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
-        <div class="bg-white rounded-2xl max-w-4xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+        <div class="bg-white rounded-2xl max-w-5xl w-full p-6 sm:p-8 shadow-2xl border border-slate-100 max-h-[90vh] flex flex-col">
             <div class="flex items-center justify-between border-b border-slate-100 pb-4">
                 <h3 id="registrationModalTitle" class="text-base font-bold font-display text-slate-900 flex items-center gap-2"><i class="fa-solid fa-users text-brand-orange"></i> ผู้สมัคร Tournament</h3>
                 <button type="button" onclick="closeRegistrationModal()" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
             </div>
-            <div id="registrationContent" class="space-y-3"></div>
-            <div class="flex justify-end pt-2 border-t border-slate-100">
+            <div id="registrationContent" class="space-y-3 overflow-y-auto py-4"></div>
+            <div class="flex justify-end pt-3 border-t border-slate-100 gap-2">
                 <button type="button" onclick="closeRegistrationModal()" class="px-5 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-semibold text-xs">ปิด</button>
             </div>
         </div>
@@ -2356,5 +2454,58 @@ $csrfToken = generateCsrfToken();
             </div>
         </div>
     </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const toggles = document.querySelectorAll('.admin-action-toggle');
+            const menus = document.querySelectorAll('.admin-action-menu');
+
+            function closeMenus() {
+                menus.forEach(menu => {
+                    menu.classList.add('hidden');
+                    const toggle = document.querySelector(`[data-action-menu="${menu.id}"]`);
+                    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+                });
+            }
+
+            function openMenu(toggle) {
+                const menu = document.getElementById(toggle.dataset.actionMenu);
+                if (!menu) return;
+                const shouldOpen = menu.classList.contains('hidden');
+                closeMenus();
+                if (!shouldOpen) return;
+                document.body.appendChild(menu);
+                menu.classList.remove('hidden');
+                const buttonRect = toggle.getBoundingClientRect();
+                const menuWidth = menu.offsetWidth || 224;
+                const menuHeight = menu.offsetHeight || 320;
+                const left = Math.max(8, Math.min(buttonRect.right - menuWidth, window.innerWidth - menuWidth - 8));
+                const top = buttonRect.bottom + 8 + menuHeight <= window.innerHeight - 8
+                    ? buttonRect.bottom + 8
+                    : Math.max(8, buttonRect.top - menuHeight - 8);
+                menu.style.left = `${left}px`;
+                menu.style.top = `${top}px`;
+                toggle.setAttribute('aria-expanded', 'true');
+            }
+
+            toggles.forEach(toggle => {
+                toggle.addEventListener('click', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openMenu(toggle);
+                });
+                toggle.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openMenu(toggle);
+                });
+            });
+            menus.forEach(menu => menu.addEventListener('click', event => event.stopPropagation()));
+            document.addEventListener('click', closeMenus);
+            document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenus(); });
+            window.addEventListener('resize', closeMenus);
+            window.addEventListener('scroll', closeMenus, true);
+        });
+    </script>
 </body>
 </html>

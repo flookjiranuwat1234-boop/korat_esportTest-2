@@ -13,8 +13,12 @@ $currentUser = [
 ];
 
 $tournamentId = (int) ($_GET['tournament_id'] ?? 0);
-$filterCategory = $_GET['category'] ?? 'open';
+$filterCategory = $_GET['category'] ?? 'all';
 $teamSearch = trim($_GET['team_search'] ?? '');
+$stageFilter = trim((string) ($_GET['stage'] ?? ''));
+$groupFilter = (int) ($_GET['group_id'] ?? 0);
+$roundFilter = (int) ($_GET['round'] ?? 0);
+$statusFilter = trim((string) ($_GET['match_status'] ?? ''));
 $error = '';
 $success = '';
 
@@ -27,18 +31,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
     } else {
         $matchId = (int) $_POST['match_id'];
 
-        $checkStmt = $pdo->prepare("SELECT status, tournament_id FROM matches WHERE match_id = :id");
+        $checkStmt = $pdo->prepare("SELECT status, tournament_id, tournament_category_id FROM matches WHERE match_id = :id");
         $checkStmt->execute(['id' => $matchId]);
         $matchOwnership = $checkStmt->fetch();
         $currentMatchStatus = $matchOwnership['status'] ?? false;
 
         if (!$matchOwnership || (int) $matchOwnership['tournament_id'] !== $tournamentId) {
             $error = 'Match นี้ไม่อยู่ใน Tournament ที่กำลังจัดการ';
+        } elseif (!empty($_POST['category_id']) && (int) $_POST['category_id'] !== (int) ($matchOwnership['tournament_category_id'] ?? 0)) {
+            $error = 'Match นี้ไม่อยู่ใน Category ที่เลือก';
         } elseif ($currentMatchStatus == 'completed' || $currentMatchStatus == 'walkover') {
             $error = 'แมตช์นี้ถูกบันทึกผลการแข่งขันไปแล้ว ไม่สามารถบันทึกซ้ำได้';
         } else {
             $fmtStmt = $pdo->prepare("
-                SELECT t.format, m.team1_id, m.team2_id, m.tournament_id, m.bracket_type, m.best_of
+                SELECT t.format, t.start_date, t.end_date, m.team1_id, m.team2_id, m.tournament_id, m.bracket_type, m.best_of
                 FROM matches m JOIN tournaments t ON t.tournament_id = m.tournament_id
                 WHERE m.match_id = :id
             ");
@@ -48,10 +54,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
             $bestOf = max(1, (int) ($matchInfo['best_of'] ?? 1));
 
             if ($bestOf <= 1) {
-                $score1 = (int) ($_POST['score1'] ?? 0);
-                $score2 = (int) ($_POST['score2'] ?? 0);
+                    $score1raw = $_POST['score1'] ?? '';
+                    $score2raw = $_POST['score2'] ?? '';
+                    $score1 = (int) $score1raw;
+                    $score2 = (int) $score2raw;
 
-                if ($score1 == $score2) {
+                    if ($score1raw === '' || $score2raw === '' || $score1 < 0 || $score2 < 0) {
+                        $error = 'กรุณากรอกคะแนนเป็นตัวเลขตั้งแต่ 0 ขึ้นไป';
+                    } elseif (empty($matchInfo['team1_id']) || empty($matchInfo['team2_id'])) {
+                        $error = 'ยังไม่ทราบคู่แข่งขัน จึงยังบันทึกผลไม่ได้';
+                    } elseif ($score1 == $score2) {
                     $error = 'คะแนนเสมอกันไม่ได้ รอบแพ้คัดออกต้องมีผู้ชนะ';
                 } else {
                     $winnerId = ($score1 > $score2) ? $matchInfo['team1_id'] : $matchInfo['team2_id'];
@@ -72,10 +84,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             ->execute(['tournament_id' => $tournamentId]);
 
                         if (function_exists('updateRankingsAfterMatch')) {
-                            try { @updateRankingsAfterMatch($pdo, $matchId); } catch (Exception $ex) {}
+                                    try { updateRankingsAfterMatch($pdo, $matchId); } catch (Exception $ex) { throw new RuntimeException('บันทึก Ranking ไม่สำเร็จ: ' . $ex->getMessage(), 0, $ex); }
                         }
                         if ($winnerId) {
-                            try { @advanceMatchResult($pdo, $matchId, $winnerId, $loserId); } catch (Exception $ex) {}
+                            advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
                         }
 
                         if ($pdo->inTransaction()) {
@@ -109,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                     $gs1 = (int) $gs1raw;
                     $gs2 = (int) $gs2raw;
 
-                    if ($gs1 == $gs2) {
+                    if ($gs1raw === '' || $gs2raw === '' || $gs1 < 0 || $gs2 < 0 || $gs1 == $gs2) {
                         $gameValidationError = "เกมที่ " . ($i + 1) . " คะแนนเสมอกันไม่ได้ ต้องมีผู้ชนะในแต่ละเกม";
                         break;
                     }
@@ -166,10 +178,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                         $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :tournament_id AND status = 'bracket_generated'")
                             ->execute(['tournament_id' => $tournamentId]);
 
-                        if (function_exists('updateRankingsAfterMatch')) {
-                            try { @updateRankingsAfterMatch($pdo, $matchId); } catch (Exception $ex) {}
-                        }
-                        try { @advanceMatchResult($pdo, $matchId, $winnerId, $loserId); } catch (Exception $ex) {}
+                        if (function_exists('updateRankingsAfterMatch')) updateRankingsAfterMatch($pdo, $matchId);
+                        advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
 
                         if ($pdo->inTransaction()) {
                             $pdo->commit();
@@ -192,44 +202,138 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
         $matchId = (int) ($_POST['match_id'] ?? 0);
-        $scheduleCheck = $pdo->prepare('SELECT tournament_id FROM matches WHERE match_id = :match_id');
+        $scheduleCheck = $pdo->prepare('SELECT tournament_id, tournament_category_id FROM matches WHERE match_id = :match_id');
         $scheduleCheck->execute(['match_id' => $matchId]);
-        if ((int) $scheduleCheck->fetchColumn() !== $tournamentId) {
+        $scheduleMatch = $scheduleCheck->fetch(PDO::FETCH_ASSOC);
+        if (!$scheduleMatch || (int) $scheduleMatch['tournament_id'] !== $tournamentId || (!empty($_POST['category_id']) && (int) $_POST['category_id'] !== (int) $scheduleMatch['tournament_category_id'])) {
             $error = 'Match นี้ไม่อยู่ใน Tournament ที่กำลังจัดการ';
         } else {
+            $scheduledAt = trim((string) ($_POST['scheduled_at'] ?? ''));
+            $dateCheck = $pdo->prepare('SELECT start_date, end_date FROM tournaments WHERE tournament_id = :id');
+            $dateCheck->execute(['id' => $tournamentId]);
+            $tournamentDates = $dateCheck->fetch(PDO::FETCH_ASSOC) ?: [];
+            $scheduledSql = $scheduledAt !== '' ? str_replace('T', ' ', $scheduledAt) . ':00' : null;
+            if ($scheduledAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/', $scheduledAt)) {
+                $error = 'รูปแบบวันเวลาแข่งขันไม่ถูกต้อง';
+            } elseif ($scheduledSql && (($tournamentDates['start_date'] && $scheduledSql < $tournamentDates['start_date']) || ($tournamentDates['end_date'] && $scheduledSql > $tournamentDates['end_date']))) {
+                $error = 'วันเวลา Match ต้องอยู่ภายในช่วง Tournament';
+            } else {
             $pdo->prepare('UPDATE matches SET scheduled_at = :scheduled_at, venue_name = :venue_name, venue_area = :venue_area
                 WHERE match_id = :match_id')->execute([
-                'scheduled_at' => $_POST['scheduled_at'] !== '' ? str_replace('T', ' ', $_POST['scheduled_at']) : null,
+                'scheduled_at' => $scheduledSql,
                 'venue_name' => trim($_POST['venue_name'] ?? '') ?: null,
                 'venue_area' => trim($_POST['venue_area'] ?? '') ?: null,
                 'match_id' => $matchId,
             ]);
             $success = 'บันทึกวัน เวลา และสนามของ Match แล้ว';
+            }
+        }
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sync_bracket_winners') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $syncTournamentId = (int) ($_POST['tournament_id'] ?? 0);
+        $syncCategoryId = (int) ($_POST['category_id'] ?? 0);
+        if ($syncTournamentId !== $tournamentId || $syncTournamentId <= 0) {
+            $error = 'Tournament ไม่ถูกต้อง';
+        } else {
+            try {
+                $pdo->beginTransaction();
+                $edgeStmt = $pdo->prepare('SELECT source.match_id AS source_match_id, source.winner_team_id,
+                        source.tournament_category_id AS source_category_id, target.match_id AS target_match_id,
+                        target.tournament_id AS target_tournament_id, target.tournament_category_id AS target_category_id,
+                        e.next_slot, target.team1_id, target.team2_id
+                    FROM bracket_edges e
+                    JOIN matches source ON source.match_id = e.match_id
+                    JOIN matches target ON target.match_id = e.next_match_id
+                    WHERE source.tournament_id = :tournament_id AND source.status = \'completed\'
+                        AND source.winner_team_id IS NOT NULL');
+                $edgeStmt->execute(['tournament_id' => $syncTournamentId]);
+                $synced = 0;
+                $conflicts = [];
+                foreach ($edgeStmt->fetchAll(PDO::FETCH_ASSOC) as $edge) {
+                    if ($syncCategoryId > 0 && (int) $edge['source_category_id'] !== $syncCategoryId) continue;
+                    if ((int) $edge['source_category_id'] !== (int) $edge['target_category_id'] || (int) $edge['target_tournament_id'] !== $syncTournamentId) {
+                        $conflicts[] = '#' . $edge['source_match_id'] . ' → #' . $edge['target_match_id'] . ' (Tournament/Category ไม่ตรงกัน)';
+                        continue;
+                    }
+                    $slot = $edge['next_slot'] === 'team1_id' ? 'team1_id' : ($edge['next_slot'] === 'team1' ? 'team1_id' : 'team2_id');
+                    $existing = $edge[$slot];
+                    if ($existing !== null && (int) $existing !== (int) $edge['winner_team_id']) {
+                        $conflicts[] = '#' . $edge['source_match_id'] . ' → #' . $edge['target_match_id'] . ' (Slot มีข้อมูลขัดแย้ง)';
+                        continue;
+                    }
+                    if ($existing === null) {
+                        $pdo->prepare("UPDATE matches SET {$slot} = :winner WHERE match_id = :target_id AND tournament_id = :tournament_id")
+                            ->execute(['winner' => $edge['winner_team_id'], 'target_id' => $edge['target_match_id'], 'tournament_id' => $syncTournamentId]);
+                        $synced++;
+                    }
+                }
+                $pdo->commit();
+                $success = $synced > 0 ? "ซิงก์ผู้ชนะเข้าสู่รอบถัดไป {$synced} รายการแล้ว" : 'ไม่พบ Slot ที่ต้องซิงก์';
+                if ($conflicts) $error = 'พบความขัดแย้ง: ' . implode(', ', $conflicts);
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = 'ซิงก์สายการแข่งขันไม่สำเร็จ: ' . $exception->getMessage();
+            }
         }
     }
 }
 
 $tournaments = $pdo->query("
-    SELECT tournament_id, name, format 
+    SELECT tournament_id, name, format, game_id, start_date, end_date
     FROM tournaments 
-    WHERE status IN ('ongoing', 'bracket_generated')
+    WHERE status NOT IN ('completed', 'cancelled')
     ORDER BY name
 ")->fetchAll();
 
 $matches = [];
 $groupedMatches = [];
 $currentFormat = '';
+$availableCategories = [];
+$summary = ['total' => 0, 'scheduled' => 0, 'ongoing' => 0, 'completed' => 0, 'walkover' => 0];
+$bracketIssues = [];
 
 if ($tournamentId) {
     $fStmt = $pdo->prepare("SELECT format FROM tournaments WHERE tournament_id = :id");
     $fStmt->execute(['id' => $tournamentId]);
     $currentFormat = $fStmt->fetchColumn();
+    $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label FROM tournament_categories WHERE tournament_id = :id AND is_active = 1 ORDER BY tournament_category_id');
+    $categoryStmt->execute(['id' => $tournamentId]);
+    $availableCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+    $categoryMap = [];
+    foreach ($availableCategories as $category) $categoryMap[$category['category_code']] = (int) $category['tournament_category_id'];
+    $summaryStmt = $pdo->prepare("SELECT COUNT(*) AS total,
+        SUM(status = 'scheduled') AS scheduled, SUM(status = 'ongoing') AS ongoing,
+        SUM(status = 'completed') AS completed, SUM(status = 'walkover') AS walkover
+        FROM matches WHERE tournament_id = :id AND status <> 'cancelled'");
+    $summaryStmt->execute(['id' => $tournamentId]);
+    $summary = array_merge($summary, array_map('intval', $summaryStmt->fetch(PDO::FETCH_ASSOC) ?: []));
+    $issueStmt = $pdo->prepare('SELECT source.match_id AS source_match_id, source.winner_team_id,
+            target.match_id AS target_match_id, e.next_slot, target.team1_id, target.team2_id
+        FROM bracket_edges e
+        JOIN matches source ON source.match_id = e.match_id
+        LEFT JOIN matches target ON target.match_id = e.next_match_id
+        WHERE source.tournament_id = :tournament_id AND source.status = \'completed\'
+            AND source.winner_team_id IS NOT NULL AND e.next_match_id IS NOT NULL');
+    $issueStmt->execute(['tournament_id' => $tournamentId]);
+    foreach ($issueStmt->fetchAll(PDO::FETCH_ASSOC) as $edge) {
+        $slot = $edge['next_slot'] === 'team1' ? 'team1_id' : 'team2_id';
+        if ($edge['target_match_id'] === null || ($edge[$slot] !== null && (int) $edge[$slot] !== (int) $edge['winner_team_id'])) {
+            $bracketIssues[] = $edge;
+        } elseif ($edge[$slot] === null) {
+            $bracketIssues[] = $edge;
+        }
+    }
 
     // ดึงข้อมูลแมตช์พร้อมผูก category จากตาราง tournament_registrations หรือ teams โดยตรงอย่างถูกต้อง
     $sql = "
         SELECT m.*, 
-               COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name, 
-               COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name, 
+               COALESCE(t1.name, u1.username, 'รอคู่แข่งขัน') AS team1_name,
+               COALESCE(t2.name, u2.username, 'รอคู่แข่งขัน') AS team2_name,
                COALESCE(tr1.category, t1.team_category, 'open') AS team1_cat,
                COALESCE(tr2.category, t2.team_category, 'open') AS team2_cat,
                tg.name AS group_name,
@@ -254,6 +358,14 @@ if ($tournamentId) {
         $sql .= " AND (t1.name LIKE :search OR u1.username LIKE :search OR t2.name LIKE :search OR u2.username LIKE :search)";
         $params['search'] = "%{$teamSearch}%";
     }
+
+    if ($selectedCategoryId) {
+        $sql .= ' AND m.tournament_category_id = :category_id';
+        $params['category_id'] = $selectedCategoryId;
+    }
+    if ($groupFilter > 0) { $sql .= ' AND m.group_id = :group_id'; $params['group_id'] = $groupFilter; }
+    if ($roundFilter > 0) { $sql .= ' AND m.round_number = :round_number'; $params['round_number'] = $roundFilter; }
+    if ($statusFilter !== '') { $sql .= ' AND m.status = :match_status'; $params['match_status'] = $statusFilter; }
 
     $sql .= " ORDER BY m.status ASC, m.round_number ASC, m.match_index ASC";
 
@@ -284,11 +396,15 @@ if ($tournamentId) {
     }
 
     // หากกรองแล้วไม่พบผลลัพธ์แต่ไม่มีการค้นหา ให้ดึงทั้งหมดมาแสดงป้องกันหน้าจอว่างเปล่า
-    if (empty($matches) && empty($teamSearch) && $filterCategory !== 'all') {
-        $matches = $rawMatches;
-    }
-
     foreach ($matches as $m) {
+        foreach (['team1' => 'team1_name', 'team2' => 'team2_name'] as $slot => $nameField) {
+            if (empty($m[$slot . '_id'])) {
+                $sourceStmt = $pdo->prepare('SELECT e.match_id FROM bracket_edges e JOIN matches source ON source.match_id = e.match_id WHERE e.next_match_id = :next_match_id AND e.next_slot = :next_slot AND source.tournament_id = :tournament_id LIMIT 1');
+                $sourceStmt->execute(['next_match_id' => $m['match_id'], 'next_slot' => $slot, 'tournament_id' => $tournamentId]);
+                $sourceMatchId = $sourceStmt->fetchColumn();
+                if ($sourceMatchId) $m[$nameField] = 'รอผู้ชนะจาก Match #' . (int) $sourceMatchId;
+            }
+        }
         $bt = $m['bracket_type'] ?? 'single';
         $catLabel = '';
         $c1 = strtolower($m['team1_cat'] ?? 'open');
@@ -297,7 +413,9 @@ if ($tournamentId) {
         elseif (strpos($bt, 'female') !== false || $c1 === 'female') $catLabel = ' [ประเภททีมหญิง]';
         else $catLabel = ' [ประเภท Open]';
 
-        $groupKey = 'รอบการแข่งขันนัดที่ ' . $m['round_number'] . $catLabel;
+        $stageName = $m['group_id'] ? 'Group Stage' : ($m['bracket_type'] ?? 'Knockout');
+        if ($stageFilter !== '' && strtolower((string) $stageName) !== strtolower($stageFilter)) continue;
+        $groupKey = $stageName . ' | รอบที่ ' . $m['round_number'] . $catLabel;
         $groupedMatches[$groupKey][] = $m;
     }
 }
@@ -309,7 +427,7 @@ $csrfToken = generateCsrfToken();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>บันทึกผลแมตช์ - Korat Esport</title>
+    <title>จัดตารางและบันทึกผลการแข่งขัน - Korat Esport</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
@@ -344,6 +462,11 @@ $csrfToken = generateCsrfToken();
             color: #FF5500;
             border-left: 4px solid #FF5500;
         }
+        .match-action-item { min-height: 2.5rem; width: 100%; display: flex; align-items: center; gap: .625rem; padding: .625rem .75rem; border-radius: .5rem; text-align: left; font-size: .75rem; font-weight: 600; color: #334155; }
+        .match-action-item:hover { background: #f8fafc; }
+        .match-action-menu { display: none; width: 14rem; padding: .5rem; }
+        .match-action-menu.is-open { display: block; }
+        .match-action-item:hover { background: #f8fafc; }
     </style>
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
@@ -424,9 +547,9 @@ $csrfToken = generateCsrfToken();
             <div>
                 <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
-                    บันทึกผลแมตช์ <span class="text-brand-orange">(RECORD MATCH SCORE)</span>
+                    จัดตารางและบันทึกผลการแข่งขัน <span class="text-brand-orange">(MATCH MANAGEMENT)</span>
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">เลือกรายการแข่งขัน แยกประเภท กรองชื่อทีม และบันทึกผลการแข่งขัน</p>
+                <p class="text-xs text-slate-500 mt-0.5">จัดวันเวลา สนาม และบันทึกผล Match แยกตาม Tournament และ Category</p>
             </div>
             
             <a href="../pages/index.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">
@@ -448,6 +571,16 @@ $csrfToken = generateCsrfToken();
                     <i class="fa-solid fa-circle-check text-lg shrink-0 text-emerald-500"></i>
                     <span><?php echo htmlspecialchars($success); ?></span>
                 </div>
+            <?php endif; ?>
+
+            <?php if ($tournamentId && $bracketIssues): ?>
+                <section class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 shadow-sm">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div><h2 class="text-sm font-bold"><i class="fa-solid fa-triangle-exclamation mr-2"></i>ตรวจพบ Winner ที่ยังไม่ต่อเข้าสายถัดไป</h2><p class="mt-1 text-xs">ระบบใช้ bracket_edges เดิมและจะไม่เขียนทับ Slot ที่มีข้อมูลขัดแย้ง</p></div>
+                        <form method="POST"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="sync_bracket_winners"><input type="hidden" name="tournament_id" value="<?= $tournamentId ?>"><input type="hidden" name="category_id" value="<?= (int) $selectedCategoryId ?>"><button type="submit" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-glow">ซิงก์ผู้ชนะเข้าสู่รอบถัดไป</button></form>
+                    </div>
+                    <div class="mt-3 space-y-1 text-xs"><?php foreach ($bracketIssues as $issue): ?><div>Match #<?= (int) $issue['source_match_id'] ?> → Match #<?= (int) $issue['target_match_id'] ?> (<?= htmlspecialchars($issue['next_slot'] ?: 'ไม่ระบุ Slot') ?>)</div><?php endforeach; ?></div>
+                </section>
             <?php endif; ?>
 
             <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
@@ -481,16 +614,24 @@ $csrfToken = generateCsrfToken();
                                 </span>
                             </div>
                         </div>
+                        <input type="hidden" name="category" value="<?= htmlspecialchars($filterCategory) ?>">
+                        <div class="md:col-span-3 space-y-2"><label class="block text-xs font-bold text-slate-700">Stage</label><select name="stage" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm"><option value="">ทุก Stage</option><option value="Group Stage" <?= $stageFilter === 'Group Stage' ? 'selected' : '' ?>>Group Stage</option><option value="single" <?= $stageFilter === 'single' ? 'selected' : '' ?>>Knockout</option></select></div>
+                        <div class="md:col-span-3 space-y-2"><label class="block text-xs font-bold text-slate-700">Round</label><input type="number" min="1" name="round" value="<?= $roundFilter ?: '' ?>" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm"></div>
+                        <div class="md:col-span-3 space-y-2"><label class="block text-xs font-bold text-slate-700">สถานะ Match</label><select name="match_status" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm"><option value="">ทุกสถานะ</option><option value="scheduled" <?= $statusFilter === 'scheduled' ? 'selected' : '' ?>>รอแข่งขัน</option><option value="ongoing" <?= $statusFilter === 'ongoing' ? 'selected' : '' ?>>กำลังแข่งขัน</option><option value="completed" <?= $statusFilter === 'completed' ? 'selected' : '' ?>>แข่งขันจบแล้ว</option><option value="walkover" <?= $statusFilter === 'walkover' ? 'selected' : '' ?>>WO</option></select></div>
+                        <div class="md:col-span-3 flex gap-2"><button type="submit" class="flex-1 rounded-xl bg-brand-orange px-4 py-3 text-sm font-bold text-white">กรอง</button><a href="?tournament_id=<?= $tournamentId ?>" class="flex-1 rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-bold text-slate-600">ล้างตัวกรอง</a></div>
                     <?php endif; ?>
                 </form>
 
                 <?php if ($tournamentId): ?>
+                    <div class="grid grid-cols-2 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-5">
+                        <?php foreach ([['ทั้งหมด', $summary['total'], 'bg-slate-100 text-slate-700'], ['รอแข่งขัน', $summary['scheduled'], 'bg-amber-50 text-amber-700'], ['กำลังแข่งขัน', $summary['ongoing'], 'bg-blue-50 text-blue-700'], ['แข่งขันจบแล้ว', $summary['completed'], 'bg-emerald-50 text-emerald-700'], ['WO', $summary['walkover'], 'bg-rose-50 text-rose-700']] as $summaryCard): ?>
+                            <div class="rounded-xl border border-slate-200 p-3 <?= $summaryCard[2] ?>"><div class="text-[10px] font-bold uppercase tracking-wider"><?= $summaryCard[0] ?></div><div class="mt-1 text-xl font-black"><?= (int) $summaryCard[1] ?></div></div>
+                        <?php endforeach; ?>
+                    </div>
                     <div class="flex items-center gap-2 pt-2 border-t border-slate-100">
                         <span class="text-xs font-bold text-slate-500 uppercase mr-2"><i class="fa-solid fa-layer-group text-brand-orange mr-1"></i> กรองประเภท:</span>
                         <a href="?tournament_id=<?php echo $tournamentId; ?>&category=all" class="px-4 py-1.5 rounded-xl text-xs font-bold <?php echo ($filterCategory === 'all') ? 'bg-brand-orange text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'; ?>">ทั้งหมด</a>
-                        <a href="?tournament_id=<?php echo $tournamentId; ?>&category=male" class="px-4 py-1.5 rounded-xl text-xs font-bold <?php echo ($filterCategory === 'male') ? 'bg-brand-orange text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'; ?>">ทีมชาย</a>
-                        <a href="?tournament_id=<?php echo $tournamentId; ?>&category=female" class="px-4 py-1.5 rounded-xl text-xs font-bold <?php echo ($filterCategory === 'female') ? 'bg-brand-orange text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'; ?>">ทีมหญิง</a>
-                        <a href="?tournament_id=<?php echo $tournamentId; ?>&category=open" class="px-4 py-1.5 rounded-xl text-xs font-bold <?php echo ($filterCategory === 'open') ? 'bg-brand-orange text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'; ?>">Open</a>
+                        <?php foreach ($availableCategories as $category): ?><a href="?tournament_id=<?= $tournamentId ?>&category=<?= urlencode($category['category_code']) ?>" class="px-4 py-1.5 rounded-xl text-xs font-bold <?= $filterCategory === $category['category_code'] ? 'bg-brand-orange text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200' ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']) ?></a><?php endforeach; ?>
                     </div>
                 <?php endif; ?>
             </div>
@@ -521,8 +662,10 @@ $csrfToken = generateCsrfToken();
                                                 <th class="p-4 text-right">ผู้แข่งขัน 1</th>
                                                 <th class="p-4 text-center w-16">VS</th>
                                                 <th class="p-4">ผู้แข่งขัน 2</th>
-                                                <th class="p-4 text-center">ผลการแข่งขัน / บันทึกผล</th>
+                                                <th class="p-4 text-center">ผลการแข่งขัน</th>
                                                 <th class="p-4 text-center">สถานะ</th>
+                                                <th class="p-4 text-center">กำหนดการ</th>
+                                                <th class="p-4 text-center">จัดการ</th>
                                             </tr>
                                         </thead>
                                         <tbody class="divide-y divide-slate-100">
@@ -568,7 +711,7 @@ $csrfToken = generateCsrfToken();
                                                     <?php elseif ($m['team1_id'] && $m['team2_id']): ?>
                                                         <?php $mBestOf = max(1, (int) ($m['best_of'] ?? 1)); ?>
                                                         <?php if ($mBestOf <= 1): ?>
-                                                            <form method="POST" class="inline-flex items-center gap-2">
+                                                            <form method="POST" class="hidden inline-flex items-center gap-2">
                                                                 <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                                                                 <input type="hidden" name="action" value="save_score">
                                                                 <input type="hidden" name="match_id" value="<?php echo $m['match_id']; ?>">
@@ -585,7 +728,7 @@ $csrfToken = generateCsrfToken();
                                                                 </button>
                                                             </form>
                                                         <?php else: ?>
-                                                            <form method="POST" class="inline-flex flex-col items-center gap-1.5">
+                                                            <form method="POST" class="hidden inline-flex flex-col items-center gap-1.5">
                                                                 <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                                                                 <input type="hidden" name="action" value="save_score">
                                                                 <input type="hidden" name="match_id" value="<?php echo $m['match_id']; ?>">
@@ -622,15 +765,19 @@ $csrfToken = generateCsrfToken();
                                                     <?php else: ?>
                                                         <span class="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold">รอแข่ง</span>
                                                     <?php endif; ?>
-                                                    <form method="POST" class="mt-2 space-y-1 text-left">
-                                                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
-                                                        <input type="hidden" name="action" value="save_schedule">
-                                                        <input type="hidden" name="match_id" value="<?php echo (int) $m['match_id']; ?>">
-                                                        <input type="datetime-local" name="scheduled_at" value="<?php echo !empty($m['scheduled_at']) ? htmlspecialchars(str_replace(' ', 'T', substr($m['scheduled_at'], 0, 16))) : ''; ?>" class="w-full rounded border border-slate-200 px-1 py-1 text-[10px]">
-                                                        <input type="text" name="venue_name" value="<?php echo htmlspecialchars($m['venue_name'] ?? ''); ?>" placeholder="สนาม" class="w-full rounded border border-slate-200 px-1 py-1 text-[10px]">
-                                                        <input type="text" name="venue_area" value="<?php echo htmlspecialchars($m['venue_area'] ?? ''); ?>" placeholder="พื้นที่" class="w-full rounded border border-slate-200 px-1 py-1 text-[10px]">
-                                                        <button type="submit" class="w-full rounded bg-slate-100 px-1 py-1 text-[10px] font-bold text-slate-700">บันทึก Schedule</button>
-                                                    </form>
+                                                </td>
+                                                <td class="p-4 text-center align-top">
+                                                    <div class="text-xs font-semibold text-slate-700"><?= !empty($m['scheduled_at']) ? date('d/m/Y H:i', strtotime($m['scheduled_at'])) : (in_array($m['status'], ['completed', 'walkover'], true) ? 'ไม่ได้บันทึกกำหนดการ' : 'ยังไม่กำหนด') ?></div>
+                                                    <div class="mt-1 text-[11px] text-slate-400"><?= htmlspecialchars($m['venue_area'] ?: $m['venue_name'] ?: '-') ?></div>
+                                                </td>
+                                                <td class="p-4 text-center align-top">
+                                                    <button type="button" class="match-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white hover:bg-brand-glow" data-match-id="<?= (int) $m['match_id'] ?>" data-menu-id="match-action-menu-<?= (int) $m['match_id'] ?>" aria-haspopup="menu" aria-expanded="false"><i class="fa-solid fa-ellipsis"></i>จัดการ</button>
+                                                    <div id="match-action-menu-<?= (int) $m['match_id'] ?>" class="match-action-menu fixed z-[70] rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
+                                                        <button type="button" data-match-action="detail" class="match-action-item">รายละเอียด</button>
+                                                        <?php if (!in_array($m['status'], ['completed', 'walkover', 'cancelled'], true) && $m['team1_id'] && $m['team2_id']): ?><button type="button" data-match-action="score" class="match-action-item">บันทึกผลการแข่งขัน</button><?php endif; ?>
+                                                        <button type="button" data-match-action="schedule" class="match-action-item">จัดตารางการแข่งขัน</button>
+                                                        <?php if ($m['status'] === 'completed'): ?><button type="button" data-match-action="score" class="match-action-item">แก้ไขผลการแข่งขัน</button><?php endif; ?>
+                                                    </div>
                                                 </td>
                                             </tr>
                                             <?php endforeach; ?>
@@ -645,5 +792,77 @@ $csrfToken = generateCsrfToken();
 
         </main>
     </div>
+    <div id="matchDetailModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="matchDetailTitle" class="font-bold text-slate-900">รายละเอียด Match</h3><button type="button" onclick="closeMatchModal('matchDetailModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div id="matchDetailContent" class="space-y-3 p-6 text-sm"></div><div class="flex justify-end border-t border-slate-100 bg-slate-50 px-6 py-4"><button type="button" onclick="closeMatchModal('matchDetailModal')" class="rounded-lg bg-slate-200 px-4 py-2 text-xs font-bold">ปิด</button></div></div></div>
+    <div id="matchScheduleModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">จัดตารางการแข่งขัน</h3><button type="button" onclick="closeMatchModal('matchScheduleModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_schedule"><input type="hidden" name="match_id" id="scheduleMatchId"><div id="scheduleMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><label class="block text-xs font-bold">วันและเวลาแข่งขัน<input type="datetime-local" name="scheduled_at" id="scheduleDate" required class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><label class="block text-xs font-bold">สนาม/สถานที่<input name="venue_name" id="scheduleVenue" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><label class="block text-xs font-bold">พื้นที่/เครื่อง/โต๊ะ<input name="venue_area" id="scheduleArea" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('matchScheduleModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึกกำหนดการ</button></div></form></div></div>
+    <div id="matchScoreModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">บันทึกผลการแข่งขัน</h3><button type="button" onclick="closeMatchModal('matchScoreModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" id="matchScoreForm" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_score"><input type="hidden" name="match_id" id="scoreMatchId"><div id="scoreMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><div id="scoreFields"></div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('matchScoreModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">ยืนยันผลการแข่งขัน</button></div></form></div></div>
+    <script>
+        const matchData = <?= json_encode(array_column($matches, null, 'match_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+        function openMatchModal(id) { const element = document.getElementById(id); element.classList.remove('hidden'); element.classList.add('flex'); }
+        function closeMatchModal(id) { const element = document.getElementById(id); element.classList.add('hidden'); element.classList.remove('flex'); }
+        function matchLabel(match) { return '#' + (Number(match.match_index || 0) + 1) + ' | ' + (match.team1_name || 'รอผู้ชนะ') + ' vs ' + (match.team2_name || 'รอผู้ชนะ'); }
+        function openMatchDetail(match) { document.getElementById('matchDetailTitle').textContent = 'รายละเอียด Match ' + match.match_id; document.getElementById('matchDetailContent').innerHTML = `<div><b>คู่แข่งขัน</b><div>${matchLabel(match)}</div></div><div><b>Category</b><div>${match.match_category_id || 'ไม่ระบุ'}</div></div><div><b>รอบ/Group</b><div>${match.bracket_type || '-'} / ${match.group_name || '-'} / รอบที่ ${match.round_number || '-'}</div></div><div><b>คะแนน</b><div>${match.team1_score ?? '-'} - ${match.team2_score ?? '-'}</div></div><div><b>สถานะ</b><div>${match.status}</div></div><div><b>กำหนดการ</b><div>${match.scheduled_at || 'ยังไม่กำหนด'} | ${match.venue_name || '-'} ${match.venue_area || ''}</div></div>`; openMatchModal('matchDetailModal'); }
+        function openMatchSchedule(match) { document.getElementById('scheduleMatchId').value = match.match_id; document.getElementById('scheduleMatchLabel').textContent = matchLabel(match); document.getElementById('scheduleDate').value = match.scheduled_at ? match.scheduled_at.replace(' ', 'T').slice(0, 16) : ''; document.getElementById('scheduleVenue').value = match.venue_name || ''; document.getElementById('scheduleArea').value = match.venue_area || ''; openMatchModal('matchScheduleModal'); }
+        function openMatchScore(match) { document.getElementById('scoreMatchId').value = match.match_id; document.getElementById('scoreMatchLabel').textContent = matchLabel(match) + ' | Best of ' + (match.best_of || 1); const bestOf = Math.max(1, Number(match.best_of || 1)); const fields = document.getElementById('scoreFields'); fields.innerHTML = bestOf === 1 ? '<div class="grid grid-cols-2 gap-3"><label class="text-xs font-bold">ฝั่ง A<input type="number" name="score1" min="0" required class="mt-1 w-full rounded-xl border px-3 py-2.5"></label><label class="text-xs font-bold">ฝั่ง B<input type="number" name="score2" min="0" required class="mt-1 w-full rounded-xl border px-3 py-2.5"></label></div>' : Array.from({length: bestOf}, (_, index) => `<div class="grid grid-cols-[auto_1fr_auto_1fr] items-center gap-2"><span class="text-xs">เกม ${index + 1}</span><input type="number" name="game_s1[]" min="0" class="w-full rounded-xl border px-3 py-2.5"><span>-</span><input type="number" name="game_s2[]" min="0" class="w-full rounded-xl border px-3 py-2.5"></div>`).join(''); openMatchModal('matchScoreModal'); }
+        document.addEventListener('DOMContentLoaded', () => {
+            const toggles = document.querySelectorAll('.match-action-toggle');
+            const menus = document.querySelectorAll('.match-action-menu');
+            function closeMenus(returnFocus = false) {
+                menus.forEach(menu => menu.classList.remove('is-open'));
+                toggles.forEach(toggle => {
+                    toggle.setAttribute('aria-expanded', 'false');
+                    if (returnFocus && toggle.dataset.keyboardOpen === 'true') toggle.focus();
+                    delete toggle.dataset.keyboardOpen;
+                });
+            }
+            toggles.forEach(toggle => {
+                toggle.addEventListener('click', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const menu = document.getElementById(toggle.dataset.menuId);
+                    if (!menu) return;
+                    const isOpen = menu.classList.contains('is-open');
+                    closeMenus();
+                    if (isOpen) return;
+                    document.body.appendChild(menu);
+                    menu.classList.add('is-open');
+                    const rect = toggle.getBoundingClientRect();
+                    const width = menu.offsetWidth || 224;
+                    const height = menu.offsetHeight || 220;
+                    menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+                    menu.style.top = `${rect.bottom + height + 8 <= window.innerHeight - 8 ? rect.bottom + 8 : Math.max(8, rect.top - height - 8)}px`;
+                    toggle.setAttribute('aria-expanded', 'true');
+                    const match = matchData[toggle.dataset.matchId];
+                    menu.querySelectorAll('[data-match-action]').forEach(item => {
+                        item.onclick = () => {
+                            closeMenus();
+                            if (item.dataset.matchAction === 'detail') openMatchDetail(match);
+                            if (item.dataset.matchAction === 'schedule') openMatchSchedule(match);
+                            if (item.dataset.matchAction === 'score') openMatchScore(match);
+                        };
+                    });
+                });
+                toggle.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggle.dataset.keyboardOpen = 'true';
+                    toggle.click();
+                });
+            });
+            menus.forEach(menu => menu.addEventListener('click', event => event.stopPropagation()));
+            document.addEventListener('click', () => closeMenus());
+            document.addEventListener('keydown', event => {
+                if (event.key === 'Escape') {
+                    closeMenus(true);
+                    document.querySelectorAll('[id$="Modal"]').forEach(modal => closeMatchModal(modal.id));
+                }
+            });
+            window.addEventListener('resize', () => closeMenus());
+            window.addEventListener('scroll', () => closeMenus(), true);
+            document.querySelectorAll('[id$="Modal"]').forEach(modal => modal.addEventListener('click', event => {
+                if (event.target === modal) closeMatchModal(modal.id);
+            }));
+        });
+    </script>
 </body>
 </html>     

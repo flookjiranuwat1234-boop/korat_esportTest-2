@@ -13,7 +13,7 @@ $currentUser = [
 ];
 
 $tournamentId = (int) ($_GET['id'] ?? 0);
-$selectedCategory = $_GET['category'] ?? 'male'; // กำหนดค่าเริ่มต้นเป็น male กรณีไม่ได้เลือก
+$selectedCategory = trim((string) ($_GET['category'] ?? ''));
 
 // ดึงข้อมูลทัวร์นาเมนต์
 $tStmt = $pdo->prepare("
@@ -36,16 +36,21 @@ if (!$tournament) {
 }
 
 $tournamentName = $tournament['name'] ?? ($tournament['title'] ?? ($tournament['tournament_name'] ?? 'ทัวร์นาเมนต์อีสปอร์ต'));
-$isOpenGame = (stripos($tournament['game_name'], 'open') !== false || stripos($tournamentName, 'open') !== false);
-$isUnder18 = (stripos($tournament['game_name'], 'ต่ำกว่า 18') !== false || stripos($tournamentName, 'ต่ำกว่า 18') !== false);
-
-// หากเป็นทัวร์นาเมนต์รุ่น Open บังคับ category เป็น open เสมอ
-if ($isOpenGame) {
-    $selectedCategory = 'open';
-} elseif ($selectedCategory === 'all') {
-    $selectedCategory = 'male';
+$categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
+$categoryStmt->execute(['tournament_id' => $tournamentId]);
+$availableCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+$categoryCodes = array_column($availableCategories, 'category_code');
+if ($selectedCategory !== 'all' && !in_array($selectedCategory, $categoryCodes, true)) {
+    $selectedCategory = $categoryCodes[0] ?? 'all';
 }
-$selectedCategoryId = getTournamentCategoryId($pdo, $tournamentId, $selectedCategory);
+$selectedCategoryId = null;
+foreach ($availableCategories as $category) {
+    if ($category['category_code'] === $selectedCategory) {
+        $selectedCategoryId = (int) $category['tournament_category_id'];
+        break;
+    }
+}
+$isOpenGame = count($availableCategories) === 1 && ($categoryCodes[0] ?? '') === 'open';
 $publicTab = $_GET['tab'] ?? 'overview';
 $rankingRows = [];
 if ($tournament['play_mode'] === 'solo') {
@@ -71,17 +76,16 @@ if ($isLoggedIn) {
     $myPlayerId = $playerStmt->fetchColumn();
 
     if ($myPlayerId) {
-        $registrationStmt = $pdo->prepare('SELECT tr.tournament_registration_id, tr.team_id, tr.player_id, tr.status, tr.checkin_status,
+        $registrationStmt = $pdo->prepare('SELECT DISTINCT tr.tournament_registration_id, tr.team_id, tr.player_id,
+                tr.tournament_category_id, tr.category, tr.status, tr.checkin_status,
                 COALESCE(teams.name, users.username, \'ผู้สมัคร\') AS participant_name
             FROM tournament_registrations tr
             LEFT JOIN teams ON teams.team_id = tr.team_id
             LEFT JOIN players solo_player ON solo_player.player_id = tr.player_id
             LEFT JOIN users ON users.user_id = solo_player.user_id
+            JOIN tournament_registration_members my_roster ON my_roster.tournament_registration_id = tr.tournament_registration_id
+                AND my_roster.player_id = :player_id AND my_roster.roster_status = \'active\'
             WHERE tr.tournament_id = :tournament_id
-              AND (tr.player_id = :player_id OR EXISTS (
-                    SELECT 1 FROM team_members my_members
-                    WHERE my_members.team_id = tr.team_id AND my_members.player_id = :player_id AND my_members.is_active = 1
-                ))
             ORDER BY tr.tournament_registration_id DESC');
         $registrationStmt->execute(['tournament_id' => $tournamentId, 'player_id' => $myPlayerId]);
         $myRegistrations = $registrationStmt->fetchAll();
@@ -122,11 +126,9 @@ $sqlMatches = "
 
 $paramsMatches = ['tid' => $tournamentId];
 
-if ($tournament['play_mode'] !== 'solo' && !$isOpenGame) {
-    $sqlMatches .= " AND (m.tournament_category_id = :categoryId OR m.bracket_type LIKE :catSql OR tr1.category = :catExact OR tr2.category = :catExact)";
+if ($selectedCategoryId) {
+    $sqlMatches .= ' AND m.tournament_category_id = :categoryId';
     $paramsMatches['categoryId'] = $selectedCategoryId;
-    $paramsMatches['catSql'] = '%' . $selectedCategory . '%';
-    $paramsMatches['catExact'] = $selectedCategory;
 }
 
 $sqlMatches .= " ORDER BY m.round_number, m.match_index";
@@ -136,7 +138,7 @@ $mStmt->execute($paramsMatches);
 $matches = $mStmt->fetchAll();
 
 // กรณีไม่พบแมตช์ ให้ดึงทั้งหมดแล้วคัดกรองด้วย PHP เพื่อป้องกันกรณี bracket_type ในฐานข้อมูลเก็บไม่ตรงรูปแบบ
-if (empty($matches) && $tournament['play_mode'] !== 'solo' && !$isOpenGame) {
+if (empty($matches) && $selectedCategoryId) {
     $sqlMatchesFallback = "
         SELECT m.*, 
                COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name, 
@@ -159,16 +161,7 @@ if (empty($matches) && $tournament['play_mode'] !== 'solo' && !$isOpenGame) {
     $mStmtFallback->execute(['tid' => $tournamentId]);
     $allMatches = $mStmtFallback->fetchAll();
     
-    $matches = array_filter($allMatches, function($m) use ($selectedCategory, $selectedCategoryId) {
-        if ($selectedCategoryId && !empty($m['tournament_category_id'])) {
-            return (int) $m['tournament_category_id'] === $selectedCategoryId;
-        }
-        $bt = strtolower($m['bracket_type'] ?? '');
-        $c1 = strtolower($m['team1_cat'] ?? '');
-        $c2 = strtolower($m['team2_cat'] ?? '');
-        if (empty($bt) && empty($c1) && empty($c2)) return true;
-        return (strpos($bt, $selectedCategory) !== false || $c1 === $selectedCategory || $c2 === $selectedCategory);
-    });
+    $matches = array_filter($allMatches, static fn($m) => (int) ($m['tournament_category_id'] ?? 0) === (int) $selectedCategoryId);
 }
 
 $roundsGrouped = [];
@@ -196,7 +189,7 @@ foreach ($groupRows as $row) {
     if ($selectedCategoryId && !empty($row['tournament_category_id']) && (int) $row['tournament_category_id'] !== $selectedCategoryId) {
         continue;
     }
-    if (!$selectedCategoryId && !$isOpenGame && ($row['team_category'] ?? '') !== $selectedCategory) {
+    if ($selectedCategoryId && (int) ($row['tournament_category_id'] ?? 0) !== $selectedCategoryId) {
         continue;
     }
     $groupedStandings[$row['group_name']][] = $row;
@@ -205,7 +198,7 @@ foreach ($groupRows as $row) {
 // ที่พักแนะนำ
 $accommodations = $pdo->prepare("
     SELECT * FROM accommodations
-    WHERE tournament_id IS NULL OR tournament_id = :tid
+    WHERE tournament_id = :tid
     ORDER BY accommodation_id
 ");
 $accommodations->execute(['tid' => $tournamentId]);
@@ -699,12 +692,13 @@ function roundName($roundNum, $totalRounds)
                     </div>
                 </div>
 
-                <!-- TAB กรองสายชาย/หญิง -->
-                <?php if ($tournament['play_mode'] !== 'solo' && !$isOpenGame): ?>
+                <!-- TAB กรองสายตาม Category ที่เปิดจริง -->
+                <?php if (count($availableCategories) > 1): ?>
                     <div class="flex items-center gap-2 glass-panel p-4 rounded-2xl border border-white/15 shadow-xl">
                         <span class="text-xs font-bold text-gray-400 uppercase mr-2"><i class="fa-solid fa-filter text-brand-orange mr-1"></i> เลือกสายการแข่งขัน:</span>
-                        <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=male" class="px-4 py-2 rounded-xl text-xs font-bold <?php echo ($selectedCategory === 'male') ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>">👨 สายทีมชาย</a>
-                        <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=female" class="px-4 py-2 rounded-xl text-xs font-bold <?php echo ($selectedCategory === 'female') ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>">👩 สายทีมหญิง</a>
+                        <?php foreach ($availableCategories as $category): ?>
+                            <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=<?php echo urlencode($category['category_code']); ?>" class="px-4 py-2 rounded-xl text-xs font-bold <?php echo ($selectedCategory === $category['category_code']) ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>"><?php echo htmlspecialchars($category['label'] ?: $category['category_code']); ?></a>
+                        <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
 

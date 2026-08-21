@@ -3,9 +3,10 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 
-$error = isset($_GET['suspended'])
+$accountStatus = $_GET['account_status'] ?? (isset($_GET['suspended']) ? 'suspended' : '');
+$error = $accountStatus === 'suspended'
     ? 'บัญชีของคุณถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ'
-    : '';
+    : ($accountStatus === 'disabled' ? 'บัญชีของคุณถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ' : '');
 $justRegistered = isset($_GET['registered']);
 $resetSuccess = isset($_GET['reset_success']);
 

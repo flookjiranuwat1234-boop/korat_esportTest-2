@@ -27,7 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'playe
             FROM tournament_registration_members trm
             JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
             JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
-            WHERE trm.tournament_registration_id = :registration_id AND trm.player_id = :player_id AND tr.status = \'approved\'');
+                        WHERE trm.tournament_registration_id = :registration_id AND trm.player_id = :player_id
+                            AND trm.roster_status = \'active\' AND tr.status = \'approved\'');
         $verify->execute(['registration_id' => $registrationId, 'player_id' => $myPlayerId]);
         $verifiedRegistration = $verify->fetch();
         $checkinWindowOpen = $verifiedRegistration
@@ -49,8 +50,8 @@ $stmt = $pdo->prepare("SELECT tr.tournament_registration_id, tr.qr_code_token, t
            tr.category, tour.name AS tournament_name, tour.venue_address, tour.venue_lat_lng,
            tour.checkin_open_at, tour.checkin_close_at,
            COALESCE(t.name, 'การแข่งขันเดี่ยว') AS team_name,
-           COALESCE(ptc.checkin_status, trm.checkin_status) AS player_checkin_status,
-           COALESCE(ptc.checked_in_at, trm.checkin_at) AS player_checkin_at,
+           trm.checkin_status AS player_checkin_status,
+           trm.checkin_at AS player_checkin_at,
            (SELECT COUNT(*) FROM tournament_registration_members req
             WHERE req.tournament_registration_id = tr.tournament_registration_id AND req.is_required_for_checkin = 1) AS required_count,
            (SELECT COUNT(*) FROM tournament_registration_members req
@@ -61,7 +62,7 @@ $stmt = $pdo->prepare("SELECT tr.tournament_registration_id, tr.qr_code_token, t
     LEFT JOIN teams t ON t.team_id = tr.team_id
     LEFT JOIN player_tournament_checkins ptc ON ptc.tournament_registration_id = trm.tournament_registration_id
         AND ptc.player_id = trm.player_id
-    WHERE trm.player_id = :pid AND tr.status = 'approved'
+    WHERE trm.player_id = :pid AND trm.roster_status = 'active' AND tr.status = 'approved'
     ORDER BY tour.created_at DESC");
 $stmt->execute(['pid' => $myPlayerId]);
 $checkins = $stmt->fetchAll();

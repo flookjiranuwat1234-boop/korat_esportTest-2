@@ -13,36 +13,9 @@ $currentUser = [
 $error = '';
 $success = '';
 $csrfToken = generateCsrfToken();
-
-// ================= AUTO SETUP: ตรวจสอบและสร้างตาราง/คอลัมน์ให้อัตโนมัติ =================
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS gallery_albums (
-            album_id INT AUTO_INCREMENT PRIMARY KEY,
-            title VARCHAR(255) NOT NULL,
-            description TEXT NULL,
-            album_type VARCHAR(20) NOT NULL DEFAULT 'activity',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ");
-
-    $chkCol = $pdo->query("SHOW COLUMNS FROM gallery LIKE 'album_id'")->fetch();
-    if (!$chkCol) {
-        $pdo->exec("ALTER TABLE gallery ADD COLUMN album_id INT NULL AFTER gallery_id;");
-    }
-    $albumTypeCheck = $pdo->query("SHOW COLUMNS FROM gallery_albums LIKE 'album_type'")->fetch();
-    if (!$albumTypeCheck) $pdo->exec("ALTER TABLE gallery_albums ADD COLUMN album_type VARCHAR(20) NOT NULL DEFAULT 'activity' AFTER description");
-    foreach ([
-        'media_type' => "ALTER TABLE gallery ADD COLUMN media_type VARCHAR(20) NOT NULL DEFAULT 'activity' AFTER album_id",
-        'title' => "ALTER TABLE gallery ADD COLUMN title VARCHAR(255) NULL AFTER media_type",
-        'is_active' => "ALTER TABLE gallery ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER caption",
-    ] as $column => $alterSql) {
-        $columnCheck = $pdo->query("SHOW COLUMNS FROM gallery LIKE '{$column}'")->fetch();
-        if (!$columnCheck) $pdo->exec($alterSql);
-    }
-} catch (Exception $e) {
-    // ซ่อน Error การ Setup
-}
+$activeTab = ($_GET['tab'] ?? 'activity') === 'banner' ? 'banner' : 'activity';
+$gallerySearch = trim((string) ($_GET['q'] ?? ''));
+$galleryStatus = $_GET['status'] ?? '';
 
 // ================= 1. ประมวลผลสร้างอัลบั้ม + อัปโหลดรูปพร้อมกันในขั้นตอนเดียว =================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_gallery') {
@@ -110,10 +83,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 
             foreach ($_FILES['photos']['tmp_name'] as $key => $tmpName) {
                 if ($_FILES['photos']['error'][$key] === UPLOAD_ERR_OK) {
-                    $ext = strtolower(pathinfo($_FILES['photos']['name'][$key], PATHINFO_EXTENSION));
+                        $mimeType = mime_content_type($tmpName);
+                        $mimeExt = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'][$mimeType] ?? null;
 
-                    if (in_array($ext, $allowed)) {
-                        $fileName = 'img_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
+                    if ($mimeExt && in_array(strtolower(pathinfo($_FILES['photos']['name'][$key], PATHINFO_EXTENSION)), $allowed, true)) {
+                        $fileName = 'img_' . bin2hex(random_bytes(8)) . '.' . $mimeExt;
                         $targetFile = $uploadDir . $fileName;
 
                         if (move_uploaded_file($tmpName, $targetFile)) {
@@ -152,11 +126,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
         $mediaId = (int) ($_POST['media_id'] ?? 0);
         $title = trim($_POST['media_title'] ?? '');
         $caption = trim($_POST['caption'] ?? '');
-        $isActive = isset($_POST['is_active']) ? 1 : 0;
+        $isActive = in_array((string) ($_POST['is_active'] ?? ''), ['1', 'on'], true) ? 1 : 0;
         if ($mediaId > 0) {
             $pdo->prepare('UPDATE gallery SET title = :title, caption = :caption, is_active = :active WHERE gallery_id = :id')
                 ->execute(['title' => $title ?: null, 'caption' => $caption ?: null, 'active' => $isActive, 'id' => $mediaId]);
             $success = 'แก้ไขข้อมูลสื่อเรียบร้อยแล้ว';
+        }
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_album') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $albumId = (int) ($_POST['album_id'] ?? 0);
+        $title = trim((string) ($_POST['album_title'] ?? ''));
+        $description = trim((string) ($_POST['album_description'] ?? ''));
+        if ($albumId <= 0 || $title === '') {
+            $error = 'กรุณาระบุชื่ออัลบั้ม';
+        } else {
+            $pdo->prepare('UPDATE gallery_albums SET title = :title, description = :description WHERE album_id = :id')
+                ->execute(['title' => $title, 'description' => $description ?: null, 'id' => $albumId]);
+            $success = 'แก้ไขข้อมูลอัลบั้มเรียบร้อยแล้ว';
         }
     }
 }
@@ -173,7 +164,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 
         if ($photo) {
             $filePath = '../assets/' . $photo['image_path'];
-            if (file_exists($filePath)) @unlink($filePath);
+            $inUseStmt = $pdo->prepare('SELECT COUNT(*) FROM gallery WHERE image_path = :path AND gallery_id <> :id');
+            $inUseStmt->execute(['path' => $photo['image_path'], 'id' => $photoId]);
+            if ((int) $inUseStmt->fetchColumn() === 0 && file_exists($filePath)) @unlink($filePath);
             $pdo->prepare("DELETE FROM gallery WHERE gallery_id = :id")->execute(['id' => $photoId]);
             $success = 'ลบสื่อเรียบร้อยแล้ว';
         }
@@ -221,12 +214,26 @@ try {
 }
 $bannerAlbums = array_values(array_filter($albums, static fn($album) => ($album['album_type'] ?? 'activity') === 'banner'));
 $activityAlbums = array_values(array_filter($albums, static fn($album) => ($album['album_type'] ?? 'activity') === 'activity'));
+if ($gallerySearch !== '') {
+    $needle = mb_strtolower($gallerySearch);
+    $activityAlbums = array_values(array_filter($activityAlbums, static fn($album) => str_contains(mb_strtolower((string) $album['title']), $needle)));
+    $bannerAlbums = array_values(array_filter($bannerAlbums, static fn($album) => str_contains(mb_strtolower((string) $album['title']), $needle)));
+}
 
 // รับค่าฟิลเตอร์อัลบั้มที่เลือกดู
 $selectedAlbumId = (int) ($_GET['view_album'] ?? 0);
 $banners = $pdo->query("SELECT g.*, a.title AS album_title
     FROM gallery g LEFT JOIN gallery_albums a ON a.album_id = g.album_id
     WHERE g.media_type = 'banner' ORDER BY g.gallery_id DESC")->fetchAll();
+$banners = array_values(array_filter($banners, static function (array $banner) use ($gallerySearch, $galleryStatus): bool {
+    if ($gallerySearch !== '' && !str_contains(mb_strtolower((string) ($banner['title'] ?? '') . ' ' . ($banner['caption'] ?? '')), mb_strtolower($gallerySearch))) return false;
+    if ($galleryStatus !== '' && (string) $banner['is_active'] !== (string) ((int) ($galleryStatus === 'active'))) return false;
+    return true;
+}));
+
+$activityPhotosByAlbum = [];
+$allActivityPhotos = $pdo->query("SELECT g.*, a.title AS album_title FROM gallery g LEFT JOIN gallery_albums a ON a.album_id = g.album_id WHERE g.media_type = 'activity' ORDER BY g.created_at DESC")->fetchAll();
+foreach ($allActivityPhotos as $photo) $activityPhotosByAlbum[(int) $photo['album_id']][] = $photo;
 
 // ดึงรูปภาพตามอัลบั้ม
 if ($selectedAlbumId > 0) {
@@ -279,6 +286,8 @@ if ($selectedAlbumId > 0) {
             color: #FF5500;
             border-left: 4px solid #FF5500;
         }
+        .gallery-action-item { min-height: 2.5rem; width: 100%; display: flex; align-items: center; padding: .625rem .75rem; border-radius: .5rem; text-align: left; font-size: .75rem; font-weight: 600; color: #334155; }
+        .gallery-action-item:hover { background: #f8fafc; }
     </style>
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
@@ -364,7 +373,7 @@ if ($selectedAlbumId > 0) {
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
                     จัดการแกลเลอรี่ <span class="text-brand-orange">(GALLERY MANAGEMENT)</span>
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">สร้างโฟลเดอร์อัลบั้มและอัปโหลดรูปภาพได้ครบจบในขั้นตอนเดียว</p>
+                <p class="text-xs text-slate-500 mt-0.5">จัดการอัลบั้มกิจกรรม รูปภาพ และแบนเนอร์ประชาสัมพันธ์</p>
             </div>
             
             <a href="../pages/index.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">
@@ -388,6 +397,47 @@ if ($selectedAlbumId > 0) {
                     <span><?php echo htmlspecialchars($success); ?></span>
                 </div>
             <?php endif; ?>
+
+            <div class="flex items-center justify-between gap-3 overflow-x-auto border-b border-slate-200">
+                <div class="flex min-w-max gap-2">
+                    <a href="?tab=activity" class="rounded-t-xl px-5 py-3 text-sm font-bold <?= $activeTab === 'activity' ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500 hover:bg-slate-50' ?>"><i class="fa-solid fa-images mr-2"></i>อัลบั้มกิจกรรม</a>
+                    <a href="?tab=banner" class="rounded-t-xl px-5 py-3 text-sm font-bold <?= $activeTab === 'banner' ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500 hover:bg-slate-50' ?>"><i class="fa-solid fa-bullhorn mr-2"></i>แบนเนอร์ประชาสัมพันธ์</a>
+                </div>
+                <button type="button" onclick="openGalleryFormModal('<?= $activeTab ?>')" class="inline-flex min-w-max items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-plus"></i><?= $activeTab === 'activity' ? 'สร้างอัลบั้ม' : 'เพิ่มแบนเนอร์' ?></button>
+            </div>
+
+            <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <?php if ($activeTab === 'activity'): ?>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">อัลบั้มทั้งหมด</div><div class="mt-2 text-2xl font-black text-slate-900"><?= count($activityAlbums) ?></div></div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">รูปทั้งหมด</div><div class="mt-2 text-2xl font-black text-slate-900"><?= array_sum(array_map(static fn($album) => (int) $album['photo_count'], $activityAlbums)) ?></div></div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">อัลบั้มล่าสุด</div><div class="mt-2 truncate text-sm font-black text-slate-900"><?= htmlspecialchars($activityAlbums[0]['title'] ?? 'ไม่มีข้อมูล') ?></div></div>
+                <?php else: ?>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">แบนเนอร์ทั้งหมด</div><div class="mt-2 text-2xl font-black text-slate-900"><?= count($banners) ?></div></div>
+                    <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">กำลังแสดง</div><div class="mt-2 text-2xl font-black text-emerald-700"><?= count(array_filter($banners, static fn($banner) => (int) $banner['is_active'] === 1)) ?></div></div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">ปิดการแสดง</div><div class="mt-2 text-2xl font-black text-slate-700"><?= count(array_filter($banners, static fn($banner) => (int) $banner['is_active'] === 0)) ?></div></div>
+                <?php endif; ?>
+            </section>
+
+            <form method="GET" class="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row">
+                <input type="hidden" name="tab" value="<?= $activeTab ?>"><input type="text" name="q" value="<?= htmlspecialchars($gallerySearch) ?>" placeholder="ค้นหา<?= $activeTab === 'activity' ? 'ชื่ออัลบั้ม' : 'หัวข้อหรือคำบรรยายแบนเนอร์' ?>" class="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
+                <?php if ($activeTab === 'banner'): ?><select name="status" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="">ทุกสถานะ</option><option value="active" <?= $galleryStatus === 'active' ? 'selected' : '' ?>>กำลังแสดง</option><option value="inactive" <?= $galleryStatus === 'inactive' ? 'selected' : '' ?>>ปิดการแสดง</option></select><?php endif; ?><button type="submit" class="rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow">ค้นหา</button><a href="?tab=<?= $activeTab ?>" class="rounded-xl bg-slate-100 px-4 py-2.5 text-center text-sm font-bold text-slate-600 hover:bg-slate-200">ล้างตัวกรอง</a>
+            </form>
+
+            <?php if ($activeTab === 'activity'): ?>
+                <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                    <?php if (!$activityAlbums): ?><div class="col-span-full rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">ยังไม่มีอัลบั้มกิจกรรม<div class="mt-4"><button type="button" onclick="openGalleryFormModal('activity')" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white">+ สร้างอัลบั้ม</button></div></div><?php endif; ?>
+                    <?php foreach ($activityAlbums as $album): ?>
+                        <article class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="h-44 overflow-hidden rounded-xl bg-slate-100"><?php if ($album['cover_image']): ?><img src="../assets/<?= htmlspecialchars($album['cover_image']) ?>" alt="<?= htmlspecialchars($album['title']) ?>" class="h-full w-full object-cover"><?php else: ?><div class="flex h-full items-center justify-center text-4xl text-amber-400"><i class="fa-solid fa-folder"></i></div><?php endif; ?></div><h3 class="mt-3 truncate font-bold text-slate-900"><?= htmlspecialchars($album['title']) ?></h3><p class="mt-1 line-clamp-2 text-xs text-slate-500"><?= htmlspecialchars($album['description'] ?? '') ?></p><div class="mt-3 flex items-center justify-between text-[11px] text-slate-400"><span><?= (int) $album['photo_count'] ?> รูป</span><span><?= date('d/m/Y', strtotime($album['created_at'])) ?></span></div><div class="mt-4 flex justify-end gap-2 border-t border-slate-100 pt-3"><button type="button" onclick="openAlbumModal(<?= (int) $album['album_id'] ?>)" class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">รายละเอียด</button><button type="button" onclick="openGalleryActionMenu(this, <?= (int) $album['album_id'] ?>)" class="gallery-action-toggle rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white" aria-expanded="false">จัดการ</button></div><div class="gallery-action-menu fixed z-[70] hidden w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><button type="button" onclick="openGalleryFormModal('activity', <?= (int) $album['album_id'] ?>)" class="gallery-action-item">เพิ่มรูปภาพ</button><button type="button" onclick="openAlbumEditModal(<?= (int) $album['album_id'] ?>)" class="gallery-action-item">แก้ไขอัลบั้ม</button><form method="POST" onsubmit="return confirm('ยืนยันลบอัลบั้มและรูปทั้งหมดหรือไม่?')"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="delete_album"><input type="hidden" name="album_id" value="<?= (int) $album['album_id'] ?>"><button type="submit" class="gallery-action-item text-rose-600">ลบ/เก็บอัลบั้ม</button></form></div></article>
+                    <?php endforeach; ?>
+                </div>
+            <?php else: ?>
+                <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                    <?php if (!$banners): ?><div class="col-span-full rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">ยังไม่มีแบนเนอร์ประชาสัมพันธ์<div class="mt-4"><button type="button" onclick="openGalleryFormModal('banner')" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white">+ เพิ่มแบนเนอร์</button></div></div><?php endif; ?>
+                    <?php foreach ($banners as $banner): ?><article class="relative rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="aspect-[16/7] overflow-hidden rounded-xl bg-slate-100"><img src="../assets/<?= htmlspecialchars($banner['image_path']) ?>" alt="<?= htmlspecialchars($banner['title'] ?: 'แบนเนอร์') ?>" class="h-full w-full object-cover"></div><h3 class="mt-3 truncate font-bold text-slate-900"><?= htmlspecialchars($banner['title'] ?: 'ไม่มีหัวข้อ') ?></h3><p class="mt-1 line-clamp-2 text-xs text-slate-500"><?= htmlspecialchars($banner['caption'] ?? '') ?></p><div class="mt-3 flex items-center justify-between"><span class="rounded-full px-2.5 py-1 text-[10px] font-bold <?= (int) $banner['is_active'] ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600' ?>"><?= (int) $banner['is_active'] ? 'กำลังแสดง' : 'ปิดการแสดง' ?></span><button type="button" onclick="openBannerPreview(<?= (int) $banner['gallery_id'] ?>)" class="text-xs font-bold text-brand-orange">ดูตัวอย่าง</button></div><div class="mt-4 flex justify-end gap-2 border-t border-slate-100 pt-3"><button type="button" onclick="openBannerPreview(<?= (int) $banner['gallery_id'] ?>)" class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">รายละเอียด</button><button type="button" onclick="openGalleryActionMenu(this)" class="gallery-action-toggle rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white" aria-expanded="false">จัดการ</button></div><div class="gallery-action-menu fixed z-[70] hidden w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><button type="button" onclick="openBannerEditModal(<?= (int) $banner['gallery_id'] ?>)" class="gallery-action-item">แก้ไขแบนเนอร์</button><button type="button" onclick="openBannerPreview(<?= (int) $banner['gallery_id'] ?>)" class="gallery-action-item">ดูตัวอย่าง</button><form method="POST"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="update_media"><input type="hidden" name="media_id" value="<?= (int) $banner['gallery_id'] ?>"><input type="hidden" name="media_title" value="<?= htmlspecialchars($banner['title'] ?? '', ENT_QUOTES) ?>"><input type="hidden" name="caption" value="<?= htmlspecialchars($banner['caption'] ?? '', ENT_QUOTES) ?>"><input type="hidden" name="is_active" value="<?= (int) $banner['is_active'] ? '0' : '1' ?>"><button type="submit" class="gallery-action-item"> <?= (int) $banner['is_active'] ? 'ปิดการแสดงผล' : 'เปิดการแสดงผล' ?></button></form><div class="my-1 border-t border-slate-100"></div><form method="POST" onsubmit="return confirm('ยืนยันลบแบนเนอร์นี้หรือไม่?')"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="delete_media"><input type="hidden" name="media_id" value="<?= (int) $banner['gallery_id'] ?>"><button type="submit" class="gallery-action-item text-rose-600">ลบแบนเนอร์</button></form></div></article><?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if (false): ?>
 
             <!-- ================= UNIFIED FORM: ฟอร์มรวมอัปโหลดรูป + สร้างอัลบั้ม ================= -->
             <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
@@ -653,39 +703,41 @@ if ($selectedAlbumId > 0) {
                 <?php endif; ?>
             </div>
 
+            <?php endif; ?>
         </main>
     </div>
 
-    <!-- JavaScript สำหรับสลับโหมดสร้างอัลบั้มใหม่ -->
+    <div id="galleryFormModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="galleryFormTitle" class="font-bold text-slate-900">สร้างอัลบั้ม</h3><button type="button" onclick="closeGalleryFormModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" enctype="multipart/form-data" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_gallery"><input type="hidden" name="media_type" id="galleryFormMediaType" value="activity"><input type="hidden" name="album_option" id="galleryFormAlbumOption" value="new"><input type="hidden" name="banner_album_option" id="galleryFormBannerAlbumOption" value="new"><div id="activityFormFields"><label class="mb-1 block text-xs font-bold text-slate-700">ชื่ออัลบั้ม/กิจกรรม</label><input name="new_album_name" id="galleryAlbumName" required maxlength="255" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><label class="mb-1 mt-3 block text-xs font-bold text-slate-700">รายละเอียดอัลบั้ม</label><textarea name="new_album_desc" id="galleryAlbumDesc" rows="3" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"></textarea></div><div id="bannerFormFields" class="hidden"><label class="mb-1 block text-xs font-bold text-slate-700">หัวข้อแบนเนอร์</label><input name="media_title" id="galleryBannerTitle" maxlength="255" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><label class="mb-1 mt-3 block text-xs font-bold text-slate-700">คำบรรยาย</label><input name="caption" id="galleryBannerCaption" maxlength="200" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><input type="hidden" name="new_banner_album_name" value="แบนเนอร์ประชาสัมพันธ์"><input type="hidden" name="new_banner_album_desc" value=""></div><div><label class="mb-1 block text-xs font-bold text-slate-700">รูปภาพ <span class="font-normal text-slate-400">JPG, PNG, WEBP ไม่เกิน 5MB ต่อไฟล์</span></label><input type="file" name="photos[]" id="galleryPhotosInput" multiple required accept="image/jpeg,image/png,image/webp" onchange="previewGalleryFiles(this)" class="w-full text-xs"><div id="galleryFileInfo" class="mt-2 text-xs text-slate-500"></div><div id="galleryFilePreview" class="mt-3 grid grid-cols-3 gap-2"></div></div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeGalleryFormModal()" class="rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700">ยกเลิก</button><button type="submit" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-glow">บันทึกและอัปโหลด</button></div></form></div></div>
+
+    <div id="albumEditModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">แก้ไขอัลบั้ม</h3><button type="button" onclick="closeAlbumEditModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="update_album"><input type="hidden" name="album_id" id="albumEditId"><input name="album_title" id="albumEditTitle" required maxlength="255" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><textarea name="album_description" id="albumEditDescription" rows="3" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></textarea><div class="flex justify-end gap-2"><button type="button" onclick="closeAlbumEditModal()" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึก</button></div></form></div></div>
+
+    <div id="albumViewModal" class="fixed inset-0 z-[55] hidden items-center justify-center bg-slate-900/70 p-4"><div class="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><div><h3 id="albumViewTitle" class="font-bold text-slate-900"></h3><p id="albumViewMeta" class="text-xs text-slate-500"></p></div><button type="button" onclick="closeAlbumModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div id="albumViewContent" class="overflow-y-auto p-6"></div><div class="flex justify-end border-t border-slate-100 bg-slate-50 px-6 py-4"><button type="button" onclick="closeAlbumModal()" class="rounded-lg bg-slate-200 px-4 py-2 text-xs font-bold">ปิด</button></div></div></div>
+
+    <div id="bannerEditModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">จัดการแบนเนอร์</h3><button type="button" onclick="closeBannerEditModal()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="update_media"><input type="hidden" name="media_id" id="bannerEditId"><input name="media_title" id="bannerEditTitle" maxlength="255" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><textarea name="caption" id="bannerEditCaption" maxlength="200" rows="3" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></textarea><label class="flex items-center gap-2 text-xs font-bold"><input type="checkbox" name="is_active" id="bannerEditActive" value="1"> กำลังแสดง</label><div class="flex justify-end gap-2"><button type="button" onclick="closeBannerEditModal()" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึก</button></div></form></div></div>
+
+    <div id="bannerPreviewModal" class="fixed inset-0 z-[65] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 px-6 py-4"><h3 class="font-bold">ตัวอย่างแบนเนอร์</h3><button type="button" onclick="closeBannerPreview()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div class="p-6"><img id="bannerPreviewImage" class="aspect-[16/7] w-full rounded-xl object-cover"><h4 id="bannerPreviewTitle" class="mt-4 text-lg font-bold"></h4><p id="bannerPreviewCaption" class="mt-1 text-sm text-slate-500"></p></div></div></div>
+
     <script>
-        function toggleNewAlbumFields() {
-            const select = document.getElementById('albumSelect');
-            const newBox = document.getElementById('newAlbumBox');
-            const nameInput = document.getElementById('newAlbumNameInput');
+        const activityPhotosByAlbum = <?= json_encode($activityPhotosByAlbum, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+        const activityAlbums = <?= json_encode(array_column($activityAlbums, null, 'album_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+        const bannersData = <?= json_encode(array_column($banners, null, 'gallery_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
-            if (select.value === 'new') {
-                newBox.style.display = 'block';
-                nameInput.required = true;
-            } else {
-                newBox.style.display = 'none';
-                nameInput.required = false;
-            }
-        }
+        function showModal(id) { const modal = document.getElementById(id); modal.classList.remove('hidden'); modal.classList.add('flex'); }
+        function hideModal(id) { const modal = document.getElementById(id); modal.classList.add('hidden'); modal.classList.remove('flex'); }
+        function openGalleryActionMenu(button) { const menu = button.parentElement.parentElement.querySelector('.gallery-action-menu'); if (!menu) return; document.querySelectorAll('.gallery-action-menu').forEach(item => item.classList.add('hidden')); const opening = menu.classList.contains('hidden'); if (!opening) return; document.body.appendChild(menu); menu.classList.remove('hidden'); const rect = button.getBoundingClientRect(); const width = menu.offsetWidth || 208; const height = menu.offsetHeight || 180; menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`; menu.style.top = `${rect.bottom + height + 8 <= window.innerHeight - 8 ? rect.bottom + 8 : Math.max(8, rect.top - height - 8)}px`; button.setAttribute('aria-expanded', 'true'); }
+        function openGalleryFormModal(type = 'activity', albumId = 0) { document.getElementById('galleryFormMediaType').value = type; document.getElementById('galleryFormTitle').textContent = type === 'activity' ? (albumId ? 'เพิ่มรูปเข้าอัลบั้ม' : 'สร้างอัลบั้ม') : 'เพิ่มแบนเนอร์'; document.getElementById('activityFormFields').classList.toggle('hidden', type !== 'activity' || albumId > 0); document.getElementById('bannerFormFields').classList.toggle('hidden', type !== 'banner'); document.getElementById('galleryFormAlbumOption').value = albumId || 'new'; document.getElementById('galleryFormBannerAlbumOption').value = 'new'; document.getElementById('galleryAlbumName').required = type === 'activity' && !albumId; document.getElementById('galleryBannerTitle').required = type === 'banner'; showModal('galleryFormModal'); }
+        function closeGalleryFormModal() { hideModal('galleryFormModal'); }
+        function previewGalleryFiles(input) { const files = [...(input.files || [])]; document.getElementById('galleryFileInfo').textContent = files.length + ' รูปที่เลือก: ' + files.map(file => file.name).join(', '); document.getElementById('galleryFilePreview').innerHTML = ''; files.forEach(file => { if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) return; const reader = new FileReader(); reader.onload = event => { const item = document.createElement('img'); item.src = event.target.result; item.className = 'h-24 w-full rounded-lg object-cover'; document.getElementById('galleryFilePreview').appendChild(item); }; reader.readAsDataURL(file); }); }
+        function openAlbumModal(albumId) { const album = activityAlbums[albumId]; const photos = activityPhotosByAlbum[albumId] || []; document.getElementById('albumViewTitle').textContent = album ? album.title : 'อัลบั้ม'; document.getElementById('albumViewMeta').textContent = (album?.description || '') + ' | ' + photos.length + ' รูป'; document.getElementById('albumViewContent').innerHTML = photos.length ? `<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">${photos.map(photo => `<div class="overflow-hidden rounded-xl border border-slate-200 bg-slate-50"><img src="../assets/${photo.image_path}" alt="" class="h-36 w-full object-cover"><div class="p-2"><div class="truncate text-[11px] text-slate-600">${photo.caption || ''}</div><form method="POST" class="mt-2" onsubmit="return confirm('ยืนยันลบรูปนี้หรือไม่?')"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="delete_media"><input type="hidden" name="media_id" value="${photo.gallery_id}"><button type="submit" class="w-full rounded-lg bg-rose-50 px-2 py-1.5 text-[10px] font-bold text-rose-600">ลบรูป</button></form></div></div>`).join('')}</div>` : '<div class="p-12 text-center text-sm text-slate-500">ยังไม่มีรูปในอัลบั้มนี้</div>'; showModal('albumViewModal'); }
+        function closeAlbumModal() { hideModal('albumViewModal'); }
+        function openAlbumEditModal(albumId) { const album = activityAlbums[albumId]; if (!album) return; document.getElementById('albumEditId').value = albumId; document.getElementById('albumEditTitle').value = album.title || ''; document.getElementById('albumEditDescription').value = album.description || ''; showModal('albumEditModal'); }
+        function closeAlbumEditModal() { hideModal('albumEditModal'); }
+        function openBannerEditModal(mediaId) { const banner = bannersData[mediaId]; if (!banner) return; document.getElementById('bannerEditId').value = mediaId; document.getElementById('bannerEditTitle').value = banner.title || ''; document.getElementById('bannerEditCaption').value = banner.caption || ''; document.getElementById('bannerEditActive').checked = Number(banner.is_active) === 1; showModal('bannerEditModal'); }
+        function closeBannerEditModal() { hideModal('bannerEditModal'); }
+        function openBannerPreview(mediaId) { const banner = bannersData[mediaId]; if (!banner) return; document.getElementById('bannerPreviewImage').src = '../assets/' + banner.image_path; document.getElementById('bannerPreviewTitle').textContent = banner.title || ''; document.getElementById('bannerPreviewCaption').textContent = banner.caption || ''; showModal('bannerPreviewModal'); }
+        function closeBannerPreview() { hideModal('bannerPreviewModal'); }
 
-        // เรียกทำงานทันทีเมื่อโหลดหน้าเว็บ
-        document.addEventListener('DOMContentLoaded', toggleNewAlbumFields);
-
-        function toggleBannerAlbumFields() {
-            const select = document.getElementById('bannerAlbumSelect');
-            const box = document.getElementById('newBannerAlbumBox');
-            const name = document.getElementById('newBannerAlbumName');
-            if (!select || !box || !name) return;
-            const isNew = select.value === 'new';
-            box.style.display = isNew ? 'block' : 'none';
-            name.required = isNew;
-        }
-
-        document.addEventListener('DOMContentLoaded', toggleBannerAlbumFields);
+        document.addEventListener('DOMContentLoaded', () => { document.querySelectorAll('.gallery-action-menu').forEach(menu => menu.addEventListener('click', event => event.stopPropagation())); document.addEventListener('click', () => document.querySelectorAll('.gallery-action-menu').forEach(menu => menu.classList.add('hidden'))); document.querySelectorAll('[id$="Modal"]').forEach(modal => modal.addEventListener('click', event => { if (event.target === modal) hideModal(modal.id); })); document.addEventListener('keydown', event => { if (event.key === 'Escape') { document.querySelectorAll('.gallery-action-menu').forEach(menu => menu.classList.add('hidden')); document.querySelectorAll('[id$="Modal"]').forEach(modal => hideModal(modal.id)); } }); });
     </script>
 </body>
 </html>

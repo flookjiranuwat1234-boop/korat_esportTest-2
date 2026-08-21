@@ -36,10 +36,13 @@ if (!$team) {
 $members = [];
 try {
     $membersStmt = $pdo->prepare("
-        SELECT p.player_id, COALESCE(p.display_name, 'Unknown Player') AS display_name, tm.in_game_role
+         SELECT p.player_id, COALESCE(p.display_name, 'Unknown Player') AS display_name,
+             COALESCE(GROUP_CONCAT(DISTINCT tmr.role_code ORDER BY tmr.role_code SEPARATOR ', '), tm.member_roles, tm.in_game_role) AS role_in_team
         FROM team_members tm
         JOIN players p ON p.player_id = tm.player_id
-        WHERE tm.team_id = :team_id AND tm.is_active = 1
+         LEFT JOIN team_member_roles tmr ON tmr.team_member_id = tm.team_member_id
+         WHERE tm.team_id = :team_id AND tm.is_active = 1
+         GROUP BY p.player_id, p.display_name, tm.member_roles, tm.in_game_role
     ");
     $membersStmt->execute(['team_id' => $teamId]);
     $members = $membersStmt->fetchAll();
@@ -78,17 +81,19 @@ if ($ranking && isset($ranking['points']) && !empty($team['game_id'])) {
 $history = [];
 try {
     $historyStmt = $pdo->prepare("
-        SELECT m.*, t1.name AS team1_name, t2.name AS team2_name, tour.name AS tournament_name
+        SELECT DISTINCT m.*, tr.tournament_category_id, t1.name AS team1_name, t2.name AS team2_name, tour.name AS tournament_name
         FROM matches m
         JOIN tournaments tour ON tour.tournament_id = m.tournament_id
+        JOIN tournament_registration_members trm ON trm.player_id IN (m.team1_id, m.team2_id)
+        JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id AND tr.team_id = :team_id3 AND tr.tournament_id = m.tournament_id
         LEFT JOIN teams t1 ON t1.team_id = m.team1_id
         LEFT JOIN teams t2 ON t2.team_id = m.team2_id
-        WHERE (m.team1_id = :team_id OR m.team2_id = :team_id2)
+        WHERE (m.team1_id = :team_id OR m.team2_id = :team_id2) AND trm.roster_status = 'active'
           AND m.status IN ('completed', 'walkover')
         ORDER BY m.completed_at DESC
         LIMIT 10
     ");
-    $historyStmt->execute(['team_id' => $teamId, 'team_id2' => $teamId]);
+    $historyStmt->execute(['team_id' => $teamId, 'team_id2' => $teamId, 'team_id3' => $teamId]);
     $history = $historyStmt->fetchAll();
 } catch (Exception $e) {
     $history = [];
@@ -353,7 +358,7 @@ try {
                     <?php foreach ($members as $index => $m):
                         $isCaptain = ($m['player_id'] == ($team['captain_player_id'] ?? 0));
                         $roleIcon = 'fa-user-ninja';
-                        $roleLower = strtolower($m['in_game_role'] ?? '');
+                        $roleLower = strtolower($m['role_in_team'] ?? '');
                         if (str_contains($roleLower, 'tank') || str_contains($roleLower, 'roam'))
                             $roleIcon = 'fa-shield-heart';
                         elseif (str_contains($roleLower, 'carry') || str_contains($roleLower, 'adc') || str_contains($roleLower, 'damage'))
@@ -376,8 +381,8 @@ try {
                                         <span class="px-2.5 py-0.5 rounded bg-amber-500 text-slate-950 text-[10px] font-black uppercase shadow-[0_0_10px_rgba(245,158,11,0.8)]">กัปตัน</span>
                                     <?php endif; ?>
                                 </h3>
-                                <?php if (!empty($m['in_game_role'])): ?>
-                                    <p class="text-xs text-gray-400 font-medium pl-5"><?php echo htmlspecialchars($m['in_game_role']); ?></p>
+                                <?php if (!empty($m['role_in_team'])): ?>
+                                    <p class="text-xs text-gray-400 font-medium pl-5"><?php echo htmlspecialchars($m['role_in_team']); ?></p>
                                 <?php endif; ?>
                             </div>
                         </a>

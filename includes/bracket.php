@@ -542,7 +542,7 @@ function upsertLoserEdge(PDO $pdo, int $matchId, int $nextMatchId, string $nextS
 
 function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
 {
-    $stmt = $pdo->prepare("SELECT tournament_id, bracket_type, round_number, match_index, team1_id, team2_id, reset_match_id FROM matches WHERE match_id = :id");
+    $stmt = $pdo->prepare("SELECT tournament_id, tournament_category_id, bracket_type, round_number, match_index, team1_id, team2_id, reset_match_id FROM matches WHERE match_id = :id");
     $stmt->execute(['id' => $matchId]);
     $match = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -596,8 +596,21 @@ function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
     }
 
     if (!empty($nextMatchId)) {
+        $nextMatchStmt = $pdo->prepare('SELECT tournament_id, tournament_category_id, team1_id, team2_id
+            FROM matches WHERE match_id = :match_id FOR UPDATE');
+        $nextMatchStmt->execute(['match_id' => $nextMatchId]);
+        $nextMatch = $nextMatchStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$nextMatch || (int) $nextMatch['tournament_id'] !== (int) $match['tournament_id']) {
+            throw new RuntimeException('ไม่พบ Match ปลายทางใน Tournament เดียวกัน');
+        }
+        if ((int) ($nextMatch['tournament_category_id'] ?? 0) !== (int) ($match['tournament_category_id'] ?? 0)) {
+            throw new RuntimeException('Match ต้นทางและปลายทางอยู่คนละ Category');
+        }
         $col = ($nextSlot == 'team1') ? 'team1_id' : 'team2_id';
         if ($winnerId !== null) {
+            if ($nextMatch[$col] !== null && (int) $nextMatch[$col] !== (int) $winnerId) {
+                throw new RuntimeException('Slot ของ Match ถัดไปมีผู้แข่งขันจาก Source อื่นอยู่แล้ว');
+            }
             $pdo->prepare("UPDATE matches SET {$col} = :winner WHERE match_id = :next_id")
                 ->execute(['winner' => $winnerId, 'next_id' => $nextMatchId]);
         }
@@ -607,7 +620,17 @@ function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
     $loserNextMatchId = $edge['loser_next_match_id'] ?? null;
     $loserNextSlot = $edge['loser_next_slot'] ?? null;
     if ($loserId !== null && !empty($loserNextMatchId) && in_array($loserNextSlot, ['team1', 'team2'], true)) {
+        $loserTargetStmt = $pdo->prepare('SELECT tournament_id, tournament_category_id, team1_id, team2_id
+            FROM matches WHERE match_id = :match_id FOR UPDATE');
+        $loserTargetStmt->execute(['match_id' => $loserNextMatchId]);
+        $loserTarget = $loserTargetStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$loserTarget || (int) $loserTarget['tournament_id'] !== (int) $match['tournament_id'] || (int) ($loserTarget['tournament_category_id'] ?? 0) !== (int) ($match['tournament_category_id'] ?? 0)) {
+            throw new RuntimeException('Match ปลายทางของผู้แพ้ไม่ตรง Tournament หรือ Category');
+        }
         $col = $loserNextSlot === 'team1' ? 'team1_id' : 'team2_id';
+        if ($loserTarget[$col] !== null && (int) $loserTarget[$col] !== (int) $loserId) {
+            throw new RuntimeException('Slot ของสายผู้แพ้มีผู้แข่งขันจาก Source อื่นอยู่แล้ว');
+        }
         $pdo->prepare("UPDATE matches SET {$col} = :loser WHERE match_id = :next_id")
             ->execute(['loser' => $loserId, 'next_id' => $loserNextMatchId]);
         resolveByeIfNeeded($pdo, $loserNextMatchId);

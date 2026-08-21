@@ -18,6 +18,10 @@ $q = trim($_GET['q'] ?? '');
 $roleFilter = $_GET['role'] ?? '';
 $profileFilter = $_GET['profile'] ?? ''; // '' = ทั้งหมด, 'none' = สมัครแล้วแต่ยังไม่มีโปรไฟล์, 'has' = มีโปรไฟล์แล้ว
 $statusFilter = $_GET['status'] ?? '';
+$gameFilter = trim((string) ($_GET['game'] ?? ''));
+$genderFilter = trim((string) ($_GET['gender'] ?? ''));
+$page = max(1, (int) ($_GET['page'] ?? 1));
+$perPage = 25;
 
 // สร้าง CSRF Token สำหรับแบบฟอร์ม POST
 $csrfToken = generateCsrfToken();
@@ -44,7 +48,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $currentStatus = $stmt->fetchColumn();
 
                 if ($currentStatus) {
-                    $newStatus = ($currentStatus == 'active') ? 'suspended' : 'active';
+                    $requestedStatus = $_POST['target_status'] ?? '';
+                    $newStatus = in_array($requestedStatus, ['active', 'suspended', 'disabled'], true)
+                        ? $requestedStatus
+                        : (($currentStatus == 'active') ? 'suspended' : 'active');
                     if ($newStatus === 'suspended') {
                         $pdo->prepare("
                             UPDATE users
@@ -56,10 +63,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             WHERE user_id = :id
                         ")->execute([
                             'suspended_by' => $_SESSION['user_id'],
-                            'reason' => 'ระงับโดยผู้ดูแลระบบ',
+                            'reason' => trim($_POST['suspension_reason'] ?? '') ?: 'ระงับโดยผู้ดูแลระบบ',
                             'id' => $userId,
                         ]);
-                    } else {
+                    } elseif ($newStatus === 'active') {
                         $pdo->prepare("
                             UPDATE users
                             SET status = 'active',
@@ -70,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             WHERE user_id = :id
                         ")->execute(['id' => $userId]);
                     }
-                    $success = $newStatus == 'suspended' ? 'ระงับบัญชีแล้ว' : 'ปลดระงับบัญชีแล้ว';
+                    $success = $newStatus === 'suspended' ? 'ระงับบัญชีแล้ว' : ($newStatus === 'disabled' ? 'ปิดใช้งานบัญชีแล้ว' : 'เปิดใช้งานบัญชีแล้ว');
                 }
             }
         }
@@ -259,9 +266,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $teamId = (int) ($_POST['team_id'] ?? 0);
             $playerId = (int) ($_POST['player_id'] ?? 0);
             if ($teamId > 0 && $playerId > 0) {
-                $stmt = $pdo->prepare("DELETE FROM team_members WHERE team_id = :tid AND player_id = :pid");
+                $stmt = $pdo->prepare("UPDATE team_members SET is_active = 0, left_at = NOW() WHERE team_id = :tid AND player_id = :pid AND is_active = 1");
                 $stmt->execute(['tid' => $teamId, 'pid' => $playerId]);
-                $success = 'ลบสมาชิกออกจากทีมเรียบร้อยแล้ว';
+                $success = 'สิ้นสุดการเป็นสมาชิกทีมเรียบร้อยแล้ว';
             }
         }
 
@@ -311,18 +318,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ================= ดึงข้อมูลสมาชิกเพื่อแสดงผลในตาราง =================
+$lastLoginColumn = $pdo->query("SHOW COLUMNS FROM users LIKE 'last_login_at'")->fetch();
+$supportsLastLoginAt = (bool) $lastLoginColumn;
+$lastLoginSelect = $supportsLastLoginAt ? 'u.last_login_at' : 'NULL AS last_login_at';
+$lastLoginGroup = $supportsLastLoginAt ? ', u.last_login_at' : '';
 $sql = "
-    SELECT u.user_id, u.username, u.email, u.role, u.status, u.created_at, u.last_login_at,
-        p.player_id AS player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province,
+    SELECT u.user_id, u.username, u.email, u.role, u.status, u.created_at, {$lastLoginSelect},
+        u.suspended_at, u.suspended_by, suspended_admin.username AS suspended_by_username, u.suspension_reason, u.reactivated_at,
+        p.player_id AS player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province, p.avatar_path,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN t.name END ORDER BY t.name SEPARATOR ', ') AS team_names,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN t.team_id END ORDER BY t.name SEPARATOR ',') AS team_ids,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN g.name END ORDER BY g.name SEPARATOR ', ') AS game_names,
+        GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN COALESCE(NULLIF(tm.member_roles, ''), tm.in_game_role) END ORDER BY t.name SEPARATOR ', ') AS team_roles,
         (CASE WHEN p.player_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM player_checkin_history ch
             WHERE ch.player_id = p.player_id
         ) THEN 1 ELSE 0 END) AS has_played
     FROM users u
     LEFT JOIN players p ON p.user_id = u.user_id
+    LEFT JOIN users suspended_admin ON suspended_admin.user_id = u.suspended_by
     LEFT JOIN team_members tm ON tm.player_id = p.player_id
     LEFT JOIN teams t ON t.team_id = tm.team_id
     LEFT JOIN games g ON g.game_id = t.game_id
@@ -331,9 +345,19 @@ $sql = "
 $params = [];
 if ($q !== '') {
     $sql .= " AND (u.username LIKE :q OR u.email LIKE :q OR p.display_name LIKE :q OR p.real_name LIKE :q
+        OR g.name LIKE :q
         OR EXISTS (SELECT 1 FROM team_members tm2 JOIN teams t2 ON t2.team_id = tm2.team_id
             WHERE tm2.player_id = p.player_id AND tm2.is_active = 1 AND t2.name LIKE :q))";
     $params['q'] = "%{$q}%";
+}
+$allowedGenders = ['male', 'female', 'other'];
+if ($gameFilter !== '') {
+    $sql .= " AND EXISTS (SELECT 1 FROM team_members game_tm JOIN teams game_t ON game_t.team_id = game_tm.team_id JOIN games game_g ON game_g.game_id = game_t.game_id WHERE game_tm.player_id = p.player_id AND game_tm.is_active = 1 AND game_g.name = :game)";
+    $params['game'] = $gameFilter;
+}
+if (in_array($genderFilter, $allowedGenders, true)) {
+    $sql .= " AND p.gender = :gender";
+    $params['gender'] = $genderFilter;
 }
 $allowedStatuses = ['active', 'suspended', 'disabled'];
 if (in_array($statusFilter, $allowedStatuses, true)) {
@@ -374,13 +398,24 @@ if ($profileFilter === 'none') {
         WHERE ch.player_id = p.player_id
     )";
 }
-$sql .= " GROUP BY u.user_id, u.username, u.email, u.role, u.status, u.created_at, u.last_login_at,
-    p.player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province
-    ORDER BY u.created_at DESC LIMIT 200";
+$sql .= " GROUP BY u.user_id, u.username, u.email, u.role, u.status, u.created_at{$lastLoginGroup}, suspended_admin.username,
+    p.player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province, p.avatar_path
+    ORDER BY u.created_at DESC";
+
+$countSql = preg_replace('/^\s*SELECT.*?FROM users u/s', 'SELECT COUNT(DISTINCT u.user_id) FROM users u', $sql);
+$countSql = preg_replace('/\s+GROUP BY.*$/s', '', (string) $countSql);
+$countStmt = $pdo->prepare($countSql);
+$countStmt->execute($params);
+$totalMembers = (int) $countStmt->fetchColumn();
+$totalPages = max(1, (int) ceil($totalMembers / $perPage));
+$page = min($page, $totalPages);
+$sql .= ' LIMIT ' . (($page - 1) * $perPage) . ', ' . $perPage;
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $members = $stmt->fetchAll();
+
+$games = $pdo->query('SELECT game_id, name FROM games ORDER BY name ASC')->fetchAll();
 
 // ดึงเฉพาะทีมที่สมาชิกในผลลัพธ์ปัจจุบันสังกัดอยู่ สำหรับ Modal ป๊อปอัพ
 $teamsData = [];
@@ -394,7 +429,7 @@ foreach ($members as $member) {
 if ($teamIds) {
     $teamPlaceholders = implode(',', array_fill(0, count($teamIds), '?'));
     $teamStmt = $pdo->prepare("
-    SELECT t.team_id, t.name AS team_name, g.name AS game_name
+    SELECT t.team_id, t.name AS team_name, t.logo_path, t.status AS team_status, t.created_at AS team_created_at, g.name AS game_name
     FROM teams t
     LEFT JOIN games g ON g.game_id = t.game_id
     WHERE t.team_id IN ($teamPlaceholders)
@@ -420,10 +455,64 @@ if ($teamIds) {
     $teamsData[$row['team_id']] = [
         'team_id' => $row['team_id'],
         'team_name' => $row['team_name'],
+        'logo_path' => $row['logo_path'],
+        'team_status' => $row['team_status'],
+        'team_created_at' => $row['team_created_at'],
         'game_name' => $row['game_name'],
         'members' => $teamMembers
     ];
     }
+}
+
+$memberPlayerIds = array_values(array_filter(array_map('intval', array_column($members, 'player_id'))));
+$teamHistoryData = [];
+$tournamentHistoryData = [];
+$rankingData = [];
+$rankingSourceData = [];
+if ($memberPlayerIds) {
+    $historyPlaceholders = implode(',', array_fill(0, count($memberPlayerIds), '?'));
+    $teamHistoryStmt = $pdo->prepare("SELECT tm.player_id, tm.team_id, t.name AS team_name, g.name AS game_name,
+            tm.in_game_role, tm.member_roles, tm.joined_at, tm.left_at, tm.is_active
+        FROM team_members tm
+        JOIN teams t ON t.team_id = tm.team_id
+        LEFT JOIN games g ON g.game_id = t.game_id
+        WHERE tm.player_id IN ($historyPlaceholders)
+        ORDER BY tm.is_active DESC, tm.joined_at DESC");
+    $teamHistoryStmt->execute($memberPlayerIds);
+    foreach ($teamHistoryStmt->fetchAll() as $teamHistory) $teamHistoryData[(int) $teamHistory['player_id']][] = $teamHistory;
+
+    $historyStmt = $pdo->prepare("SELECT trm.player_id, tour.name AS tournament_name, g.name AS game_name,
+            tc.label AS category_label, tr.team_id, team.name AS team_name, trm.member_roles,
+            trm.is_starter, tr.registered_at, tr.participation_status
+        FROM tournament_registration_members trm
+        JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+        JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
+        LEFT JOIN games g ON g.game_id = tour.game_id
+        LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+        LEFT JOIN teams team ON team.team_id = tr.team_id
+        WHERE trm.player_id IN ($historyPlaceholders)
+        ORDER BY tr.registered_at DESC");
+    $historyStmt->execute($memberPlayerIds);
+    foreach ($historyStmt->fetchAll() as $history) $tournamentHistoryData[(int) $history['player_id']][] = $history;
+
+    $rankingStmt = $pdo->prepare("SELECT pr.player_id, pr.game_id, g.name AS game_name, pr.category,
+            pr.points, pr.matches_played, pr.wins, pr.losses, pr.updated_at
+        FROM player_rankings pr
+        LEFT JOIN games g ON g.game_id = pr.game_id
+        WHERE pr.player_id IN ($historyPlaceholders)
+        ORDER BY g.name ASC, pr.points DESC");
+    $rankingStmt->execute($memberPlayerIds);
+    foreach ($rankingStmt->fetchAll() as $ranking) $rankingData[(int) $ranking['player_id']][] = $ranking;
+
+        $rankingSourceStmt = $pdo->prepare("SELECT rh.player_id, rh.game_id, g.name AS game_name, tour.name AS tournament_name,
+            rh.placement, rh.reason, rh.points, rh.created_at
+        FROM ranking_history rh
+        LEFT JOIN games g ON g.game_id = rh.game_id
+        LEFT JOIN tournaments tour ON tour.tournament_id = rh.tournament_id
+        WHERE rh.player_id IN ($historyPlaceholders)
+        ORDER BY rh.created_at DESC");
+    $rankingSourceStmt->execute($memberPlayerIds);
+    foreach ($rankingSourceStmt->fetchAll() as $source) $rankingSourceData[(int) $source['player_id']][] = $source;
 }
 
 // ดึงรายชื่อนักกีฬาสำหรับเพิ่มเข้าทีมใน Modal
@@ -441,9 +530,6 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    // Additional context or code can be added here if necessary
-    
     <script>
         tailwind.config = {
             theme: {
@@ -483,6 +569,11 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
             color: #FF5500;
             border-left: 4px solid #FF5500;
         }
+        .admin-action-menu { width: 14rem; padding: 0.5rem; }
+        .admin-action-item { min-height: 2.5rem; width: 100%; display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 0.75rem; border-radius: 0.5rem; text-align: left; font-size: 0.75rem; font-weight: 600; line-height: 1.25rem; }
+        .admin-action-item i { width: 1rem; text-align: center; flex: 0 0 1rem; }
+        .admin-action-group { padding: 0.35rem 0.75rem 0.25rem; color: #94a3b8; font-size: 0.625rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+        .member-detail-tab.is-active { color: #ea580c; border-color: #f97316; background: #fff7ed; }
     </style>
     <script>
         function copyPassword(password) {
@@ -514,7 +605,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
             </a>
             <a href="manage-teams.php" class="nav-item flex items-center gap-3 px-4 py-3 rounded-r-xl text-slate-400 hover:text-white">
                 <i class="fa-solid fa-people-group w-5 text-center"></i>
-                <span>ทีมสมัคร Tournament</span>
+                <span>จัดการผู้สมัคร/ทีมแข่งขัน</span>
             </a>
             <a href="manage-members.php" class="nav-item active flex items-center gap-3 px-4 py-3 rounded-r-xl text-white">
                 <i class="fa-solid fa-users-gear w-5 text-center text-brand-orange"></i>
@@ -570,7 +661,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
             <div>
                 <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
-                    จัดการข้อมูลสมาชิก <span class="text-brand-orange">(USER MANAGEMENT)</span>
+                    จัดการสมาชิกในระบบ <span class="text-brand-orange">(USER MANAGEMENT)</span>
                 </h1>
                 <p class="text-xs text-slate-500 mt-0.5">จัดการบัญชีผู้ใช้ ข้อมูลนักกีฬา และการสังกัดทีมในระดับระบบ</p>
             </div>
@@ -623,8 +714,8 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
             <?php endif; ?>
 
             <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                <form method="GET" id="memberSearchForm" class="flex flex-col md:flex-row gap-3">
-                    <div class="flex-1 relative">
+                <form method="GET" id="memberSearchForm" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">
+                    <div class="relative sm:col-span-2 xl:col-span-2">
                         <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400">
                             <i class="fa-solid fa-magnifying-glass text-sm"></i>
                         </span>
@@ -632,7 +723,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                             class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
                     </div>
 
-                    <div class="w-full md:w-48">
+                    <div>
                         <select name="role" onchange="this.form.submit()"
                             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
                             <option value="">ทุกบทบาท (Roles)</option>
@@ -642,7 +733,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                         </select>
                     </div>
 
-                    <div class="w-full md:w-56">
+                    <div>
                         <select name="profile" onchange="this.form.submit()"
                             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
                             <option value="">ทุกสถานะโปรไฟล์</option>
@@ -653,7 +744,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                         </select>
                     </div>
 
-                    <div class="w-full md:w-48">
+                    <div>
                         <select name="status" onchange="this.form.submit()"
                             class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
                             <option value="">ทุกสถานะบัญชี</option>
@@ -663,14 +754,33 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                         </select>
                     </div>
 
+                    <div>
+                        <select name="game" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
+                            <option value="">ทุกเกม</option>
+                            <?php foreach ($games as $game): ?>
+                                <option value="<?= htmlspecialchars($game['name']) ?>" <?= $gameFilter === $game['name'] ? 'selected' : '' ?>><?= htmlspecialchars($game['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <select name="gender" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
+                            <option value="">ทุกเพศ</option>
+                            <option value="male" <?= $genderFilter === 'male' ? 'selected' : '' ?>>ชาย</option>
+                            <option value="female" <?= $genderFilter === 'female' ? 'selected' : '' ?>>หญิง</option>
+                            <option value="other" <?= $genderFilter === 'other' ? 'selected' : '' ?>>อื่น ๆ</option>
+                        </select>
+                    </div>
+
                     <button type="submit" 
                         class="px-6 py-2.5 rounded-xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer">
+                        <i class="fa-solid fa-magnifying-glass"></i>
                         <span>ค้นหา</span>
                     </button>
                     
-                    <?php if ($q !== '' || $roleFilter !== '' || $profileFilter !== '' || $statusFilter !== ''): ?>
+                    <?php if ($q !== '' || $roleFilter !== '' || $profileFilter !== '' || $statusFilter !== '' || $gameFilter !== '' || $genderFilter !== ''): ?>
                         <a href="manage-members.php" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-sm flex items-center justify-center transition-all">
-                            ล้างค่า
+                            ล้างตัวกรอง
                         </a>
                     <?php endif; ?>
                 </form>
@@ -680,7 +790,7 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                 <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
                     <h2 class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
                         <i class="fa-solid fa-users text-brand-orange"></i>
-                        รายชื่อสมาชิกในระบบ (แสดงสูงสุด 200 รายการล่าสุด)
+                        รายชื่อสมาชิกในระบบ <span class="font-normal text-slate-400">(ทั้งหมด <?= number_format($totalMembers) ?> รายการ)</span>
                     </h2>
                 </div>
 
@@ -688,21 +798,23 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                     <table class="w-full text-left text-sm text-slate-600">
                         <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                             <tr>
-                                <th class="p-4">ชื่อผู้ใช้ (Username)</th>
-                                <th class="p-4">อีเมล</th>
+                                <th class="p-4">สมาชิก</th>
+                                <th class="p-4">Username / Email</th>
                                 <th class="p-4 text-center">บทบาท</th>
-                                <th class="p-4">นักกีฬา / ทีม / เกม</th>
+                                <th class="p-4">นักกีฬา / เกม</th>
+                                <th class="p-4">ทีมปัจจุบัน / บทบาท</th>
                                 <th class="p-4 text-center">สถานะ</th>
                                 <th class="p-4">วันที่สมัคร</th>
+                                <th class="p-4">เข้าใช้งานล่าสุด</th>
                                 <th class="p-4 text-right">จัดการ</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
                             <?php if (count($members) == 0): ?>
                                 <tr>
-                                    <td colspan="7" class="p-8 text-center text-slate-400">
+                                    <td colspan="9" class="p-8 text-center text-slate-400">
                                         <i class="fa-solid fa-user-slash text-3xl mb-2 block opacity-40"></i>
-                                        ไม่พบข้อมูลสมาชิกที่ตรงกับเงื่อนไขการค้นหา
+                                        ไม่พบสมาชิกตามเงื่อนไขที่ค้นหา
                                     </td>
                                 </tr>
                             <?php endif; ?>
@@ -715,7 +827,10 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                                             <span class="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-xs shrink-0">
                                                 <i class="fa-regular fa-user"></i>
                                             </span>
-                                            <span><?php echo htmlspecialchars($m['username']); ?></span>
+                                            <span>
+                                                <span class="block"><?php echo htmlspecialchars($m['real_name'] ?: $m['username']); ?></span>
+                                                <?php if (!empty($m['display_name'])): ?><span class="block text-[10px] font-normal text-slate-400"><?php echo htmlspecialchars($m['display_name']); ?></span><?php endif; ?>
+                                            </span>
                                         </a>
                                     <?php else: ?>
                                         <div class="flex items-center gap-2">
@@ -728,7 +843,8 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                                 </td>
 
                                 <td class="p-4 text-xs font-medium text-slate-600">
-                                    <?php echo htmlspecialchars($m['email']); ?>
+                                    <div><?php echo htmlspecialchars($m['username']); ?></div>
+                                    <div class="text-[11px] text-slate-400"><?php echo htmlspecialchars($m['email']); ?></div>
                                 </td>
 
                                 <td class="p-4 text-center">
@@ -745,26 +861,26 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                                     <?php if ($m['player_id']): ?>
                                         <div class="flex items-center gap-1.5 text-slate-900">
                                             <i class="fa-solid fa-gamepad text-brand-orange"></i>
-                                            <span><?php echo htmlspecialchars($m['display_name']); ?></span>
+                                            <span><?php echo htmlspecialchars($m['display_name'] ?: 'มีโปรไฟล์นักกีฬา'); ?></span>
                                         </div>
-                                        <?php if (!empty($m['team_names'])): 
-                                            $tNames = explode(', ', $m['team_names']);
-                                            $tIds = explode(',', $m['team_ids']);
-                                        ?>
-                                            <div class="mt-1 flex flex-wrap gap-1">
-                                                <?php foreach ($tNames as $idx => $tName): 
-                                                    $tId = $tIds[$idx] ?? 0;
-                                                ?>
-                                                    <button onclick="openTeamModal(<?= (int)$tId ?>)" class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-orange-50 hover:bg-orange-100 text-brand-orange border border-orange-200 text-[10px] font-bold transition-all cursor-pointer">
-                                                        <i class="fa-solid fa-users"></i> <?= htmlspecialchars($tName) ?>
-                                                    </button>
-                                                <?php endforeach; ?>
-                                            </div>
-                                        <?php else: ?>
-                                            <span class="block mt-1 text-[10px] text-slate-400 italic">ยังไม่สังกัดทีม</span>
-                                        <?php endif; ?>
                                     <?php else: ?>
                                         <span class="text-slate-300 italic">-</span>
+                                    <?php endif; ?>
+                                </td>
+
+                                <td class="p-4 text-xs font-semibold">
+                                    <?php if (!empty($m['team_names'])):
+                                        $tNames = explode(', ', $m['team_names']);
+                                        $tIds = explode(',', $m['team_ids']);
+                                    ?>
+                                        <?php foreach ($tNames as $idx => $tName): $tId = $tIds[$idx] ?? 0; ?>
+                                            <button type="button" onclick="openTeamModal(<?= (int) $tId ?>)" class="mb-1 inline-flex items-center gap-1 rounded bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-brand-orange transition-all hover:bg-orange-100">
+                                                <i class="fa-solid fa-users"></i> <?= htmlspecialchars($tName) ?>
+                                            </button>
+                                        <?php endforeach; ?>
+                                        <span class="block text-[10px] font-normal text-slate-400"><?= htmlspecialchars($m['team_roles'] ?: 'บทบาทไม่ระบุ') ?></span>
+                                    <?php else: ?>
+                                        <span class="text-[10px] font-normal italic text-slate-400">ยังไม่สังกัดทีม</span>
                                     <?php endif; ?>
                                 </td>
 
@@ -782,67 +898,81 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                                     <?php echo htmlspecialchars($m['created_at']); ?>
                                 </td>
 
-                                <td class="p-4 text-right space-x-1 whitespace-nowrap">
-                                    <?php if ($m['user_id'] != $_SESSION['user_id']): ?>
-                                        
-                                        <form method="POST" class="inline-block" onsubmit="return confirm('<?php echo $m['status'] == 'active' ? 'ต้องการระงับบัญชีนี้ใช่หรือไม่?' : 'ต้องการปลดระงับบัญชีนี้ใช่หรือไม่?'; ?>')">
-                                            <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
-                                            <input type="hidden" name="action" value="toggle_status">
-                                            <input type="hidden" name="user_id" value="<?php echo $m['user_id']; ?>">
-                                            <button type="submit"
-                                                class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg <?php echo $m['status'] == 'active' ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200' : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'; ?> text-xs font-semibold transition-all cursor-pointer">
-                                                <i class="fa-solid <?php echo $m['status'] == 'active' ? 'fa-user-slash' : 'fa-user-check'; ?>"></i>
-                                                <span><?php echo $m['status'] == 'active' ? 'ระงับ' : 'ปลดระงับ'; ?></span>
-                                            </button>
-                                        </form>
+                                <td class="p-4 text-xs text-slate-400">
+                                    <?php echo $supportsLastLoginAt && !empty($m['last_login_at']) ? htmlspecialchars($m['last_login_at']) : 'ไม่มีข้อมูล'; ?>
+                                </td>
 
-                                        <form method="POST" class="inline-block" onsubmit="return confirm('ต้องการรีเซ็ตรหัสผ่านของ <?php echo htmlspecialchars($m['username'], ENT_QUOTES); ?> ใช่หรือไม่? ระบบจะสร้างรหัสผ่านชั่วคราวให้ใหม่')">
-                                            <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
-                                            <input type="hidden" name="action" value="reset_password">
-                                            <input type="hidden" name="user_id" value="<?php echo $m['user_id']; ?>">
-                                            <button type="submit"
-                                                class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-semibold transition-all cursor-pointer">
-                                                <i class="fa-solid fa-key"></i>
-                                                <span>รีเซ็ตรหัส</span>
-                                            </button>
-                                        </form>
-
-                                        <button type="button" onclick="openMemberModal(<?php echo (int) $m['user_id']; ?>)"
-                                            class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-semibold transition-all">
-                                            <i class="fa-solid fa-pen-to-square"></i><span>แก้ไข</span>
+                                <td class="p-4 text-right whitespace-nowrap">
+                                    <div class="flex justify-end gap-2">
+                                        <button type="button" onclick="openMemberDetailModal(<?php echo (int) $m['user_id']; ?>)" class="inline-flex h-9 items-center gap-2 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-200">
+                                            <i class="fa-solid fa-circle-info"></i>รายละเอียด
                                         </button>
-                                        <?php if (!empty($m['team_ids'])): ?>
-                                            <button type="button" onclick="openMemberTeamModal(<?php echo (int) $m['user_id']; ?>)"
-                                                class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 text-brand-orange border border-orange-200 text-xs font-semibold transition-all">
-                                                <i class="fa-solid fa-people-group"></i><span>ทีม</span>
-                                            </button>
+                                        <?php if ($m['user_id'] != $_SESSION['user_id']): ?>
+                                            <div class="relative">
+                                                <button type="button" class="admin-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white hover:bg-brand-glow" data-action-menu="member-menu-<?php echo (int) $m['user_id']; ?>" aria-expanded="false" aria-controls="member-menu-<?php echo (int) $m['user_id']; ?>"><i class="fa-solid fa-ellipsis"></i>จัดการ</button>
+                                                <div id="member-menu-<?php echo (int) $m['user_id']; ?>" class="admin-action-menu fixed z-[70] hidden rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
+                                                    <div class="admin-action-group">ข้อมูลสมาชิก</div>
+                                                    <button type="button" onclick="openMemberModal(<?php echo (int) $m['user_id']; ?>)" class="admin-action-item text-slate-700 hover:bg-slate-50"><i class="fa-solid fa-pen-to-square text-slate-400"></i>แก้ไขข้อมูล</button>
+                                                    <?php if (!empty($m['team_ids'])): ?><button type="button" onclick="openMemberTeamModal(<?php echo (int) $m['user_id']; ?>)" class="admin-action-item text-slate-700 hover:bg-slate-50"><i class="fa-solid fa-people-group text-slate-400"></i>ดูทีมและบทบาท</button><?php endif; ?>
+                                                    <form method="POST" onsubmit="return confirm('ต้องการรีเซ็ตรหัสผ่านของ <?php echo htmlspecialchars($m['username'], ENT_QUOTES); ?> ใช่หรือไม่? ระบบจะสร้างรหัสผ่านชั่วคราวให้ใหม่')">
+                                                        <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>"><input type="hidden" name="action" value="reset_password"><input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
+                                                        <button type="submit" class="admin-action-item text-slate-700 hover:bg-slate-50"><i class="fa-solid fa-key text-slate-400"></i>รีเซ็ตรหัสผ่าน</button>
+                                                    </form>
+                                                    <div class="my-1 border-t border-slate-100"></div>
+                                                    <div class="admin-action-group">สถานะบัญชี</div>
+                                                    <form method="POST" data-member-name="<?= htmlspecialchars($m['real_name'] ?: $m['username'], ENT_QUOTES) ?>" onsubmit="return <?php echo $m['status'] === 'active' ? 'openSuspendModal(this)' : "confirm('ต้องการเปิดใช้งานบัญชีนี้ใช่หรือไม่?')"; ?>">
+                                                        <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>"><input type="hidden" name="action" value="toggle_status"><input type="hidden" name="target_status" value="<?php echo $m['status'] === 'active' ? 'suspended' : 'active'; ?>"><input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
+                                                        <button type="submit" class="admin-action-item <?php echo $m['status'] === 'active' ? 'text-red-600 hover:bg-red-50' : 'text-emerald-700 hover:bg-emerald-50'; ?>"><i class="fa-solid <?php echo $m['status'] === 'active' ? 'fa-user-slash' : 'fa-user-check'; ?>"></i><?php echo $m['status'] === 'active' ? 'ระงับบัญชี' : 'เปิดใช้งานอีกครั้ง'; ?></button>
+                                                    </form>
+                                                    <?php if ($m['status'] !== 'disabled'): ?>
+                                                        <form method="POST" onsubmit="return confirm('ต้องการปิดใช้งานบัญชีนี้ใช่หรือไม่?')">
+                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>"><input type="hidden" name="action" value="toggle_status"><input type="hidden" name="target_status" value="disabled"><input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
+                                                            <button type="submit" class="admin-action-item text-slate-700 hover:bg-slate-50"><i class="fa-solid fa-user-xmark text-slate-400"></i>ปิดใช้งาน</button>
+                                                        </form>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                        <?php else: ?>
+                                            <span class="inline-flex h-9 items-center rounded-lg bg-slate-100 px-3 text-xs font-bold text-slate-400">บัญชีของคุณ</span>
                                         <?php endif; ?>
-
-                                        <?php if ($m['role'] !== 'admin'): ?>
-                                            <form method="POST" class="inline-block" onsubmit="return confirm('ยืนยันลบบัญชี <?php echo htmlspecialchars($m['username'], ENT_QUOTES); ?> ? หากมีประวัติการแข่งขัน ระบบจะไม่อนุญาตให้ลบ')">
-                                                <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
-                                                <input type="hidden" name="action" value="delete_member">
-                                                <input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
-                                                <button type="submit" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition-all">
-                                                    <i class="fa-solid fa-trash"></i><span>ลบ</span>
-                                                </button>
-                                            </form>
-                                        <?php endif; ?>
-
-                                    <?php else: ?>
-                                        <span class="inline-block text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1 rounded-lg">
-                                            บัญชีของคุณ
-                                        </span>
-                                    <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
+                <?php if ($totalPages > 1): ?>
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50 px-4 py-3 text-xs">
+                        <span class="text-slate-500">หน้า <?= $page ?> / <?= $totalPages ?></span>
+                        <div class="flex gap-1">
+                            <?php for ($pageNumber = 1; $pageNumber <= $totalPages; $pageNumber++): ?>
+                                <a href="?<?= http_build_query(['q' => $q, 'role' => $roleFilter, 'profile' => $profileFilter, 'status' => $statusFilter, 'game' => $gameFilter, 'gender' => $genderFilter, 'page' => $pageNumber]) ?>" class="rounded-lg px-3 py-1.5 font-bold <?= $pageNumber === $page ? 'bg-brand-orange text-white' : 'bg-white text-slate-600 hover:bg-slate-100' ?>"><?= $pageNumber ?></a>
+                            <?php endfor; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
             </div>
 
         </main>
+    </div>
+
+    <div id="suspendConfirmModal" class="fixed inset-0 z-[80] hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3"><h3 class="font-bold text-slate-900"><i class="fa-solid fa-user-lock mr-2 text-rose-600"></i>ระงับบัญชีสมาชิก</h3><button type="button" onclick="closeSuspendModal()" class="text-slate-400 hover:text-slate-700"><i class="fa-solid fa-xmark"></i></button></div>
+            <p class="mt-4 text-sm text-slate-600">สมาชิก: <strong id="suspendMemberName" class="text-slate-900"></strong></p>
+            <textarea id="suspensionReasonInput" rows="4" class="mt-3 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="กรอกเหตุผลการระงับบัญชี" required></textarea>
+            <div class="mt-4 flex justify-end gap-2"><button type="button" onclick="closeSuspendModal()" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700">ยกเลิก</button><button type="button" onclick="submitSuspendForm()" class="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white">ยืนยันระงับบัญชี</button></div>
+        </div>
+    </div>
+
+    <div id="memberDetailModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-5 bg-slate-900 text-white flex items-center justify-between"><div class="flex items-center gap-2"><i class="fa-solid fa-user text-brand-orange text-lg"></i><h3 class="font-bold text-base" id="memberDetailTitle">รายละเอียดสมาชิก</h3></div><button type="button" onclick="closeMemberDetailModal()" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="flex gap-1 overflow-x-auto border-b border-slate-200 px-4 pt-3"><button type="button" data-detail-tab="overview" class="member-detail-tab is-active shrink-0 border-b-2 border-transparent px-3 py-2 text-xs font-bold">ภาพรวม</button><button type="button" data-detail-tab="teams" class="member-detail-tab shrink-0 border-b-2 border-transparent px-3 py-2 text-xs font-bold text-slate-500">ทีมและบทบาท</button><button type="button" data-detail-tab="tournaments" class="member-detail-tab shrink-0 border-b-2 border-transparent px-3 py-2 text-xs font-bold text-slate-500">ประวัติการแข่งขัน</button><button type="button" data-detail-tab="ranking" class="member-detail-tab shrink-0 border-b-2 border-transparent px-3 py-2 text-xs font-bold text-slate-500">Ranking</button><button type="button" data-detail-tab="account" class="member-detail-tab shrink-0 border-b-2 border-transparent px-3 py-2 text-xs font-bold text-slate-500">ประวัติบัญชี</button></div>
+            <div id="memberDetailContent" class="overflow-y-auto p-6 text-sm"></div>
+            <div class="flex justify-end border-t border-slate-100 bg-slate-50 px-6 py-4"><button type="button" onclick="closeMemberDetailModal()" class="rounded-lg bg-slate-200 px-4 py-2 text-xs font-bold text-slate-700">ปิด</button></div>
+        </div>
     </div>
 
     <div id="memberModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -884,6 +1014,8 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                 </button>
             </div>
 
+            <div id="modalTeamMeta" class="border-b border-slate-200 bg-slate-50 px-6 py-4"></div>
+
             <div class="p-6 overflow-y-auto space-y-6 flex-1 text-sm">
                 <div class="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <form method="POST">
@@ -902,14 +1034,6 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
                             บันทึกข้อมูลทีม
                         </button>
                     </div>
-                    </form>
-                    <form method="POST" class="mt-5 pt-4 border-t border-slate-200" onsubmit="return confirm('ยืนยันลบทีมนี้? ระบบจะลบสมาชิกในทีมด้วย และจะปฏิเสธหากทีมมีประวัติสมัครแข่งขัน')">
-                        <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
-                        <input type="hidden" name="action" value="delete_team">
-                        <input type="hidden" name="team_id" id="modalDeleteTeamId">
-                        <button type="submit" class="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-lg transition-all">
-                            <i class="fa-solid fa-trash"></i> ลบทีม
-                        </button>
                     </form>
                 </div>
 
@@ -963,7 +1087,143 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
         const teamsData = <?= json_encode($teamsData) ?>;
         const membersData = <?= json_encode(array_column($members, null, 'user_id')) ?>;
         const playersData = <?= json_encode($allPlayers) ?>;
+        const teamHistoryData = <?= json_encode($teamHistoryData, JSON_UNESCAPED_UNICODE) ?>;
+        const tournamentHistoryData = <?= json_encode($tournamentHistoryData, JSON_UNESCAPED_UNICODE) ?>;
+        const rankingData = <?= json_encode($rankingData, JSON_UNESCAPED_UNICODE) ?>;
+        const rankingSourceData = <?= json_encode($rankingSourceData, JSON_UNESCAPED_UNICODE) ?>;
         const csrfToken = <?= json_encode($csrfToken) ?>;
+
+        let activeMemberDetail = null;
+        let pendingSuspendForm = null;
+        let memberEditDirty = false;
+
+        function openSuspendModal(form) {
+            pendingSuspendForm = form;
+            document.getElementById('suspendMemberName').textContent = form.dataset.memberName || '';
+            document.getElementById('suspensionReasonInput').value = '';
+            document.getElementById('suspendConfirmModal').classList.remove('hidden');
+            return false;
+        }
+
+        function closeSuspendModal() {
+            document.getElementById('suspendConfirmModal').classList.add('hidden');
+            pendingSuspendForm = null;
+        }
+
+        function submitSuspendForm() {
+            const reason = document.getElementById('suspensionReasonInput').value.trim();
+            if (!reason || !pendingSuspendForm) {
+                document.getElementById('suspensionReasonInput').focus();
+                return;
+            }
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'suspension_reason';
+            input.value = reason;
+            pendingSuspendForm.appendChild(input);
+            pendingSuspendForm.removeAttribute('onsubmit');
+            pendingSuspendForm.submit();
+        }
+
+        function detailValue(value, fallback = 'ไม่มีข้อมูล') {
+            return value === null || value === undefined || String(value).trim() === '' ? fallback : escapeHtml(value);
+        }
+
+        function renderMemberDetailTab(tab) {
+            const member = membersData[activeMemberDetail];
+            if (!member) return;
+            const playerId = Number(member.player_id || 0);
+            const content = document.getElementById('memberDetailContent');
+            const teams = teamHistoryData[playerId] || [];
+            const tournaments = tournamentHistoryData[playerId] || [];
+            const rankings = rankingData[playerId] || [];
+            let html = '';
+            if (tab === 'overview') {
+                html = `<div class="grid grid-cols-1 md:grid-cols-3 gap-4"><div class="rounded-xl bg-slate-50 p-4 text-center"><div class="mx-auto flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-orange-100 text-2xl font-black text-brand-orange">${member.avatar_path ? `<img src="../${escapeHtml(member.avatar_path)}" alt="" class="h-full w-full object-cover">` : '<i class="fa-solid fa-user"></i>'}</div><div class="mt-3 font-bold text-slate-900">${detailValue(member.real_name || member.username)}</div><div class="text-xs text-slate-500">${detailValue(member.display_name)}</div></div><div class="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs"><div><b>Username</b><div>${detailValue(member.username)}</div></div><div><b>Email</b><div>${detailValue(member.email)}</div></div><div><b>วันเกิด</b><div>${detailValue(member.birth_date)}</div></div><div><b>เพศ</b><div>${detailValue(member.gender)}</div></div><div><b>จังหวัด</b><div>${detailValue(member.province)}</div></div><div><b>วันที่สมัคร</b><div>${detailValue(member.created_at)}</div></div><div><b>เข้าใช้งานล่าสุด</b><div>${detailValue(member.last_login_at)}</div></div><div><b>สถานะบัญชี</b><div>${detailValue(member.status)}</div></div></div></div>`;
+            } else if (tab === 'teams') {
+                html = teams.length ? `<div class="space-y-3">${teams.map(team => `<div class="rounded-xl border border-slate-200 p-4"><div class="flex items-center justify-between gap-3"><div><b class="text-slate-900">${detailValue(team.team_name)}</b><div class="text-xs text-slate-500">${detailValue(team.game_name)}</div></div><span class="rounded-full px-2 py-1 text-[10px] font-bold ${Number(team.is_active) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${Number(team.is_active) ? 'สมาชิกปัจจุบัน' : 'สิ้นสุดแล้ว'}</span></div><div class="mt-2 text-xs text-slate-600">บทบาท: ${detailValue(team.member_roles || team.in_game_role)}<br>เข้าร่วม: ${detailValue(team.joined_at)} | ออกจากทีม: ${detailValue(team.left_at)}</div><button type="button" onclick="openTeamModal(${Number(team.team_id)})" class="mt-3 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"><i class="fa-solid fa-users"></i> เปิดรายละเอียดทีม</button></div>`).join('')}</div>` : '<div class="rounded-xl bg-slate-50 p-8 text-center text-slate-500">ยังไม่มีประวัติทีม</div>';
+            } else if (tab === 'tournaments') {
+                html = tournaments.length ? `<div class="space-y-3">${tournaments.map(item => `<div class="rounded-xl border border-slate-200 p-4"><div class="font-bold text-slate-900">${detailValue(item.tournament_name)}</div><div class="mt-1 text-xs text-slate-500">${detailValue(item.game_name)} | ${detailValue(item.category_label)}</div><div class="mt-2 text-xs text-slate-600">ทีมที่ใช้: ${detailValue(item.team_name)}<br>Roster: ${detailValue(item.member_roles)} (${Number(item.is_starter) ? 'ตัวจริง' : 'ตัวสำรอง'})<br>สถานะ: ${detailValue(item.participation_status)} | สมัครเมื่อ: ${detailValue(item.registered_at)}</div></div>`).join('')}</div>` : '<div class="rounded-xl bg-slate-50 p-8 text-center text-slate-500">ยังไม่มีประวัติการแข่งขัน</div>';
+            } else if (tab === 'ranking') {
+                html = rankings.length ? `<div class="overflow-x-auto"><table class="min-w-full text-left text-xs"><thead><tr class="border-b border-slate-200"><th class="p-3">เกม</th><th class="p-3">คะแนน</th><th class="p-3">Tournament</th><th class="p-3">ชนะ/แพ้</th><th class="p-3">อัปเดต</th><th class="p-3"></th></tr></thead><tbody>${rankings.map(item => `<tr class="border-b border-slate-100"><td class="p-3 font-bold">${detailValue(item.game_name)}</td><td class="p-3">${detailValue(item.points)}</td><td class="p-3">${detailValue(item.matches_played)}</td><td class="p-3">${detailValue(item.wins, '0')} / ${detailValue(item.losses, '0')}</td><td class="p-3">${detailValue(item.updated_at)}</td><td class="p-3"><button type="button" onclick="showRankingSources(${Number(item.game_id)})" class="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-200">ดูที่มาคะแนน</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="rounded-xl bg-slate-50 p-8 text-center text-slate-500">ยังไม่มี Ranking รายบุคคล</div>';
+            } else {
+                html = `<div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs"><div><b>สถานะบัญชี</b><div>${detailValue(member.status)}</div></div><div><b>วันที่เปิดใช้งานอีกครั้ง</b><div>${detailValue(member.reactivated_at)}</div></div><div><b>วันที่ระงับ</b><div>${detailValue(member.suspended_at)}</div></div><div><b>Admin ผู้ดำเนินการ</b><div>${detailValue(member.suspended_by_username)}</div></div><div><b>เหตุผลการระงับ</b><div>${detailValue(member.suspension_reason)}</div></div><div class="md:col-span-2"><b>Audit Log</b><div class="mt-1 text-slate-500">ระบบยังไม่มีตาราง audit_logs</div></div></div>`;
+            }
+            content.innerHTML = html;
+        }
+
+        function openMemberDetailModal(userId) {
+            if (!membersData[userId]) return;
+            activeMemberDetail = userId;
+            document.getElementById('memberDetailTitle').textContent = 'รายละเอียดสมาชิก: ' + (membersData[userId].username || '');
+            document.getElementById('memberDetailModal').classList.remove('hidden');
+            document.querySelectorAll('[data-detail-tab]').forEach(tab => tab.classList.toggle('is-active', tab.dataset.detailTab === 'overview'));
+            renderMemberDetailTab('overview');
+        }
+
+        function closeMemberDetailModal() {
+            document.getElementById('memberDetailModal').classList.add('hidden');
+            activeMemberDetail = null;
+        }
+
+        function showRankingSources(gameId) {
+            const sources = (rankingSourceData[Number(activeMemberDetail)] || []).filter(item => Number(item.game_id) === Number(gameId));
+            document.getElementById('memberDetailContent').innerHTML = sources.length ? `<div class="space-y-3"><button type="button" onclick="renderMemberDetailTab('ranking')" class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">กลับไป Ranking</button>${sources.map(item => `<div class="rounded-xl border border-slate-200 p-4 text-xs"><b>${detailValue(item.tournament_name)}</b><div class="mt-1 text-slate-600">${detailValue(item.game_name)} | อันดับ: ${detailValue(item.placement)} | เหตุผล: ${detailValue(item.reason)} | คะแนน: ${detailValue(item.points)} | ${detailValue(item.created_at)}</div></div>`).join('')}</div>` : '<div class="rounded-xl bg-slate-50 p-8 text-center text-slate-500">ยังไม่มีประวัติที่มาคะแนน</div>';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const actionMenus = document.querySelectorAll('.admin-action-menu');
+            document.querySelectorAll('.admin-action-toggle').forEach(toggle => {
+                toggle.addEventListener('click', event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const menu = document.getElementById(toggle.dataset.actionMenu);
+                    if (!menu) return;
+                    const opening = menu.classList.contains('hidden');
+                    actionMenus.forEach(item => item.classList.add('hidden'));
+                    document.querySelectorAll('.admin-action-toggle').forEach(item => item.setAttribute('aria-expanded', 'false'));
+                    if (!opening) return;
+                    document.body.appendChild(menu);
+                    menu.classList.remove('hidden');
+                    const rect = toggle.getBoundingClientRect();
+                    const width = menu.offsetWidth || 224;
+                    const height = menu.offsetHeight || 280;
+                    menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+                    menu.style.top = `${rect.bottom + height + 8 <= window.innerHeight - 8 ? rect.bottom + 8 : Math.max(8, rect.top - height - 8)}px`;
+                    toggle.setAttribute('aria-expanded', 'true');
+                });
+                toggle.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    toggle.click();
+                });
+            });
+            actionMenus.forEach(menu => menu.addEventListener('click', event => event.stopPropagation()));
+            document.addEventListener('click', () => {
+                actionMenus.forEach(menu => menu.classList.add('hidden'));
+                document.querySelectorAll('.admin-action-toggle').forEach(item => item.setAttribute('aria-expanded', 'false'));
+            });
+            document.querySelectorAll('[data-detail-tab]').forEach(tab => tab.addEventListener('click', () => {
+                document.querySelectorAll('[data-detail-tab]').forEach(item => item.classList.toggle('is-active', item === tab));
+                renderMemberDetailTab(tab.dataset.detailTab);
+            }));
+            document.querySelector('#memberModal form')?.querySelectorAll('input, select, textarea').forEach(field => field.addEventListener('input', () => { memberEditDirty = true; }));
+            document.getElementById('memberDetailModal')?.addEventListener('click', event => {
+                if (event.target.id === 'memberDetailModal') closeMemberDetailModal();
+            });
+            document.getElementById('suspendConfirmModal')?.addEventListener('click', event => {
+                if (event.target.id === 'suspendConfirmModal') closeSuspendModal();
+            });
+            document.addEventListener('keydown', event => {
+                if (event.key === 'Escape') {
+                    actionMenus.forEach(menu => menu.classList.add('hidden'));
+                    if (!document.getElementById('suspendConfirmModal')?.classList.contains('hidden')) closeSuspendModal();
+                    if (!document.getElementById('memberDetailModal')?.classList.contains('hidden')) closeMemberDetailModal();
+                }
+            });
+            window.addEventListener('resize', () => actionMenus.forEach(menu => menu.classList.add('hidden')));
+            window.addEventListener('scroll', () => actionMenus.forEach(menu => menu.classList.add('hidden')), true);
+        });
 
         function openMemberModal(userId) {
             const member = membersData[userId];
@@ -976,11 +1236,14 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
             document.getElementById('editMemberGender').value = member.gender || '';
             document.getElementById('editMemberBirthDate').value = member.birth_date || '';
             document.getElementById('editMemberProvince').value = member.province || '';
+            memberEditDirty = false;
             document.getElementById('memberModal').classList.remove('hidden');
         }
 
         function closeMemberModal() {
+            if (memberEditDirty && !window.confirm('มีข้อมูลที่แก้ไขแล้วยังไม่ได้บันทึก ต้องการปิดหน้าต่างหรือไม่?')) return;
             document.getElementById('memberModal').classList.add('hidden');
+            memberEditDirty = false;
         }
 
         function openMemberTeamModal(userId) {
@@ -997,10 +1260,10 @@ $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM p
 
             document.getElementById('modalTeamTitle').innerText = 'จัดการทีม: ' + team.team_name;
             document.getElementById('modalTeamId').value = team.team_id;
-            document.getElementById('modalDeleteTeamId').value = team.team_id;
             document.getElementById('modalAddMemberTeamId').value = team.team_id;
             document.getElementById('modalRolesTeamId').value = team.team_id;
             document.getElementById('modalTeamNameInput').value = team.team_name;
+            document.getElementById('modalTeamMeta').innerHTML = `<div class="flex items-center gap-3"><div class="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl bg-white border border-slate-200">${team.logo_path ? `<img src="../${escapeHtml(team.logo_path)}" alt="" class="h-full w-full object-cover">` : '<i class="fa-solid fa-users text-brand-orange"></i>'}</div><div><div class="font-bold text-slate-900">${escapeHtml(team.team_name)}</div><div class="text-xs text-slate-500">เกม: ${escapeHtml(team.game_name)} | สถานะทีม: ${escapeHtml(team.team_status || 'active')} | สร้างเมื่อ: ${escapeHtml(team.team_created_at)}</div></div></div>`;
 
             const memberListDiv = document.getElementById('modalMemberList');
             memberListDiv.innerHTML = '';
