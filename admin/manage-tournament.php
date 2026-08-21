@@ -758,15 +758,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
             $error = 'วันเริ่มแข่งขันต้องไม่อยู่ก่อนวันปิดรับสมัคร';
         } elseif ($rosterLock && strtotime($rosterLock) < strtotime($regEnd)) {
             $error = 'วัน Lock Roster ต้องไม่ก่อนวันปิดรับสมัคร';
-        } elseif ($rosterLock && $rosterLock > $startDate) {
+        } elseif ($rosterLock && $startDate && $rosterLock > $startDate) {
             $error = 'วัน Lock Roster ต้องไม่หลังวันเริ่มแข่งขัน';
         } elseif ($rosterLock && $checkinOpen && strtotime($rosterLock) > strtotime($checkinOpen)) {
             $error = 'วัน Lock Roster ต้องไม่หลังเวลาเปิด Check-in';
-        } elseif ($endDate && strtotime($endDate) < strtotime($startDate)) {
-            $error = 'วันสิ้นสุดการแข่งขันต้องอยู่หลังวันเริ่มแข่งขัน';
         } elseif ($checkinOpen && $checkinClose && strtotime($checkinOpen) >= strtotime($checkinClose)) {
             $error = 'เวลาเปิด Check-in ต้องอยู่ก่อนเวลาปิด Check-in';
-        } elseif ($checkinClose && strtotime($checkinClose) > strtotime($startDate)) {
+        } elseif ($endDate && strtotime($endDate) <= strtotime($startDate)) {
+            $error = 'วันสิ้นสุดการแข่งขันต้องอยู่หลังวันเริ่มแข่งขัน';
+        } elseif ($checkinClose && $startDate && strtotime($checkinClose) > strtotime($startDate)) {
             $error = 'เวลาปิด Check-in ต้องไม่อยู่หลังวันเริ่มแข่งขัน';
         } elseif ($checkinOpen && $checkinClose && substr($checkinOpen, 0, 10) !== substr($startDate, 0, 10)) {
             $error = 'Check-in ต้องอยู่ในวันเริ่มการแข่งขัน';
@@ -916,15 +916,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
             $error = 'วันเริ่มแข่งขันต้องไม่อยู่ก่อนวันปิดรับสมัคร';
         } elseif ($rosterLock && strtotime($rosterLock) < strtotime($regEnd)) {
             $error = 'วัน Lock Roster ต้องไม่ก่อนวันปิดรับสมัคร';
-        } elseif ($rosterLock && $rosterLock > $startDate) {
+        } elseif ($rosterLock && $startDate && $rosterLock > $startDate) {
             $error = 'วัน Lock Roster ต้องไม่หลังวันเริ่มแข่งขัน';
         } elseif ($rosterLock && $checkinOpen && strtotime($rosterLock) > strtotime($checkinOpen)) {
             $error = 'วัน Lock Roster ต้องไม่หลังเวลาเปิด Check-in';
-        } elseif ($endDate && strtotime($endDate) < strtotime($startDate)) {
-            $error = 'วันสิ้นสุดการแข่งขันต้องอยู่หลังวันเริ่มแข่งขัน';
         } elseif ($checkinOpen && $checkinClose && strtotime($checkinOpen) >= strtotime($checkinClose)) {
             $error = 'เวลาเปิด Check-in ต้องอยู่ก่อนเวลาปิด Check-in';
-        } elseif ($checkinClose && strtotime($checkinClose) > strtotime($startDate)) {
+        } elseif ($endDate && strtotime($endDate) <= strtotime($startDate)) {
+            $error = 'วันสิ้นสุดการแข่งขันต้องอยู่หลังวันเริ่มแข่งขัน';
+        } elseif ($checkinClose && $startDate && strtotime($checkinClose) > strtotime($startDate)) {
             $error = 'เวลาปิด Check-in ต้องไม่อยู่หลังวันเริ่มแข่งขัน';
         } elseif ($checkinOpen && $checkinClose && substr($checkinOpen, 0, 10) !== substr($startDate, 0, 10)) {
             $error = 'Check-in ต้องอยู่ในวันเริ่มการแข่งขัน';
@@ -1466,6 +1466,10 @@ $csrfToken = generateCsrfToken();
             };
 
             nodes.forEach(node => {
+                if (node.id === 'create-schedule' || node.id === 'edit-schedule') {
+                    appendNode(node, 4);
+                    return;
+                }
                 const nodeFields = fields(node);
                 const directChildren = [...node.children].filter(child => !child.hidden);
                 const childTargets = directChildren.map(child => targetStep(fields(child)));
@@ -1557,11 +1561,103 @@ $csrfToken = generateCsrfToken();
             const regEnd = field('registration_end');
             const lock = field('roster_lock_at');
             const end = field('end_date');
+            const names = ['registration_start', 'registration_end', 'roster_lock_at', 'checkin_open_at', 'checkin_close_at', 'start_date', 'end_date'];
+            let previousValues = null;
+            const originalValues = () => Object.fromEntries(names.map(name => [name, field(name)?.value || '']));
+            const setDateTime = (input, value) => {
+                if (!input) return;
+                if (input._flatpickr) input._flatpickr.setDate(value, false, 'Y-m-d\\TH:i');
+                input.value = value;
+            };
+            const parse = value => value ? new Date(`${value}:00`) : null;
+            const format = date => {
+                const pad = value => String(value).padStart(2, '0');
+                return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+            };
+            const serverNow = () => parse('<?php echo date('Y-m-d H:i', time()); ?>'.replace(' ', 'T')) || new Date();
+            const roundedNow = () => { const date = serverNow(); date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0); return date; };
+            const addMinutes = (value, minutes) => { const date = parse(value); return date ? format(new Date(date.getTime() + minutes * 60000)) : ''; };
+            const addDays = (value, days) => { const date = parse(value); return date ? format(new Date(date.getTime() + days * 86400000)) : ''; };
+            const displayValue = value => value ? value.replace('T', ' ') : '-';
+            const changedValues = next => names.filter(name => (next[name] || '') !== (field(name)?.value || ''));
+            const showPreview = (next, title, apply) => {
+                const changes = changedValues(next);
+                if (!changes.length) return;
+                const labels = { registration_start: 'เปิดรับสมัคร', registration_end: 'ปิดรับสมัคร', roster_lock_at: 'Lock Roster', checkin_open_at: 'เปิด Check-in', checkin_close_at: 'ปิด Check-in', start_date: 'เริ่มแข่งขัน', end_date: 'สิ้นสุดการแข่งขัน' };
+                const modal = document.createElement('div');
+                modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4';
+                modal.innerHTML = `<div class="w-full max-w-2xl rounded-2xl bg-white shadow-2xl"><div class="border-b border-slate-200 px-5 py-4"><h3 class="font-bold text-slate-900">${title}</h3><p class="mt-1 text-xs text-slate-500">ตรวจสอบค่าเดิมและค่าใหม่ก่อนนำไปใช้</p></div><div class="max-h-[55vh] overflow-y-auto p-5"><table class="w-full text-left text-xs"><thead><tr class="border-b border-slate-200 text-slate-500"><th class="p-2">รายการ</th><th class="p-2">เวลาเดิม</th><th class="p-2">เวลาใหม่</th></tr></thead><tbody>${changes.map(name => `<tr class="border-b border-slate-100"><td class="p-2 font-bold">${labels[name]}</td><td class="p-2">${displayValue(field(name)?.value || '')}</td><td class="p-2 font-bold text-brand-orange">${displayValue(next[name] || '')}</td></tr>`).join('')}</tbody></table></div><div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-4"><button type="button" data-cancel class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700">ยกเลิก</button><button type="button" data-apply class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">ยืนยันใช้เวลานี้</button></div></div>`;
+                document.body.appendChild(modal);
+                modal.querySelector('[data-cancel]').onclick = () => modal.remove();
+                modal.querySelector('[data-apply]').onclick = () => { previousValues = originalValues(); apply(next); modal.remove(); refresh(); validateSchedule(form); };
+            };
             if (end && !form.querySelector('[data-single-day]')) {
                 const label = document.createElement('label'); label.dataset.singleDay = '1'; label.className = 'mt-1 block text-[10px] text-slate-500'; label.innerHTML = '<input type="checkbox" data-single-day> แข่งขันวันเดียว'; end.parentElement.appendChild(label);
             }
             const singleDay = form.querySelector('[data-single-day]');
-            if (singleDay) singleDay.addEventListener('change', () => { if (singleDay.checked && start && end && start.value) { end.value = start.value; end.readOnly = true; } else if (end) end.readOnly = false; refresh(); validateSchedule(form); });
+            const commit = next => { names.forEach(name => setDateTime(field(name), next[name] || '')); if (singleDay) { singleDay.checked = Boolean(next.singleDay); if (end) end.readOnly = singleDay.checked; } names.forEach(name => field(name)?.dispatchEvent(new Event('change', { bubbles: true }))); };
+            const request = (next, title, beforeApply = null) => showPreview({...originalValues(), ...next}, title, values => { if (beforeApply) beforeApply(values); commit(values); });
+            const command = commandName => {
+                const current = originalValues();
+                if (commandName === 'test-now') {
+                    const now = roundedNow(); const base = format(now);
+                    request({ registration_start: base, registration_end: addMinutes(base, 15), roster_lock_at: addMinutes(base, 20), checkin_open_at: addMinutes(base, 25), checkin_close_at: addMinutes(base, 35), start_date: addMinutes(base, 40), end_date: addMinutes(base, 120) }, 'ทดสอบตอนนี้ (สำหรับทดสอบ)');
+                } else if (commandName === 'open-registration') {
+                    const now = format(roundedNow()); const next = { registration_start: now };
+                    if (!current.registration_end || current.registration_end <= now) next.registration_end = addMinutes(now, 60);
+                    const proposedEnd = next.registration_end || current.registration_end;
+                    if (current.roster_lock_at && proposedEnd >= current.roster_lock_at) {
+                        if (confirm('เวลาปิดรับสมัครใหม่ทับกับขั้นตอนถัดไป ต้องการเลื่อนเวลาขั้นตอนถัดไปตามหรือไม่?')) {
+                            const shift = Math.max(5, Math.ceil((parse(proposedEnd) - parse(current.roster_lock_at)) / 60000) + 5);
+                            names.slice(2).forEach(name => { if (next[name] || current[name]) next[name] = addMinutes(next[name] || current[name], shift); });
+                        }
+                    }
+                    request(next, 'เปิดรับสมัครตอนนี้');
+                } else if (commandName === 'open-checkin') {
+                    const now = format(roundedNow()); const start = current.start_date && current.start_date > addMinutes(now, 20) ? current.start_date : addMinutes(now, 20); const duration = current.start_date && current.end_date && parse(current.end_date) > parse(current.start_date) ? (parse(current.end_date) - parse(current.start_date)) / 60000 : 120;
+                    request({ checkin_open_at: now, checkin_close_at: addMinutes(now, 15), start_date: start, end_date: addMinutes(start, duration) }, 'เปิด Check-in ตอนนี้');
+                } else if (commandName === 'start-15') {
+                    const now = format(roundedNow()); const startValue = addMinutes(now, 15); const duration = current.start_date && current.end_date && parse(current.end_date) > parse(current.start_date) ? (parse(current.end_date) - parse(current.start_date)) / 60000 : 120;
+                    request({ checkin_open_at: now, checkin_close_at: addMinutes(now, 10), start_date: startValue, end_date: addMinutes(startValue, duration) }, 'เริ่มแข่งขันใน 15 นาที');
+                } else if (commandName === 'single-day') {
+                    if (!current.start_date) return alert('กรุณากำหนดวันเริ่มแข่งขันก่อน');
+                    const endValue = current.end_date && current.end_date > current.start_date ? `${current.start_date.slice(0, 10)}T${current.end_date.slice(11)}` : addMinutes(current.start_date, 360);
+                    request({ end_date: endValue, singleDay: true }, 'กำหนดแข่งขันวันเดียว', values => { values.singleDay = true; });
+                } else if (commandName === 'multi-day') {
+                    if (!current.start_date) return alert('กรุณากำหนดวันเริ่มแข่งขันก่อน');
+                    const endValue = current.end_date && current.end_date.slice(0, 10) > current.start_date.slice(0, 10) ? current.end_date : addDays(current.start_date, 1);
+                    request({ end_date: endValue, singleDay: false }, 'กำหนดแข่งขันหลายวัน', values => { values.singleDay = false; });
+                } else if (commandName === 'shift') {
+                    showShiftModal(current);
+                } else if (commandName === 'extend') {
+                    showExtendModal(current);
+                } else if (commandName === 'auto') {
+                    const next = {...current}; for (let index = 1; index < names.length; index++) if (next[names[index]] && next[names[index - 1]] && next[names[index]] <= next[names[index - 1]]) next[names[index]] = addMinutes(next[names[index - 1]], names[index] === 'end_date' ? 60 : 5);
+                    request(next, 'จัดเวลาอัตโนมัติ');
+                } else if (commandName === 'undo') {
+                    if (!previousValues) return alert('ยังไม่มีค่าก่อนหน้าให้คืนค่า');
+                    const restore = previousValues; previousValues = current; request(restore, 'คืนค่าเดิม');
+                } else if (commandName === 'clear') {
+                    if (confirm('ยืนยันล้างวันเวลาทั้งหมด? ฟิลด์ที่จะถูกล้าง: วันเปิดรับสมัคร, วันปิดรับสมัคร, Lock Roster, เปิด/ปิด Check-in, วันเริ่มและวันสิ้นสุดการแข่งขัน')) request(Object.fromEntries(names.map(name => [name, ''])), 'ล้างวันเวลาทั้งหมด');
+                }
+            };
+            const showShiftModal = current => { const options = [['5', 'เลื่อนไปข้างหน้า 5 นาที'], ['15', 'เลื่อนไปข้างหน้า 15 นาที'], ['30', 'เลื่อนไปข้างหน้า 30 นาที'], ['60', 'เลื่อนไปข้างหน้า 1 ชั่วโมง'], ['1440', 'เลื่อนไปข้างหน้า 1 วัน'], ['custom', 'กำหนดเอง']]; const modal = document.createElement('div'); modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4'; modal.innerHTML = `<div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h3 class="font-bold">เลื่อนเวลาทั้งหมด</h3><p class="mt-1 text-xs text-slate-500">ปรับทุกเวลาโดยรักษาระยะห่างเดิม</p><select class="mt-4 w-full rounded-lg border p-2 text-sm">${options.map(item => `<option value="${item[0]}">${item[1]}</option>`).join('')}</select><input type="number" min="1" placeholder="นาที กรณีกำหนดเอง" class="mt-2 hidden w-full rounded-lg border p-2 text-sm"><div class="mt-4 flex justify-end gap-2"><button data-cancel class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">ยกเลิก</button><button data-apply class="rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white">แสดงตัวอย่าง</button></div></div>`; document.body.appendChild(modal); const select = modal.querySelector('select'); const custom = modal.querySelector('input'); select.onchange = () => custom.classList.toggle('hidden', select.value !== 'custom'); modal.querySelector('[data-cancel]').onclick = () => modal.remove(); modal.querySelector('[data-apply]').onclick = () => { const minutes = select.value === 'custom' ? Number(custom.value) : Number(select.value); if (!minutes) return; const next = {...current}; names.forEach(name => { if (next[name]) next[name] = addMinutes(next[name], minutes); }); modal.remove(); request(next, 'เลื่อนเวลาทั้งหมด'); }; };
+            const showExtendModal = current => { const options = [['15', '15 นาที'], ['30', '30 นาที'], ['60', '1 ชั่วโมง'], ['1440', '1 วัน'], ['custom', 'กำหนดเอง']]; const modal = document.createElement('div'); modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4'; modal.innerHTML = `<div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h3 class="font-bold">ขยายเวลารับสมัคร</h3><p class="mt-1 text-xs text-slate-500">เปลี่ยนเฉพาะเวลาปิดรับสมัคร หากชนขั้นตอนถัดไป ระบบจะเสนอให้เลื่อนตาม</p><select class="mt-4 w-full rounded-lg border p-2 text-sm">${options.map(item => `<option value="${item[0]}">${item[1]}</option>`).join('')}</select><input type="number" min="1" placeholder="นาที กรณีกำหนดเอง" class="mt-2 hidden w-full rounded-lg border p-2 text-sm"><div class="mt-4 flex justify-end gap-2"><button data-cancel class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">ยกเลิก</button><button data-apply class="rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white">แสดงตัวอย่าง</button></div></div>`; document.body.appendChild(modal); const select = modal.querySelector('select'); const custom = modal.querySelector('input'); select.onchange = () => custom.classList.toggle('hidden', select.value !== 'custom'); modal.querySelector('[data-cancel]').onclick = () => modal.remove(); modal.querySelector('[data-apply]').onclick = () => { const minutes = select.value === 'custom' ? Number(custom.value) : Number(select.value); if (!minutes || !current.registration_end) return; const next = {...current, registration_end: addMinutes(current.registration_end, minutes)}; if (current.roster_lock_at && next.registration_end >= current.roster_lock_at) { if (confirm('เวลาปิดรับสมัครใหม่ทับกับขั้นตอนถัดไป ต้องการเลื่อนเวลาขั้นตอนถัดไปตามหรือไม่?')) { const shift = Math.max(5, Math.ceil((parse(next.registration_end) - parse(current.roster_lock_at)) / 60000) + 5); names.slice(2).forEach(name => { if (next[name]) next[name] = addMinutes(next[name], shift); }); } else { alert('ยกเลิกการขยายเวลา เพราะเวลาจะขัดแย้งกับขั้นตอนถัดไป'); return; } } modal.remove(); request(next, 'ขยายเวลารับสมัคร'); }; };
+            form.querySelectorAll('.schedule-command-btn').forEach(button => button.addEventListener('click', () => command(button.dataset.command)));
+            const toolBar = form.querySelector('.schedule-tools');
+            if (toolBar && !toolBar.querySelector('[data-advanced-schedule-tools]')) {
+                const primary = new Set(['test-now', 'open-registration', 'open-checkin', 'start-15', 'single-day', 'multi-day']);
+                const advancedButtons = [...toolBar.querySelectorAll('.schedule-command-btn')].filter(button => !primary.has(button.dataset.command));
+                const advanced = document.createElement('details');
+                advanced.dataset.advancedScheduleTools = '1';
+                advanced.className = 'sm:col-span-2 rounded-lg border border-slate-200 bg-white p-2';
+                advanced.innerHTML = '<summary class="cursor-pointer list-none px-1 py-1 text-[10px] font-bold text-slate-600">เครื่องมือเพิ่มเติม <span class="ml-1 text-slate-400">เลื่อน · ขยาย · จัดอัตโนมัติ · คืนค่า · ล้าง</span></summary><div class="mt-2 flex flex-wrap gap-2"></div>';
+                const advancedArea = advanced.querySelector('div');
+                advancedButtons.forEach(button => { advancedArea.appendChild(button); });
+                toolBar.appendChild(advanced);
+                toolBar.querySelectorAll(':scope > div').forEach(group => { if (!group.querySelector('.schedule-command-btn')) group.hidden = true; });
+            }
+            if (singleDay) singleDay.addEventListener('change', () => { if (singleDay.checked && start && end && start.value) { setDateTime(end, end.value && end.value > start.value ? `${start.value.slice(0, 10)}T${end.value.slice(11)}` : addMinutes(start.value, 360)); end.readOnly = true; } else if (end) end.readOnly = false; refresh(); validateSchedule(form); });
             const refresh = () => {
                 if (start && start.value) {
                     const date = start.value.slice(0, 10);
@@ -1576,7 +1672,14 @@ $csrfToken = generateCsrfToken();
                 if (start && checkinClose) checkinClose.max = start.value || '';
             };
             if (start) start.addEventListener('change', refresh);
-            if (start) start.addEventListener('change', () => { if (singleDay && singleDay.checked && end) end.value = start.value; refresh(); validateSchedule(form); });
+            if (start) start.addEventListener('change', () => {
+                if (singleDay && singleDay.checked && end && start.value) {
+                    const endTime = end.value.slice(11) || '18:00';
+                    setDateTime(end, `${start.value.slice(0, 10)}T${endTime}`);
+                }
+                refresh();
+                validateSchedule(form);
+            });
             [regStart, regEnd, lock, checkinOpen, checkinClose, end].forEach(input => { if (input) input.addEventListener('change', () => { refresh(); validateSchedule(form); }); });
             refresh();
         }
@@ -1600,11 +1703,13 @@ $csrfToken = generateCsrfToken();
             if (values.registration_end && values.roster_lock_at && values.roster_lock_at < values.registration_end) fail('roster_lock_at', 'วัน Lock Roster ต้องไม่ก่อนวันปิดรับสมัคร');
             if (values.roster_lock_at && values.start_date && values.roster_lock_at > values.start_date) fail('roster_lock_at', 'วัน Lock Roster ต้องไม่หลังวันเริ่มแข่งขัน');
             if (values.roster_lock_at && values.checkin_open_at && values.roster_lock_at > values.checkin_open_at) fail('checkin_open_at', 'วัน Lock Roster ต้องไม่หลังเวลาเปิด Check-in');
-            if (values.start_date && values.end_date && values.end_date < values.start_date) fail('end_date', 'วันสิ้นสุดการแข่งขันต้องไม่ก่อนวันเริ่มแข่งขัน');
+            if (values.start_date && values.end_date && values.end_date <= values.start_date) fail('end_date', 'วันสิ้นสุดการแข่งขันต้องอยู่หลังวันเริ่มแข่งขัน');
             if (values.checkin_open_at && values.start_date && values.checkin_open_at.slice(0, 10) !== values.start_date.slice(0, 10)) fail('checkin_open_at', 'Check-in ต้องอยู่ในวันเริ่มการแข่งขัน');
             if (values.checkin_close_at && values.start_date && values.checkin_close_at.slice(0, 10) !== values.start_date.slice(0, 10)) fail('checkin_close_at', 'Check-in ต้องอยู่ในวันเริ่มการแข่งขัน');
             if (values.checkin_open_at && values.checkin_close_at && values.checkin_open_at >= values.checkin_close_at) fail('checkin_close_at', 'เวลาเปิด Check-in ต้องก่อนเวลาปิด Check-in');
             if (values.checkin_close_at && values.start_date && values.checkin_close_at > values.start_date) fail('checkin_close_at', 'เวลาปิด Check-in ต้องไม่เกินเวลาเริ่มการแข่งขัน');
+            const nextButton = form.querySelector('[data-step-next]');
+            if (nextButton) { nextButton.disabled = !valid; nextButton.classList.toggle('opacity-50', !valid); nextButton.classList.toggle('cursor-not-allowed', !valid); }
             return valid;
         }
 // ...existing code...
@@ -2260,26 +2365,66 @@ $csrfToken = generateCsrfToken();
                     </div>
                 </div>
 
-                <div id="create-schedule" class="tournament-step-panel grid grid-cols-1 sm:grid-cols-5 gap-4" data-form-step="4">
-                    <div>
-                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_start" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_end" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
-                    </div>
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันล็อกรายชื่อผู้เข้าแข่งขัน</label><input type="datetime-local" name="roster_lock_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
-                    <div>
-                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเริ่มแข่งขัน</label>
-                        <input type="datetime-local" name="start_date" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
-                    </div>
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันสิ้นสุดการแข่งขัน</label><input type="datetime-local" name="end_date" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
-                </div>
+                <div id="create-schedule" class="tournament-step-panel space-y-4" data-form-step="4">
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+                        <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <div class="text-xs font-black uppercase tracking-[0.18em] text-slate-600">เครื่องมือจัดการเวลาด่วน</div>
+                                <p class="text-[11px] text-slate-500">เลือกคำสั่งเพื่อกำหนดหรือปรับวันเวลาทั้งชุด ระบบจะแสดงค่าตัวอย่างให้ตรวจสอบก่อนนำไปใช้</p>
+                            </div>
+                            <div class="schedule-tools grid grid-cols-1 sm:grid-cols-2 gap-3 w-full lg:w-auto">
+                                <div><div class="text-[10px] font-bold text-slate-500 mb-1">ทดสอบด่วน</div><div class="flex flex-wrap gap-2"><button type="button" class="schedule-command-btn rounded-lg border border-brand-orange/30 bg-white px-2.5 py-1.5 text-[10px] font-bold text-brand-orange hover:bg-orange-50" data-command="test-now" title="สร้างช่วงเวลาสั้น ๆ เพื่อทดสอบทุกขั้นตอนภายในประมาณ 2 ชั่วโมง">ทดสอบตอนนี้ <span class="text-[9px]">(สำหรับทดสอบ)</span></button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="open-registration">เปิดรับสมัครตอนนี้</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="open-checkin">เปิด Check-in ตอนนี้</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="start-15">เริ่มแข่งขันใน 15 นาที</button></div></div>
+                                <div><div class="text-[10px] font-bold text-slate-500 mb-1">รูปแบบการแข่งขัน</div><div class="flex flex-wrap gap-2"><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="single-day">แข่งขันวันเดียว</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="multi-day">แข่งขันหลายวัน</button></div></div>
+                                <div class="sm:col-span-2"><div class="text-[10px] font-bold text-slate-500 mb-1">ปรับเวลา</div><div class="flex flex-wrap gap-2"><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="shift" title="ปรับทุกเวลาโดยรักษาระยะห่างเดิม">เลื่อนเวลาทั้งหมด</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="extend">ขยายเวลารับสมัคร</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="auto" title="ตรวจและแก้เวลาที่เรียงลำดับไม่ถูกต้อง">จัดเวลาอัตโนมัติ</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="undo" title="ย้อนค่าก่อนใช้คำสั่งล่าสุด">คืนค่าเดิม</button><button type="button" class="schedule-command-btn rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[10px] font-bold text-rose-600 hover:bg-rose-100" data-command="clear">ล้างวันเวลาทั้งหมด</button></div></div>
+                            </div>
+                        </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">เปิด Check-in</label><input type="datetime-local" name="checkin_open_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ปิด Check-in</label><input type="datetime-local" name="checkin_close_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเปิดรับสมัคร</label>
+                                <input type="datetime-local" name="registration_start" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันปิดรับสมัคร</label>
+                                <input type="datetime-local" name="registration_end" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันล็อกรายชื่อผู้เข้าแข่งขัน</label>
+                                <input type="datetime-local" name="roster_lock_at" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">เปิด Check-in</label>
+                                <input type="datetime-local" name="checkin_open_at" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ปิด Check-in</label>
+                                <input type="datetime-local" name="checkin_close_at" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเริ่มแข่งขัน</label>
+                                <input type="datetime-local" name="start_date" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันสิ้นสุดการแข่งขัน</label>
+                                <input type="datetime-local" name="end_date" class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                        </div>
+
+                        <div class="rounded-xl border border-slate-200 bg-white p-3">
+                            <div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 mb-2">ลำดับเวลา</div>
+                            <div class="flex flex-wrap items-center gap-2 text-[10px] text-slate-600">
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">รับสมัคร</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">ปิดรับ</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">Lock Roster</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">Check-in</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-brand-orange/10 px-2.5 py-1 font-bold text-brand-orange">แข่งขัน</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <fieldset id="create-category" class="tournament-step-panel rounded-xl border border-slate-200 p-4 space-y-3" data-form-step="3">
@@ -2377,26 +2522,66 @@ $csrfToken = generateCsrfToken();
                     </div>
                 </div>
 
-                <div id="edit-schedule" class="tournament-step-panel grid grid-cols-1 sm:grid-cols-5 gap-4" data-form-step="4">
-                    <div>
-                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_start" id="edit_registration_start" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_end" id="edit_registration_end" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
-                    </div>
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วัน Lock Tournament Roster</label><input type="datetime-local" name="roster_lock_at" id="edit_roster_lock_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
-                    <div>
-                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเริ่มแข่งขัน</label>
-                        <input type="datetime-local" name="start_date" id="edit_start_date" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
-                    </div>
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันสิ้นสุดการแข่งขัน</label><input type="datetime-local" name="end_date" id="edit_end_date" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
-                </div>
+                <div id="edit-schedule" class="tournament-step-panel space-y-4" data-form-step="4">
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+                        <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <div class="text-xs font-black uppercase tracking-[0.18em] text-slate-600">เครื่องมือจัดการเวลาด่วน</div>
+                                <p class="text-[11px] text-slate-500">เลือกคำสั่งเพื่อกำหนดหรือปรับวันเวลาทั้งชุด ระบบจะแสดงค่าตัวอย่างให้ตรวจสอบก่อนนำไปใช้</p>
+                            </div>
+                            <div class="schedule-tools grid grid-cols-1 sm:grid-cols-2 gap-3 w-full lg:w-auto">
+                                <div><div class="text-[10px] font-bold text-slate-500 mb-1">ทดสอบด่วน</div><div class="flex flex-wrap gap-2"><button type="button" class="schedule-command-btn rounded-lg border border-brand-orange/30 bg-white px-2.5 py-1.5 text-[10px] font-bold text-brand-orange hover:bg-orange-50" data-command="test-now" title="สร้างช่วงเวลาสั้น ๆ เพื่อทดสอบทุกขั้นตอนภายในประมาณ 2 ชั่วโมง">ทดสอบตอนนี้ <span class="text-[9px]">(สำหรับทดสอบ)</span></button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="open-registration">เปิดรับสมัครตอนนี้</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="open-checkin">เปิด Check-in ตอนนี้</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="start-15">เริ่มแข่งขันใน 15 นาที</button></div></div>
+                                <div><div class="text-[10px] font-bold text-slate-500 mb-1">รูปแบบการแข่งขัน</div><div class="flex flex-wrap gap-2"><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="single-day">แข่งขันวันเดียว</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="multi-day">แข่งขันหลายวัน</button></div></div>
+                                <div class="sm:col-span-2"><div class="text-[10px] font-bold text-slate-500 mb-1">ปรับเวลา</div><div class="flex flex-wrap gap-2"><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="shift" title="ปรับทุกเวลาโดยรักษาระยะห่างเดิม">เลื่อนเวลาทั้งหมด</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="extend">ขยายเวลารับสมัคร</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="auto">จัดเวลาอัตโนมัติ</button><button type="button" class="schedule-command-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100" data-command="undo" title="ย้อนค่าก่อนใช้คำสั่งล่าสุด">คืนค่าเดิม</button><button type="button" class="schedule-command-btn rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[10px] font-bold text-rose-600 hover:bg-rose-100" data-command="clear">ล้างวันเวลาทั้งหมด</button></div></div>
+                            </div>
+                        </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">เปิด Check-in</label><input type="datetime-local" name="checkin_open_at" id="edit_checkin_open_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
-                    <div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ปิด Check-in</label><input type="datetime-local" name="checkin_close_at" id="edit_checkin_close_at" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium"></div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเปิดรับสมัคร</label>
+                                <input type="datetime-local" name="registration_start" id="edit_registration_start" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันปิดรับสมัคร</label>
+                                <input type="datetime-local" name="registration_end" id="edit_registration_end" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วัน Lock Tournament Roster</label>
+                                <input type="datetime-local" name="roster_lock_at" id="edit_roster_lock_at" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">เปิด Check-in</label>
+                                <input type="datetime-local" name="checkin_open_at" id="edit_checkin_open_at" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ปิด Check-in</label>
+                                <input type="datetime-local" name="checkin_close_at" id="edit_checkin_close_at" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเริ่มแข่งขัน</label>
+                                <input type="datetime-local" name="start_date" id="edit_start_date" required class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันสิ้นสุดการแข่งขัน</label>
+                                <input type="datetime-local" name="end_date" id="edit_end_date" class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                            </div>
+                        </div>
+
+                        <div class="rounded-xl border border-slate-200 bg-white p-3">
+                            <div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 mb-2">ลำดับเวลา</div>
+                            <div class="flex flex-wrap items-center gap-2 text-[10px] text-slate-600">
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">รับสมัคร</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">ปิดรับ</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">Lock Roster</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold">Check-in</span>
+                                <i class="fa-solid fa-arrow-right text-slate-300"></i>
+                                <span class="rounded-full bg-brand-orange/10 px-2.5 py-1 font-bold text-brand-orange">แข่งขัน</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <fieldset id="edit-category" class="tournament-step-panel rounded-xl border border-slate-200 p-4 space-y-3" data-form-step="3">

@@ -23,21 +23,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'playe
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
         $registrationId = (int) ($_POST['registration_id'] ?? 0);
-        $verify = $pdo->prepare('SELECT tr.tournament_registration_id, tour.checkin_open_at, tour.checkin_close_at
+        $verify = $pdo->prepare('SELECT tr.tournament_registration_id,
+                COALESCE(tc.checkin_open_at, tour.checkin_open_at) AS checkin_open_at,
+                COALESCE(tc.checkin_deadline, tour.checkin_close_at) AS checkin_close_at
             FROM tournament_registration_members trm
             JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
             JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
-                        WHERE trm.tournament_registration_id = :registration_id AND trm.player_id = :player_id
-                            AND trm.roster_status = \'active\' AND tr.status = \'approved\'');
+            LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+            WHERE trm.tournament_registration_id = :registration_id AND trm.player_id = :player_id
+              AND trm.roster_status = \'active\' AND tr.status = \'approved\'
+                            AND tr.participation_status NOT IN (\'withdrawn\', \'disqualified\')');
         $verify->execute(['registration_id' => $registrationId, 'player_id' => $myPlayerId]);
         $verifiedRegistration = $verify->fetch();
-        $checkinWindowOpen = $verifiedRegistration
-            && (!$verifiedRegistration['checkin_open_at'] || strtotime($verifiedRegistration['checkin_open_at']) <= time())
-            && (!$verifiedRegistration['checkin_close_at'] || strtotime($verifiedRegistration['checkin_close_at']) >= time());
+        $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
+        $checkinWindowOpen = $verifiedRegistration && $verifiedRegistration['checkin_open_at'] && $verifiedRegistration['checkin_close_at']
+            && $now >= new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok'))
+            && $now <= new DateTimeImmutable($verifiedRegistration['checkin_close_at'], new DateTimeZone('Asia/Bangkok'));
         if (!$verifiedRegistration) {
             $error = 'คุณไม่มีสิทธิ์เช็คอินในรายการนี้';
+        } elseif (!$verifiedRegistration['checkin_open_at'] || !$verifiedRegistration['checkin_close_at']) {
+            $error = 'ยังไม่ได้กำหนดเวลา Check-in';
         } elseif (!$checkinWindowOpen) {
-            $error = 'อยู่นอกช่วงเวลา Check-in ของ Tournament นี้';
+            $error = $now < new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิด Check-in' : 'ขณะนี้อยู่นอกช่วงเวลา Check-in';
         } else {
             markRosterPlayerCheckedIn($pdo, $registrationId, (int) $myPlayerId, (int) $_SESSION['user_id']);
             $success = 'เช็คอินเรียบร้อยแล้ว';
@@ -48,7 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'playe
 // แสดงเฉพาะ Tournament Roster ที่ผู้เล่นคนนี้มีสิทธิ์ Check-in
 $stmt = $pdo->prepare("SELECT tr.tournament_registration_id, tr.qr_code_token, tr.checkin_status, tr.checkin_at,
            tr.category, tour.name AS tournament_name, tour.venue_address, tour.venue_lat_lng,
-           tour.checkin_open_at, tour.checkin_close_at,
+           COALESCE(tc.checkin_open_at, tour.checkin_open_at) AS checkin_open_at,
+           COALESCE(tc.checkin_deadline, tour.checkin_close_at) AS checkin_close_at,
            COALESCE(t.name, 'การแข่งขันเดี่ยว') AS team_name,
            trm.checkin_status AS player_checkin_status,
            trm.checkin_at AS player_checkin_at,
@@ -59,6 +67,7 @@ $stmt = $pdo->prepare("SELECT tr.tournament_registration_id, tr.qr_code_token, t
     FROM tournament_registration_members trm
     JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
     JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
+    LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
     LEFT JOIN teams t ON t.team_id = tr.team_id
     LEFT JOIN player_tournament_checkins ptc ON ptc.tournament_registration_id = trm.tournament_registration_id
         AND ptc.player_id = trm.player_id
@@ -100,7 +109,7 @@ $csrfToken = generateCsrfToken();
                     <?php if (in_array($c['player_checkin_status'], ['checked_in', 'waived'], true)): ?>
                         <span class="badge">เช็คอินของคุณแล้ว ✓</span>
                     <?php else: ?>
-                        <?php $canPlayerCheckin = (!$c['checkin_open_at'] || strtotime($c['checkin_open_at']) <= time()) && (!$c['checkin_close_at'] || strtotime($c['checkin_close_at']) >= time()); ?>
+                        <?php $checkinNow = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')); $canPlayerCheckin = $c['checkin_open_at'] && $c['checkin_close_at'] && $checkinNow >= new DateTimeImmutable($c['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) && $checkinNow <= new DateTimeImmutable($c['checkin_close_at'], new DateTimeZone('Asia/Bangkok')); ?>
                         <?php if ($canPlayerCheckin): ?>
                             <form method="POST" style="margin:0.8rem 0;">
                                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
@@ -109,7 +118,7 @@ $csrfToken = generateCsrfToken();
                                 <button type="submit">Check-in</button>
                             </form>
                         <?php else: ?>
-                            <span class="badge">อยู่นอกเวลา Check-in</span>
+                            <span class="badge"><?php echo (!$c['checkin_open_at'] || !$c['checkin_close_at']) ? 'ยังไม่ได้กำหนดเวลา Check-in' : ($checkinNow < new DateTimeImmutable($c['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิด Check-in' : 'ปิด Check-in แล้ว'); ?></span>
                         <?php endif; ?>
                         <span class="badge">ยังไม่ Check-in</span>
                     <?php endif; ?>

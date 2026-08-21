@@ -110,13 +110,12 @@ function snapshotTournamentRoster(PDO $pdo, int $registrationId, ?int $teamId, ?
 function markRosterPlayerCheckedIn(PDO $pdo, int $registrationId, int $playerId, ?int $adminId = null): void
 {
     ensureTournamentRosterTables($pdo);
-    $params = ['registration_id' => $registrationId, 'player_id' => $playerId, 'admin_id' => $adminId];
     $pdo->prepare('UPDATE tournament_registration_members SET checkin_status = \'checked_in\', checkin_at = NOW()
         WHERE tournament_registration_id = :registration_id AND player_id = :player_id')
-        ->execute($params);
+        ->execute(['registration_id' => $registrationId, 'player_id' => $playerId]);
     $pdo->prepare('UPDATE player_tournament_checkins SET checkin_status = \'checked_in\', checked_in_at = NOW(), checked_in_by = :admin_id
         WHERE tournament_registration_id = :registration_id AND player_id = :player_id')
-        ->execute($params);
+        ->execute(['registration_id' => $registrationId, 'player_id' => $playerId, 'admin_id' => $adminId]);
 
     $remaining = $pdo->prepare('SELECT COUNT(*) FROM tournament_registration_members
         WHERE tournament_registration_id = :registration_id

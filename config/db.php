@@ -3,6 +3,8 @@
 // ไฟล์เชื่อมต่อฐานข้อมูล ให้ทุกไฟล์ include ตัวนี้แค่ตัวเดียว
 // ไม่ต้องเขียน connection ซ้ำในแต่ละไฟล์
 
+date_default_timezone_set('Asia/Bangkok');
+
 $host = 'localhost';
 $dbname = 'esport_korattest';
 $dbuser = 'root';
@@ -14,7 +16,7 @@ try {
         $dbuser,
         $dbpass
     );
-    // โหมด error ให้ throw exception ออกมาเลย จะได้เห็น error ชัดๆ ตอน debug
+    $pdo->exec("SET time_zone = '+07:00'");
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
@@ -29,12 +31,10 @@ try {
  */
 function isSoloGame($gameName) {
     if (empty($gameName)) return false;
-    
-    // รายชื่อเกมที่เป็นประเภทบุคคล / เกมเดี่ยว (สามารถเพิ่มชื่อเกมเดี่ยวในอนาคตที่นี่ได้เลย)
+
     $soloGames = ['Tekken', 'Street Fighter', 'Efootball', 'Roblox'];
-    
+
     foreach ($soloGames as $solo) {
-        // ใช้ stripos เพื่อไม่สนใจตัวพิมพ์เล็ก-ใหญ่ (Case-insensitive)
         if (stripos($gameName, $solo) !== false) {
             return true;
         }

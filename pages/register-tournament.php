@@ -8,14 +8,111 @@ requireLogin();
 ensureTournamentRosterTables($pdo);
 ensureTournamentCategorySchema($pdo);
 
+date_default_timezone_set('Asia/Bangkok');
+
+function getTournamentRegistrationState(array $tournament, DateTimeImmutable $now): array
+{
+    $status = strtolower((string) ($tournament['status'] ?? 'draft'));
+    $start = !empty($tournament['registration_start'])
+        ? new DateTimeImmutable((string) $tournament['registration_start'], new DateTimeZone('Asia/Bangkok'))
+        : null;
+    $end = !empty($tournament['registration_end'])
+        ? new DateTimeImmutable((string) $tournament['registration_end'], new DateTimeZone('Asia/Bangkok'))
+        : null;
+
+    if ($status === 'draft') {
+        return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ยังไม่เปิดรับสมัคร'];
+    }
+    if ($status === 'registration_closed') {
+        return ['allowed' => false, 'message' => 'ปิดรับสมัครแล้ว'];
+    }
+    if ($status === 'ongoing') {
+        return ['allowed' => false, 'message' => 'การแข่งขันเริ่มแล้ว ไม่สามารถสมัครได้'];
+    }
+    if ($status === 'completed') {
+        return ['allowed' => false, 'message' => 'การแข่งขันสิ้นสุดแล้ว'];
+    }
+    if ($status === 'cancelled') {
+        return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ถูกยกเลิก'];
+    }
+    if ($start && $now < $start) {
+        return ['allowed' => false, 'message' => 'ยังไม่ถึงวันเปิดรับสมัคร'];
+    }
+    if ($end && $now > $end) {
+        return ['allowed' => false, 'message' => 'ปิดรับสมัครแล้ว'];
+    }
+    if ($status === 'registration_open' && (!$start || $now >= $start) && (!$end || $now <= $end)) {
+        return ['allowed' => true, 'message' => ''];
+    }
+
+    return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ยังไม่เปิดรับสมัคร'];
+}
+
+function getEligibleCategories(PDO $pdo, int $tournamentId): array
+{
+    $sql = "
+        SELECT tc.tournament_category_id, tc.category_code, tc.label, tc.max_participants, tc.starters_count,
+               (SELECT COUNT(*)
+                FROM tournament_registrations tr
+                WHERE tr.tournament_category_id = tc.tournament_category_id
+                  AND tr.status IN ('pending', 'approved')) AS registered_count
+        FROM tournament_categories tc
+        WHERE tc.tournament_id = :tournament_id
+          AND tc.is_active = 1
+        ORDER BY tc.tournament_category_id ASC
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(['tournament_id' => $tournamentId]);
+    $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $eligible = [];
+    foreach ($categories as $category) {
+        $registered = (int) ($category['registered_count'] ?? 0);
+        $max = (int) ($category['max_participants'] ?? 0);
+        if ($max > 0 && $registered >= $max) {
+            continue;
+        }
+        $eligible[] = $category;
+    }
+
+    return $eligible;
+}
+
+function getTeamRegistrationContext(PDO $pdo, int $teamId, int $playerId): array
+{
+    $teamStmt = $pdo->prepare('SELECT t.team_id, t.name, t.game_id, t.captain_player_id
+        FROM teams t
+        WHERE t.team_id = :team_id LIMIT 1');
+    $teamStmt->execute(['team_id' => $teamId]);
+    $team = $teamStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$team) {
+        return ['allowed' => false, 'message' => 'คุณยังไม่มีทีมสำหรับเกมนี้'];
+    }
+
+    $roleStmt = $pdo->prepare('SELECT COUNT(*) FROM team_members WHERE team_id = :team_id AND player_id = :player_id AND is_active = 1 AND (
+        LOWER(TRIM(in_game_role)) IN (\'captain\', \'manager\', \'leader\') OR :captain_player_id = :player_id
+    )');
+    $roleStmt->execute([
+        'team_id' => $teamId,
+        'player_id' => $playerId,
+        'captain_player_id' => (int) ($team['captain_player_id'] ?? 0),
+    ]);
+    if ((int) $roleStmt->fetchColumn() === 0) {
+        return ['allowed' => false, 'message' => 'เฉพาะกัปตันหรือผู้จัดการทีมเท่านั้นที่สมัครได้'];
+    }
+
+    return ['allowed' => true, 'team' => $team];
+}
+
 $isLoggedIn = isLoggedIn();
 $currentUser = [
     'username' => $_SESSION['username'] ?? null,
     'role' => $_SESSION['role'] ?? null,
 ];
-$stmt = $pdo->prepare("SELECT player_id FROM players WHERE user_id = :user_id");
-$stmt->execute(['user_id' => $_SESSION['user_id']]);
-$myPlayerId = $stmt->fetchColumn();
+$stmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user_id LIMIT 1');
+$stmt->execute(['user_id' => $_SESSION['user_id'] ?? 0]);
+$myPlayerId = (int) $stmt->fetchColumn();
 
 if (!$myPlayerId) {
     header('Location: claim-profile.php');
@@ -25,109 +122,130 @@ if (!$myPlayerId) {
 $error = '';
 $success = '';
 
-// จัดการการส่งฟอร์มสมัคร
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
     } else {
-        $tournamentId = (int) $_POST['tournament_id'];
-        $mode = $_POST['mode'] ?? 'team'; 
+        $tournamentId = (int) ($_POST['tournament_id'] ?? 0);
+        $mode = strtolower((string) ($_POST['mode'] ?? 'team'));
+        $mode = in_array($mode, ['solo', 'team'], true) ? $mode : 'team';
 
-        $tournamentCheck = $pdo->prepare("
+        $tournamentStmt = $pdo->prepare("
             SELECT t.tournament_id, t.name, t.game_id, t.max_teams, t.status, t.registration_start, t.registration_end,
-                   g.play_mode, g.name as game_name,
-                   (SELECT COUNT(*) FROM tournament_registrations tr
+                   g.play_mode, g.name AS game_name,
+                   (SELECT COUNT(*)
+                    FROM tournament_registrations tr
                     WHERE tr.tournament_id = t.tournament_id
                       AND tr.status IN ('pending', 'approved')) AS registered_count
             FROM tournaments t
-            JOIN games g ON t.game_id = g.game_id
-            WHERE t.tournament_id = :tid
+            JOIN games g ON g.game_id = t.game_id
+            WHERE t.tournament_id = :tournament_id
+            LIMIT 1
         ");
-        $tournamentCheck->execute(['tid' => $tournamentId]);
-        $tournament = $tournamentCheck->fetch();
+        $tournamentStmt->execute(['tournament_id' => $tournamentId]);
+        $tournament = $tournamentStmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!$tournament || $tournament['status'] !== 'registration_open') {
-            $error = 'ไม่พบทัวร์นาเมนต์นี้ หรือทัวร์นาเมนต์ปิดรับสมัครแล้ว';
-        } elseif (!empty($tournament['registration_start']) && strtotime($tournament['registration_start']) > time()) {
-            $error = 'ยังไม่ถึงวันเปิดรับสมัคร';
-        } elseif (!empty($tournament['registration_end']) && strtotime($tournament['registration_end']) < time()) {
-            $error = 'หมดเวลารับสมัครแล้ว';
-        } elseif ((int) $tournament['registered_count'] >= (int) $tournament['max_teams']) {
-            $error = 'ทัวร์นาเมนต์มีผู้สมัครครบจำนวนแล้ว';
+        if (!$tournament) {
+            $error = 'ไม่พบทัวร์นาเมนต์นี้';
         } else {
-            if ($mode === 'solo') {
-                if ($tournament['play_mode'] !== 'solo') {
+            $windowState = getTournamentRegistrationState($tournament, new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
+            if (!$windowState['allowed']) {
+                $error = $windowState['message'];
+            } elseif ((int) ($tournament['registered_count'] ?? 0) >= (int) ($tournament['max_teams'] ?? 0)) {
+                $error = 'ประเภทการแข่งขันนี้มีผู้สมัครครบแล้ว';
+            } elseif ($mode === 'solo') {
+                if (($tournament['play_mode'] ?? '') !== 'solo') {
                     $error = 'ทัวร์นาเมนต์นี้ไม่ได้เปิดให้แข่งขันแบบเดี่ยว';
                 } else {
-                    $check = $pdo->prepare("SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tid AND player_id = :pid");
-                    $check->execute(['tid' => $tournamentId, 'pid' => $myPlayerId]);
-
-                    if ($check->fetch()) {
-                        $error = 'คุณได้สมัครเข้าร่วมทัวร์นาเมนต์นี้ไปแล้ว';
+                    $existingSolo = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id AND player_id = :player_id AND status IN (\'pending\', \'approved\') LIMIT 1');
+                    $existingSolo->execute(['tournament_id' => $tournamentId, 'player_id' => $myPlayerId]);
+                    if ($existingSolo->fetchColumn()) {
+                        $error = 'ทีม/ผู้เล่นนี้สมัครประเภทการแข่งขันนี้แล้ว';
                     } else {
-                        $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code FROM tournament_categories
-                            WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY (category_code = \'open\') DESC, tournament_category_id LIMIT 1');
-                        $categoryStmt->execute(['tournament_id' => $tournamentId]);
-                        $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
-                        if (!$category) {
-                            $error = 'Tournament นี้ยังไม่มี Competition Category ที่เปิดใช้งาน';
+                        $eligibleCategories = getEligibleCategories($pdo, $tournamentId);
+                        if (empty($eligibleCategories)) {
+                            $error = 'ยังไม่มีประเภทการแข่งขันที่เปิดรับสมัคร';
                         } else {
-                        $categoryId = (int) $category['tournament_category_id'];
-                        $insert = $pdo->prepare("
-                            INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status)
-                            VALUES (:tid, :category_id, :pid, NULL, 'open', 'pending')
-                        ");
-                        $insert->execute(['tid' => $tournamentId, 'category_id' => $categoryId, 'pid' => $myPlayerId]);
-                        snapshotTournamentRoster($pdo, (int) $pdo->lastInsertId(), null, (int) $myPlayerId);
-                        
-                        $success = 'ส่งใบสมัครประเภทเดี่ยวเรียบร้อยแล้ว!';
-                    }
+                            $category = $eligibleCategories[0];
+                            $categoryId = (int) $category['tournament_category_id'];
+                            $categoryCode = (string) ($category['category_code'] ?? 'open');
+
+                            $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status, participation_status)
+                                VALUES (:tournament_id, :category_id, :player_id, NULL, :category, :status, :participation_status)');
+                            $insert->execute([
+                                'tournament_id' => $tournamentId,
+                                'category_id' => $categoryId,
+                                'player_id' => $myPlayerId,
+                                'category' => $categoryCode,
+                                'status' => 'pending',
+                                'participation_status' => 'registered',
+                            ]);
+
+                            $registrationId = (int) $pdo->lastInsertId();
+                            snapshotTournamentRoster($pdo, $registrationId, null, $myPlayerId);
+                            $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                        }
                     }
                 }
             } else {
-                $teamId = (int) $_POST['team_id'];
+                $teamId = (int) ($_POST['team_id'] ?? 0);
                 $categoryId = (int) ($_POST['tournament_category_id'] ?? 0);
-                $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code FROM tournament_categories
-                    WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1');
-                $categoryStmt->execute(['category_id' => $categoryId, 'tournament_id' => $tournamentId]);
-                $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
-                $teamCategory = $category['category_code'] ?? '';
-                
-                // ตรวจสอบว่าเป็นกัปตันทีมจริงหรือไม่
-                $verify = $pdo->prepare("
-                    SELECT t.team_id, t.name 
-                    FROM teams t 
-                    WHERE t.team_id = :tid AND t.captain_player_id = :pid
-                ");
-                $verify->execute(['tid' => $teamId, 'pid' => $myPlayerId]);
-                $teamData = $verify->fetch();
 
-                if (!$category) {
-                    $error = 'Competition Category นี้ไม่ได้เปิดใน Tournament ที่เลือก';
-                } elseif (!$teamData) {
-                    $error = 'คุณไม่ใช่กัปตันของทีมนี้';
+                if ($teamId <= 0) {
+                    $error = 'คุณยังไม่มีทีมสำหรับเกมนี้';
                 } else {
-                    // ตรวจสอบว่าสมัครทัวร์นี้ด้วยทีมนี้ไปหรือยัง
-                    $check = $pdo->prepare("SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tid AND team_id = :teamid");
-                    $check->execute(['tid' => $tournamentId, 'teamid' => $teamId]);
-
-                    if ($check->fetch()) {
-                        $error = 'ทีมนี้ได้รับการสมัครเข้าร่วมทัวร์นาเมนต์นี้ไปแล้ว';
+                    $teamContext = getTeamRegistrationContext($pdo, $teamId, $myPlayerId);
+                    if (!$teamContext['allowed']) {
+                        $error = $teamContext['message'];
                     } else {
-                        // บันทึกการสมัครพร้อมระบุ category (แยกระหว่างเกมและประเภทการแข่งขันโดยอิสระ)
-                        $insert = $pdo->prepare("
-                            INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status)
-                            VALUES (:tid, :category_id, :teamid, NULL, :category, 'pending')
-                        ");
-                        $insert->execute([
-                            'tid' => $tournamentId,
-                            'category_id' => $categoryId,
-                            'teamid' => $teamId,
-                            'category' => $teamCategory
-                        ]);
-                        snapshotTournamentRoster($pdo, (int) $pdo->lastInsertId(), $teamId, null);
-                        
-                        $success = 'ส่งใบสมัครด้วยทีม "' . htmlspecialchars($teamData['name']) . '" เรียบร้อยแล้ว!';
+                        $teamData = $teamContext['team'];
+                        if ((int) ($teamData['game_id'] ?? 0) !== (int) ($tournament['game_id'] ?? 0)) {
+                            $error = 'คุณยังไม่มีทีมสำหรับเกมนี้';
+                        } else {
+                            $eligibleCategories = getEligibleCategories($pdo, $tournamentId);
+                            $selectedCategory = null;
+                            foreach ($eligibleCategories as $category) {
+                                if ((int) $category['tournament_category_id'] === $categoryId) {
+                                    $selectedCategory = $category;
+                                    break;
+                                }
+                            }
+
+                            if (!$selectedCategory) {
+                                $error = 'ยังไม่มีประเภทการแข่งขันที่เปิดรับสมัคร';
+                            } else {
+                                $requiredRoster = (int) ($selectedCategory['starters_count'] ?? 0);
+                                $memberCountStmt = $pdo->prepare('SELECT COUNT(*) FROM team_members WHERE team_id = :team_id AND is_active = 1');
+                                $memberCountStmt->execute(['team_id' => $teamId]);
+                                $memberCount = (int) $memberCountStmt->fetchColumn();
+                                if ($requiredRoster > 0 && $memberCount < $requiredRoster) {
+                                    $error = 'จำนวนสมาชิกยังไม่ครบตามกติกา';
+                                }
+
+                                if (empty($error)) {
+                                    $duplicateStmt = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id AND team_id = :team_id AND status IN (\'pending\', \'approved\') LIMIT 1');
+                                    $duplicateStmt->execute(['tournament_id' => $tournamentId, 'team_id' => $teamId]);
+                                    if ($duplicateStmt->fetchColumn()) {
+                                        $error = 'ทีม/ผู้เล่นนี้สมัครประเภทการแข่งขันนี้แล้ว';
+                                    }
+                                }
+
+                                if (empty($error)) {
+                                    $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status, participation_status)
+                                        VALUES (:tournament_id, :category_id, :team_id, NULL, :category, \'pending\', \'registered\')');
+                                    $insert->execute([
+                                        'tournament_id' => $tournamentId,
+                                        'category_id' => $categoryId,
+                                        'team_id' => $teamId,
+                                        'category' => (string) ($selectedCategory['category_code'] ?? 'open'),
+                                    ]);
+
+                                    $registrationId = (int) $pdo->lastInsertId();
+                                    snapshotTournamentRoster($pdo, $registrationId, $teamId, null);
+                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -189,7 +307,7 @@ if (!empty($tournaments)) {
     $tIds = array_column($tournaments, 'tournament_id');
     if (!empty($tIds)) {
         $inT = implode(',', $tIds);
-        
+
         $regTeams = $pdo->query("
             SELECT tr.tournament_id, tr.team_id, tr.status, tr.checkin_status
             FROM tournament_registrations tr
@@ -205,7 +323,7 @@ if (!empty($tournaments)) {
 
         $regSolos = $pdo->query("
             SELECT tournament_id, status, checkin_status
-            FROM tournament_registrations 
+            FROM tournament_registrations
             WHERE tournament_id IN ($inT) AND player_id = $myPlayerId
         ")->fetchAll();
         foreach ($regSolos as $rs) {

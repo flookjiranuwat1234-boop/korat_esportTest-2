@@ -24,22 +24,37 @@ $success = '';
 // ตรวจสอบโหมดของทัวร์นาเมนต์ที่เลือก (solo หรือ team)
 $tournament = null;
 $isSolo = false;
+$gameMissing = false;
 $categories = [];
 if ($tournamentId) {
     $tQuery = $pdo->prepare("
-        SELECT t.*, g.play_mode 
+        SELECT t.*, g.name AS game_name, g.play_mode
         FROM tournaments t 
-        JOIN games g ON t.game_id = g.game_id 
+        LEFT JOIN games g ON t.game_id = g.game_id
         WHERE t.tournament_id = :id
     ");
     $tQuery->execute(['id' => $tournamentId]);
     $tournament = $tQuery->fetch();
-    if ($tournament && $tournament['play_mode'] === 'solo') {
+    $gameMissing = $tournament && empty($tournament['game_name']);
+    if ($tournament && !$gameMissing && $tournament['play_mode'] === 'solo') {
         $isSolo = true;
     }
-    $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label FROM tournament_categories WHERE tournament_id = :id AND is_active = 1 ORDER BY tournament_category_id');
+    $categoryStmt = $pdo->prepare('SELECT tournament_category_id,
+            COALESCE(NULLIF(category_code, \'\'), NULLIF(code, \'\')) AS category_code,
+            COALESCE(NULLIF(label, \'\'), NULLIF(name, \'\')) AS label,
+            checkin_open_at, checkin_deadline, checkin_required_roles
+        FROM tournament_categories
+        WHERE tournament_id = :id AND is_active = 1
+        ORDER BY tournament_category_id');
     $categoryStmt->execute(['id' => $tournamentId]);
     $categories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+    $selectedCategory = null;
+    foreach ($categories as $category) {
+        if ((int) $category['tournament_category_id'] === $selectedCategoryId) {
+            $selectedCategory = $category;
+            break;
+        }
+    }
 }
 
 // เช็คอินสมาชิกจาก Tournament Roster ทีละคน
@@ -56,22 +71,34 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_
             JOIN players p ON p.player_id = trm.player_id
             LEFT JOIN users u ON u.user_id = p.user_id
             LEFT JOIN teams t ON t.team_id = tr.team_id
-                        WHERE tr.tournament_registration_id = :registration_id AND trm.player_id = :player_id
-                            AND trm.roster_status = 'active'
+            LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+            WHERE tr.tournament_registration_id = :registration_id AND trm.player_id = :player_id
+              AND trm.roster_status = 'active' AND tr.status = 'approved'
+              AND tr.participation_status NOT IN ('withdrawn', 'disqualified')
               AND tr.tournament_id = :tournament_id");
         $stmt->execute(['registration_id' => $registrationId, 'player_id' => $playerId, 'tournament_id' => $tournamentId]);
         $member = $stmt->fetch();
-        $windowStmt = $pdo->prepare('SELECT checkin_open_at, checkin_close_at FROM tournaments WHERE tournament_id = :tournament_id');
-        $windowStmt->execute(['tournament_id' => $tournamentId]);
+        $windowStmt = $pdo->prepare('SELECT tour.checkin_open_at AS tournament_open, tour.checkin_close_at AS tournament_close,
+                tc.checkin_open_at AS category_open, tc.checkin_deadline AS category_close
+            FROM tournaments tour
+            LEFT JOIN tournament_registrations tr ON tr.tournament_id = tour.tournament_id AND tr.tournament_registration_id = :registration_id
+            LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+            WHERE tour.tournament_id = :tournament_id');
+        $windowStmt->execute(['registration_id' => $registrationId, 'tournament_id' => $tournamentId]);
         $window = $windowStmt->fetch();
-        $now = time();
-        $windowOpen = (!$window['checkin_open_at'] || strtotime($window['checkin_open_at']) <= $now)
-            && (!$window['checkin_close_at'] || strtotime($window['checkin_close_at']) >= $now);
+        $openAt = $window['category_open'] ?: $window['tournament_open'];
+        $closeAt = $window['category_close'] ?: $window['tournament_close'];
+        $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
+        $windowOpen = $openAt && $closeAt
+            && $now >= new DateTimeImmutable($openAt, new DateTimeZone('Asia/Bangkok'))
+            && $now <= new DateTimeImmutable($closeAt, new DateTimeZone('Asia/Bangkok'));
 
-        if (!$member || $member['status'] !== 'approved') {
+        if (!$member) {
             $error = 'ไม่พบสมาชิกใน Tournament Roster ที่ได้รับอนุมัติ';
+        } elseif (!$openAt || !$closeAt) {
+            $error = 'ยังไม่ได้กำหนดเวลา Check-in';
         } elseif (!$windowOpen) {
-            $error = 'อยู่นอกช่วงเวลา Check-in ของ Tournament นี้';
+            $error = $now < new DateTimeImmutable($openAt, new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิด Check-in' : 'ขณะนี้อยู่นอกช่วงเวลา Check-in';
         } elseif (in_array($member['checkin_status'], ['checked_in', 'waived'], true)) {
             $error = 'สมาชิกคนนี้ Check-in แล้ว';
         } else {
@@ -90,7 +117,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
     }
-    $token = trim($_POST['token'] ?? '');
+    if ($error) {
+        $token = '';
+    } else {
+        $token = trim($_POST['token'] ?? '');
+    }
     $lookupStmt = $pdo->prepare('SELECT tr.tournament_registration_id, tr.tournament_category_id
         FROM tournament_registrations tr
         WHERE tr.tournament_id = :tournament_id AND tr.qr_code_token = :token AND tr.status = \'approved\'');
@@ -100,14 +131,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_
         header('Location: checkin-teams.php?tournament_id=' . $tournamentId . '&category_id=' . (int) $registration['tournament_category_id'] . '&registration_id=' . (int) $registration['tournament_registration_id']);
         exit;
     }
-    if (!$error) $error = 'ไม่พบ QR Token ของ Registration ที่ได้รับอนุมัติใน Tournament นี้';
+    if (!$error) {
+        $otherTournamentStmt = $pdo->prepare('SELECT tournament_id FROM tournament_registrations WHERE qr_code_token = :token LIMIT 1');
+        $otherTournamentStmt->execute(['token' => $token]);
+        $otherTournamentId = $otherTournamentStmt->fetchColumn();
+        $error = $otherTournamentId ? 'รหัสนี้เป็นของทัวร์นาเมนต์อื่น' : 'ไม่พบรหัสเช็กอิน';
+    }
 }
 
 // ดึงทัวร์นาเมนต์ที่กำลังแข่งหรือเปิดรับสมัคร พร้อม gender_category และ play_mode
 $tournaments = $pdo->query("
     SELECT t.tournament_id, t.name, t.gender_category, t.status, t.start_date, t.end_date, t.checkin_open_at, t.checkin_close_at, g.name AS game_name, g.play_mode
     FROM tournaments t 
-    JOIN games g ON t.game_id = g.game_id
+    LEFT JOIN games g ON t.game_id = g.game_id
     WHERE t.status IN ('ongoing', 'registration_closed', 'registration_open') 
     ORDER BY t.created_at DESC
 ")->fetchAll();
@@ -115,79 +151,42 @@ $tournaments = $pdo->query("
 $registrations = [];
 $checkedInCount = 0;
 $totalCount = 0;
+$completeCount = 0;
 
 if ($tournamentId) {
-    if ($isSolo) {
-        $sql = "
-            SELECT tr.*, u.username AS participant_name
-            FROM tournament_registrations tr
-            JOIN players p ON p.player_id = tr.player_id
-            JOIN users u ON u.user_id = p.user_id
-            WHERE tr.tournament_id = :tid AND tr.status = 'approved'
-        ";
-        $params = ['tid' => $tournamentId];
-        if ($selectedCategoryId > 0) { $sql .= ' AND tr.tournament_category_id = :category_id'; $params['category_id'] = $selectedCategoryId; }
-        if ($selectedRegistrationId > 0) { $sql .= ' AND tr.tournament_registration_id = :registration_id'; $params['registration_id'] = $selectedRegistrationId; }
-
-        if ($teamSearch !== '') {
-            $sql .= " AND u.username LIKE :search";
-            $params['search'] = "%{$teamSearch}%";
-        }
-        $sql .= " ORDER BY u.username ASC";
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        $registrations = $stmt->fetchAll();
-
-        $allSql = "SELECT checkin_status FROM tournament_registrations WHERE tournament_id = :tid AND status = 'approved'";
-        $allParams = ['tid' => $tournamentId];
-        if ($selectedCategoryId > 0) { $allSql .= ' AND tournament_category_id = :category_id'; $allParams['category_id'] = $selectedCategoryId; }
-        $allStmt = $pdo->prepare($allSql);
-        $allStmt->execute($allParams);
-        $allRows = $allStmt->fetchAll();
-
-        $totalCount = count($allRows);
-        foreach ($allRows as $at) {
-            if ($at['checkin_status'] === 'checked_in') $checkedInCount++;
-        }
-    } else {
-        $sql = "
-            SELECT tr.*, t.name AS participant_name
-            FROM tournament_registrations tr
-            JOIN teams t ON t.team_id = tr.team_id
-            WHERE tr.tournament_id = :tid AND tr.status = 'approved'
-        ";
-        $params = ['tid' => $tournamentId];
-        if ($selectedCategoryId > 0) { $sql .= ' AND tr.tournament_category_id = :category_id'; $params['category_id'] = $selectedCategoryId; }
-        if ($selectedRegistrationId > 0) { $sql .= ' AND tr.tournament_registration_id = :registration_id'; $params['registration_id'] = $selectedRegistrationId; }
-
-        if ($teamSearch !== '') {
-            $sql .= " AND t.name LIKE :search";
-            $params['search'] = "%{$teamSearch}%";
-        }
-        $sql .= " ORDER BY t.name ASC";
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        $registrations = $stmt->fetchAll();
-
-        $allSql = "SELECT checkin_status FROM tournament_registrations WHERE tournament_id = :tid AND status = 'approved'";
-        $allParams = ['tid' => $tournamentId];
-        if ($selectedCategoryId > 0) { $allSql .= ' AND tournament_category_id = :category_id'; $allParams['category_id'] = $selectedCategoryId; }
-        $allStmt = $pdo->prepare($allSql);
-        $allStmt->execute($allParams);
-        $allRows = $allStmt->fetchAll();
-
-        $totalCount = count($allRows);
-        foreach ($allRows as $at) {
-            if ($at['checkin_status'] === 'checked_in') $checkedInCount++;
-        }
+    $sql = "SELECT tr.*, COALESCE(t.name, p.display_name, u.username) AS participant_name,
+            t.name AS team_name, t.logo_path, p.display_name, u.username,
+            COALESCE(NULLIF(tc.label, ''), NULLIF(tc.name, ''), NULLIF(tr.category, '')) AS category_label,
+            tc.category_code, tc.checkin_required_roles,
+            (SELECT COUNT(*) FROM tournament_registration_members m WHERE m.tournament_registration_id = tr.tournament_registration_id AND m.roster_status = 'active' AND m.is_required_for_checkin = 1) AS required_count,
+            (SELECT COUNT(*) FROM tournament_registration_members m WHERE m.tournament_registration_id = tr.tournament_registration_id AND m.roster_status = 'active' AND m.is_required_for_checkin = 1 AND m.checkin_status IN ('checked_in', 'waived')) AS checked_count,
+            (SELECT MAX(m.checkin_at) FROM tournament_registration_members m WHERE m.tournament_registration_id = tr.tournament_registration_id AND m.roster_status = 'active') AS latest_checkin_at
+        FROM tournament_registrations tr
+        JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id AND tc.tournament_id = tr.tournament_id AND tc.is_active = 1
+        LEFT JOIN teams t ON t.team_id = tr.team_id
+        LEFT JOIN players p ON p.player_id = tr.player_id
+        LEFT JOIN users u ON u.user_id = p.user_id
+        WHERE tr.tournament_id = :tid AND tr.status = 'approved'
+          AND tr.participation_status NOT IN ('withdrawn', 'disqualified')
+          AND ((:is_solo = 1 AND p.player_id IS NOT NULL) OR (:is_solo = 0 AND t.team_id IS NOT NULL))";
+    $params = ['tid' => $tournamentId, 'is_solo' => $isSolo ? 1 : 0];
+    if ($selectedCategoryId > 0) { $sql .= ' AND tr.tournament_category_id = :category_id'; $params['category_id'] = $selectedCategoryId; }
+    if ($selectedRegistrationId > 0) { $sql .= ' AND tr.tournament_registration_id = :registration_id'; $params['registration_id'] = $selectedRegistrationId; }
+    if ($teamSearch !== '') {
+        $sql .= " AND (t.name LIKE :search OR t.tag LIKE :search OR p.display_name LIKE :search OR u.username LIKE :search OR CAST(tr.tournament_registration_id AS CHAR) LIKE :search OR tr.qr_code_token LIKE :search)";
+        $params['search'] = "%{$teamSearch}%";
     }
+    $sql .= $isSolo ? ' ORDER BY COALESCE(p.display_name, u.username) ASC' : ' ORDER BY t.name ASC';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $registrations = $stmt->fetchAll();
+    $totalCount = count($registrations);
 }
 
 foreach ($registrations as &$registration) {
     $registration['progress'] = getRegistrationCheckinProgress($pdo, (int) $registration['tournament_registration_id']);
     $registration['is_checkin_complete'] = $registration['progress']['complete'];
+    if ($registration['is_checkin_complete']) $completeCount++;
 }
 unset($registration);
 
@@ -362,16 +361,30 @@ $csrfToken = generateCsrfToken();
             <?php if ($tournamentId): ?>
 
                 <?php
-                    $nowTimestamp = time();
-                    $checkinOpen = empty($tournament['checkin_open_at']) || strtotime($tournament['checkin_open_at']) <= $nowTimestamp;
-                    $checkinClosed = !empty($tournament['checkin_close_at']) && strtotime($tournament['checkin_close_at']) < $nowTimestamp;
-                    $checkinWindowLabel = !$checkinOpen ? 'ยังไม่เปิด Check-in' : ($checkinClosed ? 'ปิด Check-in แล้ว' : 'กำลัง Check-in');
+                    $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
+                    $checkinOpenAt = $selectedCategory['checkin_open_at'] ?? null;
+                    $checkinCloseAt = $selectedCategory['checkin_deadline'] ?? null;
+                    $checkinOpenAt = $checkinOpenAt ?: ($tournament['checkin_open_at'] ?? null);
+                    $checkinCloseAt = $checkinCloseAt ?: ($tournament['checkin_close_at'] ?? null);
+                    $checkinOpen = $checkinOpenAt && $checkinCloseAt
+                        && $now >= new DateTimeImmutable($checkinOpenAt, new DateTimeZone('Asia/Bangkok'))
+                        && $now <= new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok'));
+                    $checkinNotStarted = $checkinOpenAt && $now < new DateTimeImmutable($checkinOpenAt, new DateTimeZone('Asia/Bangkok'));
+                    $checkinClosed = $checkinCloseAt && $now > new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok'));
+                    $checkinWindowLabel = (!$checkinOpenAt || !$checkinCloseAt) ? 'ยังไม่ได้กำหนดเวลา Check-in' : ($checkinNotStarted ? 'ยังไม่เปิด Check-in' : ($checkinClosed ? 'ปิด Check-in แล้ว' : 'เปิด Check-in'));
                 ?>
-                <section class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">เกม / รูปแบบ</div><div class="mt-2 font-bold text-slate-900"><?= htmlspecialchars($tournament['game_name'] ?? '-') ?> · <?= $isSolo ? 'Solo' : 'Team' ?></div></div>
+                <?php if ($gameMissing): ?>
+                    <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3 shadow-sm">
+                        <i class="fa-solid fa-triangle-exclamation text-xl shrink-0"></i>
+                        <span>ไม่พบข้อมูลเกมของทัวร์นาเมนต์นี้</span>
+                    </div>
+                <?php endif; ?>
+                <section class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">เกม / รูปแบบ</div><div class="mt-2 font-bold text-slate-900"><?= $gameMissing ? 'ไม่พบข้อมูลเกมของทัวร์นาเมนต์นี้' : htmlspecialchars($tournament['game_name']) . ' · ' . ($isSolo ? 'Solo' : 'Team') ?></div></div>
                     <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">สถานะ Check-in</div><div class="mt-2 font-bold <?= $checkinClosed ? 'text-rose-600' : ($checkinOpen ? 'text-emerald-600' : 'text-amber-600') ?>"><?= $checkinWindowLabel ?></div></div>
                     <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">เปิด Check-in</div><div class="mt-2 text-sm font-bold text-slate-900"><?= !empty($tournament['checkin_open_at']) ? date('d/m/Y H:i:s', strtotime($tournament['checkin_open_at'])) : 'ไม่กำหนด' ?></div></div>
-                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">ปิด Check-in</div><div class="mt-2 text-sm font-bold text-slate-900"><?= !empty($tournament['checkin_close_at']) ? date('d/m/Y H:i:s', strtotime($tournament['checkin_close_at'])) : 'ไม่กำหนด' ?></div></div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">ปิด Check-in</div><div class="mt-2 text-sm font-bold text-slate-900"><?= $checkinCloseAt ? date('d/m/Y H:i:s', strtotime($checkinCloseAt)) : 'ไม่กำหนด' ?></div></div>
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">จำนวน Check-in</div><div class="mt-2 text-sm font-bold text-slate-900"><?= (int) $completeCount ?> / <?= (int) $totalCount ?> ครบ</div><div class="text-[10px] text-slate-500">ยังไม่ครบ <?= max(0, (int) $totalCount - (int) $completeCount) ?> รายการ</div></div>
                 </section>
 
                 <div class="flex gap-2 overflow-x-auto border-b border-slate-200 pb-1"><a href="?tournament_id=<?= $tournamentId ?>&category_id=0" class="min-w-max rounded-t-xl px-4 py-2 text-xs font-bold <?= !$selectedCategoryId ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500' ?>">ทั้งหมด</a><?php foreach ($categories as $category): ?><a href="?tournament_id=<?= $tournamentId ?>&category_id=<?= (int) $category['tournament_category_id'] ?>" class="min-w-max rounded-t-xl px-4 py-2 text-xs font-bold <?= $selectedCategoryId === (int) $category['tournament_category_id'] ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500' ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']) ?></a><?php endforeach; ?></div>
@@ -404,7 +417,7 @@ $csrfToken = generateCsrfToken();
 
                         <div class="px-3 py-1.5 rounded-full bg-slate-100 text-slate-900 text-xs font-bold flex items-center gap-2">
                             <i class="fa-solid fa-users text-sm"></i>
-                            <span>จำนวนทั้งหมด: <?php echo $totalCount; ?> รายการ</span>
+                            <span>อนุมัติแล้ว: <?php echo $totalCount; ?> รายการ</span>
                         </div>
                     </div>
 
@@ -416,12 +429,12 @@ $csrfToken = generateCsrfToken();
                             <span class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
                                 <i class="fa-solid fa-barcode text-lg"></i>
                             </span>
-                            <input type="text" name="token" autofocus required <?= $checkinOpen && !$checkinClosed ? '' : 'disabled' ?>
+                            <input type="text" name="token" autofocus required <?= $checkinOpen ? '' : 'disabled' ?>
                                 class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl pl-12 pr-4 py-3.5 text-base sm:text-lg font-mono font-bold text-slate-900 tracking-widest uppercase focus:bg-white focus:outline-none focus:border-brand-orange transition-all placeholder-slate-400"
                                 placeholder="สแกน หรือพิมพ์รหัสเช็คอินที่นี่...">
                         </div>
 
-                        <button type="submit" <?= $checkinOpen && !$checkinClosed ? '' : 'disabled' ?>
+                        <button type="submit" <?= $checkinOpen ? '' : 'disabled' ?>
                             class="px-8 py-3.5 rounded-xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-sm uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer shrink-0">
                             <i class="fa-solid fa-user-check"></i>
                             <span>ยืนยันเช็คอิน</span>
@@ -433,6 +446,7 @@ $csrfToken = generateCsrfToken();
                 <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                     <form method="GET" action="checkin-teams.php" id="searchFilterForm" class="relative">
                         <input type="hidden" name="tournament_id" value="<?php echo $tournamentId; ?>">
+                        <input type="hidden" name="category_id" value="<?php echo $selectedCategoryId; ?>">
                         <span class="absolute inset-y-0 left-0 pl-4 flex items-center text-slate-400">
                             <i class="fa-solid fa-magnifying-glass text-sm"></i>
                         </span>
@@ -447,7 +461,7 @@ $csrfToken = generateCsrfToken();
                     </form>
                 </div>
 
-                <?php 
+                <?php
                     $checkedInList = [];
                     $pendingList = [];
                     foreach ($registrations as $r) {
@@ -458,6 +472,13 @@ $csrfToken = generateCsrfToken();
                         }
                     }
                 ?>
+
+                <?php if ($totalCount === 0): ?>
+                    <div class="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+                        <div class="font-bold">ยังไม่มีทีม/ผู้เล่นที่ได้รับอนุมัติสำหรับทัวร์นาเมนต์นี้</div>
+                        <p class="mt-1 text-xs">ระบบพบใบสมัครที่ยังไม่ผ่านสถานะ approved หรือยังไม่มีใบสมัครที่เชื่อมกับ Category และ Team/Player ที่ใช้งานได้</p>
+                    </div>
+                <?php endif; ?>
 
                 <!-- 2-COLUMN SIDE-BY-SIDE LAYOUT -->
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
@@ -499,10 +520,10 @@ $csrfToken = generateCsrfToken();
                                             <?php echo htmlspecialchars($r['participant_name']); ?>
                                         </td>
                                         <td class="p-3.5 text-center text-[11px] text-slate-600">
-                                            <?= htmlspecialchars($r['category'] ?? 'ไม่ระบุ') ?>
+                                            <?= htmlspecialchars($r['category_label'] ?: $r['category_code'] ?: $r['category'] ?: 'ไม่ระบุ') ?>
                                         </td>
                                         <td class="p-3.5 text-center text-[11px] text-emerald-700 font-semibold">
-                                            <?php echo !empty($r['checkin_at']) ? date('H:i:s d/m/Y', strtotime($r['checkin_at'])) : '-'; ?>
+                                            <?php echo !empty($r['latest_checkin_at']) ? date('H:i:s d/m/Y', strtotime($r['latest_checkin_at'])) : '-'; ?>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>

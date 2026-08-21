@@ -134,6 +134,56 @@ $approvalStatus = trim((string) ($_GET['approval_status'] ?? 'all'));
 $checkinStatus = trim((string) ($_GET['checkin_status'] ?? 'all'));
 $drawStatus = trim((string) ($_GET['draw_status'] ?? 'all'));
 
+$action = $_POST['action'] ?? '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'approve_registration') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $registrationId = (int) ($_POST['registration_id'] ?? 0);
+        $approveStmt = $pdo->prepare('SELECT tr.*, tc.is_active AS category_active
+            FROM tournament_registrations tr
+            LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+                AND tc.tournament_id = tr.tournament_id
+            WHERE tr.tournament_registration_id = :registration_id LIMIT 1');
+        $approveStmt->execute(['registration_id' => $registrationId]);
+        $registration = $approveStmt->fetch(PDO::FETCH_ASSOC);
+        $validParticipant = false;
+        if ($registration) {
+            $participantStmt = $registration['team_id']
+                ? $pdo->prepare('SELECT COUNT(*) FROM teams WHERE team_id = :id')
+                : $pdo->prepare('SELECT COUNT(*) FROM players WHERE player_id = :id');
+            $participantStmt->execute(['id' => (int) ($registration['team_id'] ?: $registration['player_id'])]);
+            $validParticipant = (int) $participantStmt->fetchColumn() > 0;
+        }
+        if (!$registration || $registration['status'] !== 'pending') {
+            $error = 'ใบสมัครนี้ไม่อยู่ในสถานะรอตรวจสอบ';
+        } elseif ((int) ($registration['category_active'] ?? 0) !== 1) {
+            $error = 'Category ของใบสมัครนี้ไม่พร้อมใช้งาน';
+        } elseif (!$validParticipant) {
+            $error = 'ไม่พบทีม/ผู้เล่นของใบสมัครนี้';
+        } else {
+            try {
+                $pdo->beginTransaction();
+                $token = (string) ($registration['qr_code_token'] ?? '');
+                if ($token === '') $token = bin2hex(random_bytes(24));
+                $update = $pdo->prepare("UPDATE tournament_registrations
+                    SET status = 'approved', qr_code_token = :token, reviewed_by = :reviewed_by,
+                        reviewed_at = NOW(), participation_status = 'registered'
+                    WHERE tournament_registration_id = :registration_id AND status = 'pending'");
+                $update->execute(['token' => $token, 'reviewed_by' => (int) $_SESSION['user_id'], 'registration_id' => $registrationId]);
+                if ($update->rowCount() !== 1) throw new RuntimeException('ไม่สามารถเปลี่ยนสถานะใบสมัครได้');
+                snapshotTournamentRoster($pdo, $registrationId, $registration['team_id'] ? (int) $registration['team_id'] : null, $registration['player_id'] ? (int) $registration['player_id'] : null);
+                recordRegistrationStatus($pdo, $registrationId, 'approved', (int) $_SESSION['user_id'], 'อนุมัติใบสมัครจากหน้าจัดการผู้สมัคร');
+                $pdo->commit();
+                $success = 'อนุมัติใบสมัครและสร้าง QR Check-in เรียบร้อยแล้ว';
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = 'อนุมัติใบสมัครไม่สำเร็จ';
+            }
+        }
+    }
+}
+
 $allTournaments = $pdo->query(
     "SELECT t.tournament_id, t.name, t.status, t.start_date, t.end_date, t.checkin_open_at, t.checkin_close_at, g.name AS game_name, g.play_mode
      FROM tournaments t
@@ -621,6 +671,14 @@ $csrfToken = generateCsrfToken();
                                             <td class="px-4 py-3 text-right">
                                                 <div class="flex justify-end gap-2">
                                                     <a href="#" class="inline-flex h-9 items-center rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-200">รายละเอียด</a>
+                                                    <?php if (($row['status'] ?? '') === 'pending'): ?>
+                                                        <form method="POST" class="inline-flex" onsubmit="return confirm('ยืนยันอนุมัติใบสมัครนี้?');">
+                                                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                                            <input type="hidden" name="action" value="approve_registration">
+                                                            <input type="hidden" name="registration_id" value="<?= (int) $row['tournament_registration_id'] ?>">
+                                                            <button type="submit" class="inline-flex h-9 items-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700">อนุมัติ</button>
+                                                        </form>
+                                                    <?php endif; ?>
                                                     <div class="relative">
                                                         <?php $registrationId = (int) $row['tournament_registration_id']; ?>
                                                         <button type="button" class="admin-action-toggle registration-action-toggle relative z-30 pointer-events-auto inline-flex h-9 items-center rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white hover:bg-brand-glow" data-registration-id="<?= $registrationId ?>" data-menu-target="registration-menu-<?= $registrationId ?>" data-action-menu="registration-menu-<?= $registrationId ?>" aria-expanded="false" aria-controls="registration-menu-<?= $registrationId ?>">จัดการ</button>
