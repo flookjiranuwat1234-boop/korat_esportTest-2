@@ -5,6 +5,7 @@ require_once '../includes/auth.php';
 require_once '../includes/ranking.php';
 require_once '../includes/bracket.php';
 require_once '../includes/tournament_categories.php';
+require_once '../includes/tournament_workflow.php';
 requireRole('admin');
 
 $currentUser = [
@@ -40,6 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
             $error = 'Match นี้ไม่อยู่ใน Tournament ที่กำลังจัดการ';
         } elseif (!empty($_POST['category_id']) && (int) $_POST['category_id'] !== (int) ($matchOwnership['tournament_category_id'] ?? 0)) {
             $error = 'Match นี้ไม่อยู่ใน Category ที่เลือก';
+        } elseif (!canRecordMatch($pdo, $tournamentId, $matchId)) {
+            $error = 'Tournament หรือ Match นี้ไม่อนุญาตให้บันทึกผลในสถานะปัจจุบัน';
         } elseif ($currentMatchStatus == 'completed' || $currentMatchStatus == 'walkover') {
             $error = 'แมตช์นี้ถูกบันทึกผลการแข่งขันไปแล้ว ไม่สามารถบันทึกซ้ำได้';
         } else {
@@ -80,9 +83,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                                 status = 'completed', completed_at = NOW()
                             WHERE match_id = :id
                         ")->execute(['s1' => $score1, 's2' => $score2, 'winner' => $winnerId, 'id' => $matchId]);
-                        $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :tournament_id AND status = 'bracket_generated'")
-                            ->execute(['tournament_id' => $tournamentId]);
-
                         if (function_exists('updateRankingsAfterMatch')) {
                                     try { updateRankingsAfterMatch($pdo, $matchId); } catch (Exception $ex) { throw new RuntimeException('บันทึก Ranking ไม่สำเร็จ: ' . $ex->getMessage(), 0, $ex); }
                         }
@@ -175,9 +175,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             's1' => $team1GamesWon, 's2' => $team2GamesWon,
                             'winner' => $winnerId, 'id' => $matchId,
                         ]);
-                        $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :tournament_id AND status = 'bracket_generated'")
-                            ->execute(['tournament_id' => $tournamentId]);
-
                         if (function_exists('updateRankingsAfterMatch')) updateRankingsAfterMatch($pdo, $matchId);
                         advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
 

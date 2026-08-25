@@ -69,12 +69,12 @@ $incompleteCheckinCount = $pdo->query("SELECT COUNT(*) FROM tournament_registrat
       AND EXISTS (SELECT 1 FROM tournament_registration_members req WHERE req.tournament_registration_id = tr.tournament_registration_id AND req.is_required_for_checkin = 1)
       AND EXISTS (SELECT 1 FROM tournament_registration_members waiting WHERE waiting.tournament_registration_id = tr.tournament_registration_id AND waiting.is_required_for_checkin = 1 AND waiting.checkin_status NOT IN ('checked_in', 'waived'))")->fetchColumn();
 $readyForDrawCount = $pdo->query("SELECT COUNT(*) FROM tournaments t
-        WHERE t.status NOT IN ('completed', 'cancelled', 'archived')
+        WHERE t.status NOT IN ('completed', 'cancelled')
             AND EXISTS (SELECT 1 FROM tournament_registrations tr WHERE tr.tournament_id = t.tournament_id AND tr.participation_status = 'qualified_for_draw')
             AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.tournament_id = t.tournament_id)")->fetchColumn();
 $completedTournamentCount = $pdo->query("SELECT COUNT(*) FROM tournaments WHERE status = 'completed'")->fetchColumn();
 $upcomingTournamentCount = $pdo->query("SELECT COUNT(*) FROM tournaments
-        WHERE status NOT IN ('completed', 'cancelled', 'archived')
+        WHERE status NOT IN ('completed', 'cancelled')
             AND start_date IS NOT NULL AND start_date BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)")->fetchColumn();
 $urgentTaskCount = (int) $incompleteCheckinCount + (int) $pendingMatches + (int) $pendingRegistrationCount + (int) $readyForDrawCount + (int) $upcomingTournamentCount;
 

@@ -173,7 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'approve_registration')
                 $update->execute(['token' => $token, 'reviewed_by' => (int) $_SESSION['user_id'], 'registration_id' => $registrationId]);
                 if ($update->rowCount() !== 1) throw new RuntimeException('ไม่สามารถเปลี่ยนสถานะใบสมัครได้');
                 snapshotTournamentRoster($pdo, $registrationId, $registration['team_id'] ? (int) $registration['team_id'] : null, $registration['player_id'] ? (int) $registration['player_id'] : null);
-                recordRegistrationStatus($pdo, $registrationId, 'approved', (int) $_SESSION['user_id'], 'อนุมัติใบสมัครจากหน้าจัดการผู้สมัคร');
+                recordRegistrationStatus($pdo, $registrationId, 'approved', (int) $_SESSION['user_id'], 'อนุมัติใบสมัครจากหน้าจัดการผู้สมัคร', (string) $registration['status']);
                 $pdo->commit();
                 $success = 'อนุมัติใบสมัครและสร้าง QR Check-in เรียบร้อยแล้ว';
             } catch (Throwable $exception) {

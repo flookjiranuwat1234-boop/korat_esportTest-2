@@ -4,9 +4,11 @@ require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/tournament_roster.php';
 require_once '../includes/tournament_categories.php';
+require_once '../includes/registration_status.php';
 requireLogin();
 ensureTournamentRosterTables($pdo);
 ensureTournamentCategorySchema($pdo);
+ensureRegistrationStatusHistoryTable($pdo);
 
 date_default_timezone_set('Asia/Bangkok');
 
@@ -157,33 +159,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (($tournament['play_mode'] ?? '') !== 'solo') {
                     $error = 'ทัวร์นาเมนต์นี้ไม่ได้เปิดให้แข่งขันแบบเดี่ยว';
                 } else {
-                    $existingSolo = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id AND player_id = :player_id AND status IN (\'pending\', \'approved\') LIMIT 1');
-                    $existingSolo->execute(['tournament_id' => $tournamentId, 'player_id' => $myPlayerId]);
-                    if ($existingSolo->fetchColumn()) {
-                        $error = 'ทีม/ผู้เล่นนี้สมัครประเภทการแข่งขันนี้แล้ว';
+                    $categoryId = (int) ($_POST['tournament_category_id'] ?? 0);
+                    $eligibleCategories = getEligibleCategories($pdo, $tournamentId);
+                    $selectedCategory = null;
+                    foreach ($eligibleCategories as $category) {
+                        if ((int) $category['tournament_category_id'] === $categoryId) {
+                            $selectedCategory = $category;
+                            break;
+                        }
+                    }
+                    if (!$selectedCategory) {
+                        $error = 'กรุณาเลือก Category ที่เปิดรับสมัคร';
                     } else {
-                        $eligibleCategories = getEligibleCategories($pdo, $tournamentId);
-                        if (empty($eligibleCategories)) {
-                            $error = 'ยังไม่มีประเภทการแข่งขันที่เปิดรับสมัคร';
+                        $existingSolo = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND player_id = :player_id AND status IN (\'pending\', \'approved\') LIMIT 1');
+                        $existingSolo->execute(['tournament_id' => $tournamentId, 'category_id' => $categoryId, 'player_id' => $myPlayerId]);
+                        if ($existingSolo->fetchColumn()) {
+                            $error = 'ผู้เล่นนี้สมัคร Category นี้แล้ว';
                         } else {
-                            $category = $eligibleCategories[0];
-                            $categoryId = (int) $category['tournament_category_id'];
-                            $categoryCode = (string) ($category['category_code'] ?? 'open');
+                            $categoryCode = (string) $selectedCategory['category_code'];
+                            try {
+                                $pdo->beginTransaction();
+                                $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status, participation_status)
+                                    VALUES (:tournament_id, :category_id, :player_id, NULL, :category, :status, :participation_status)');
+                                $insert->execute([
+                                    'tournament_id' => $tournamentId,
+                                    'category_id' => $categoryId,
+                                    'player_id' => $myPlayerId,
+                                    'category' => $categoryCode,
+                                    'status' => 'pending',
+                                    'participation_status' => 'registered',
+                                ]);
 
-                            $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status, participation_status)
-                                VALUES (:tournament_id, :category_id, :player_id, NULL, :category, :status, :participation_status)');
-                            $insert->execute([
-                                'tournament_id' => $tournamentId,
-                                'category_id' => $categoryId,
-                                'player_id' => $myPlayerId,
-                                'category' => $categoryCode,
-                                'status' => 'pending',
-                                'participation_status' => 'registered',
-                            ]);
-
-                            $registrationId = (int) $pdo->lastInsertId();
-                            snapshotTournamentRoster($pdo, $registrationId, null, $myPlayerId);
-                            $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                                $registrationId = (int) $pdo->lastInsertId();
+                                snapshotTournamentRoster($pdo, $registrationId, null, $myPlayerId);
+                                recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament', null);
+                                $pdo->commit();
+                                $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                            } catch (Throwable $exception) {
+                                if ($pdo->inTransaction()) $pdo->rollBack();
+                                $error = 'ส่งใบสมัครไม่สำเร็จ';
+                            }
                         }
                     }
                 }
@@ -231,18 +246,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 }
 
                                 if (empty($error)) {
-                                    $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status, participation_status)
-                                        VALUES (:tournament_id, :category_id, :team_id, NULL, :category, \'pending\', \'registered\')');
-                                    $insert->execute([
-                                        'tournament_id' => $tournamentId,
-                                        'category_id' => $categoryId,
-                                        'team_id' => $teamId,
-                                        'category' => (string) ($selectedCategory['category_code'] ?? 'open'),
-                                    ]);
+                                    try {
+                                        $pdo->beginTransaction();
+                                        $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status, participation_status)
+                                            VALUES (:tournament_id, :category_id, :team_id, NULL, :category, \'pending\', \'registered\')');
+                                        $insert->execute([
+                                            'tournament_id' => $tournamentId,
+                                            'category_id' => $categoryId,
+                                            'team_id' => $teamId,
+                                            'category' => (string) ($selectedCategory['category_code'] ?? 'open'),
+                                        ]);
 
-                                    $registrationId = (int) $pdo->lastInsertId();
-                                    snapshotTournamentRoster($pdo, $registrationId, $teamId, null);
-                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                                        $registrationId = (int) $pdo->lastInsertId();
+                                        snapshotTournamentRoster($pdo, $registrationId, $teamId, null);
+                                        recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament ในนามทีม', null);
+                                        $pdo->commit();
+                                        $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                                    } catch (Throwable $exception) {
+                                        if ($pdo->inTransaction()) $pdo->rollBack();
+                                        $error = 'ส่งใบสมัครไม่สำเร็จ';
+                                    }
                                 }
                             }
                         }
@@ -516,10 +539,16 @@ $csrfToken = generateCsrfToken();
                                             <?php [$label, $badgeClass, $icon] = registrationStatusLabel($existingSoloMap[$t['tournament_id']]); ?>
                                             <span class="px-4 py-2 rounded-xl border text-xs font-bold <?= $badgeClass; ?>"><i class="fa-solid <?= $icon; ?> mr-1"></i><?= $label; ?></span>
                                         <?php else: ?>
-                                            <form method="POST">
+                                            <form method="POST" class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                                                 <input type="hidden" name="csrf_token" value="<?= $csrfToken; ?>">
                                                 <input type="hidden" name="tournament_id" value="<?= $t['tournament_id']; ?>">
                                                 <input type="hidden" name="mode" value="solo">
+                                                <select name="tournament_category_id" required class="bg-black/60 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange">
+                                                    <option value="">เลือก Category</option>
+                                                    <?php foreach (($tournamentCategories[(int) $t['tournament_id']] ?? []) as $category): ?>
+                                                        <option value="<?= (int) $category['tournament_category_id']; ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']); ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
                                                 <button type="submit" class="px-6 py-2.5 rounded-xl bg-brand-orange text-white font-bold text-xs uppercase">สมัครแข่งเดี่ยว</button>
                                             </form>
                                         <?php endif; ?>

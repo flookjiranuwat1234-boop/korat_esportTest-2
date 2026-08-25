@@ -327,17 +327,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             if (!$registration) {
                 $error = 'ไม่พบรายการสมัคร Tournament';
             } else {
-                $pdo->prepare('UPDATE tournament_registrations SET status = :status,
+                try {
+                    $pdo->beginTransaction();
+                    $updateStmt = $pdo->prepare('UPDATE tournament_registrations SET status = :status,
                     participation_status = CASE WHEN :status2 = \'approved\' THEN \'registered\' ELSE :status3 END
                     WHERE tournament_registration_id = :registration_id')
-                    ->execute([
+                    ;
+                    $updateStmt->execute([
                         'status' => $newStatus,
                         'status2' => $newStatus,
                         'status3' => $newStatus === 'disqualified' ? 'disqualified' : 'registered',
                         'registration_id' => $registrationId,
                     ]);
-                recordRegistrationStatus($pdo, $registrationId, $newStatus, (int) ($_SESSION['user_id'] ?? 0), $note ?: null);
-                $success = 'อัปเดตสถานะผู้สมัครเรียบร้อยแล้ว';
+                    if ($updateStmt->rowCount() !== 1) {
+                        throw new RuntimeException('ไม่สามารถเปลี่ยนสถานะใบสมัครได้');
+                    }
+                    recordRegistrationStatus($pdo, $registrationId, $newStatus, (int) ($_SESSION['user_id'] ?? 0), $note ?: null, (string) $registration['status']);
+                    $pdo->commit();
+                    $success = 'อัปเดตสถานะผู้สมัครเรียบร้อยแล้ว';
+                } catch (Throwable $exception) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    $error = 'ไม่สามารถอัปเดตสถานะผู้สมัครได้';
+                }
             }
         }
     }
@@ -437,7 +448,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
         } else {
             try {
                 $pdo->beginTransaction();
-                $updated = $pdo->prepare("UPDATE tournaments SET status = 'completed' WHERE tournament_id = :tournament_id AND status = 'ongoing'")->execute(['tournament_id' => $tournamentId]);
+                $updated = $pdo->prepare("UPDATE tournaments SET status = 'completed', completed_at = NOW(), completed_by = :completed_by WHERE tournament_id = :tournament_id AND status = 'ongoing'")->execute([
+                    'completed_by' => (int) ($_SESSION['user_id'] ?? 0),
+                    'tournament_id' => $tournamentId,
+                ]);
                 if (!$updated || $pdo->query('SELECT ROW_COUNT()')->fetchColumn() !== '1') {
                     throw new RuntimeException('สถานะ Tournament เปลี่ยนไปแล้ว');
                 }
@@ -1117,7 +1131,7 @@ if (isset($_GET['close_registration'])) {
             }
 
             if ($error === '') {
-                $pdo->prepare("UPDATE tournaments SET status = 'bracket_generated' WHERE tournament_id = :id")->execute(['id' => $tid]);
+                $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :id AND status IN ('registration_open', 'registration_closed')")->execute(['id' => $tid]);
                 header("Location: record-match.php?tournament_id=" . $tid);
                 exit;
             }
@@ -1131,7 +1145,7 @@ if (isset($_GET['generate_playoff'])) {
     $tid = (int) $_GET['generate_playoff'];
     try {
         generateGroupPlayoff($pdo, $tid);
-        $pdo->prepare("UPDATE tournaments SET status = 'bracket_generated' WHERE tournament_id = :id")->execute(['id' => $tid]);
+        $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :id AND status IN ('registration_open', 'registration_closed', 'ongoing')")->execute(['id' => $tid]);
         $success = 'สร้างสาย Playoff จากทีมที่ผ่านรอบแบ่งกลุ่มแล้ว';
     } catch (Exception $e) {
         $error = 'สร้างสาย Playoff ไม่สำเร็จ: ' . $e->getMessage();

@@ -20,12 +20,14 @@ function ensureRegistrationStatusHistoryTable(PDO $pdo): void
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $ready = true;
 }
-function recordRegistrationStatus(PDO $pdo, int $registrationId, string $newStatus, ?int $changedBy, ?string $note = null): void
+function recordRegistrationStatus(PDO $pdo, int $registrationId, string $newStatus, ?int $changedBy, ?string $note = null, ?string $oldStatus = null): void
 {
     ensureRegistrationStatusHistoryTable($pdo);
-    $stmt = $pdo->prepare('SELECT status FROM tournament_registrations WHERE tournament_registration_id = :id');
-    $stmt->execute(['id' => $registrationId]);
-    $oldStatus = $stmt->fetchColumn();
+    if (func_num_args() < 6) {
+        $stmt = $pdo->prepare('SELECT status FROM tournament_registrations WHERE tournament_registration_id = :id');
+        $stmt->execute(['id' => $registrationId]);
+        $oldStatus = $stmt->fetchColumn();
+    }
     if ($oldStatus === false || $oldStatus === $newStatus) return;
     $pdo->prepare('INSERT INTO registration_status_history
         (tournament_registration_id, old_status, new_status, changed_by, change_note)

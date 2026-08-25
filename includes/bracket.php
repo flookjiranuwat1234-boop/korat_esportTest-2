@@ -88,26 +88,22 @@ function generateSingleEliminationBracket($pdo, $tournamentId)
         throw new Exception("ต้องมีผู้แข่งขันที่อนุมัติหรือเช็คอินแล้วอย่างน้อย 2 ทีม");
     }
 
-    $groupedTeams = [
-        'male' => [],
-        'female' => [],
-        'open' => []
-    ];
-
+    $groupedTeams = [];
     foreach ($teams as $t) {
-        $cat = $t['category'] ?? 'open';
-        if (!isset($groupedTeams[$cat])) {
-            $cat = 'open';
-        }
-        $groupedTeams[$cat][] = [
+        $categoryId = (int) ($t['tournament_category_id'] ?? 0);
+        if ($categoryId <= 0) throw new RuntimeException('ผู้แข่งขันไม่มี Tournament Category ID');
+        $groupedTeams[$categoryId]['code'] = (string) ($t['category'] ?? 'category_' . $categoryId);
+        $groupedTeams[$categoryId]['competitors'][] = [
             'competitor_id' => $t['competitor_id'],
-            'category_id' => $t['tournament_category_id'] ?? null,
+            'category_id' => $categoryId,
         ];
     }
 
     $maxRounds = 1;
 
-    foreach ($groupedTeams as $category => $categoryTeamIds) {
+    foreach ($groupedTeams as $categoryData) {
+        $category = $categoryData['code'];
+        $categoryTeamIds = $categoryData['competitors'];
         if (count($categoryTeamIds) >= 2) {
             $categoryId = $categoryTeamIds[0]['category_id'] ?? null;
             $categoryIds = array_column($categoryTeamIds, 'competitor_id');
@@ -145,26 +141,22 @@ function generateDoubleEliminationBracket($pdo, $tournamentId)
         throw new Exception("ต้องมีผู้แข่งขันที่อนุมัติหรือเช็คอินแล้วอย่างน้อย 2 ทีม");
     }
 
-    $groupedTeams = [
-        'male' => [],
-        'female' => [],
-        'open' => []
-    ];
-
+    $groupedTeams = [];
     foreach ($teams as $t) {
-        $cat = $t['category'] ?? 'open';
-        if (!isset($groupedTeams[$cat])) {
-            $cat = 'open';
-        }
-        $groupedTeams[$cat][] = [
+        $categoryId = (int) ($t['tournament_category_id'] ?? 0);
+        if ($categoryId <= 0) throw new RuntimeException('ผู้แข่งขันไม่มี Tournament Category ID');
+        $groupedTeams[$categoryId]['code'] = (string) ($t['category'] ?? 'category_' . $categoryId);
+        $groupedTeams[$categoryId]['competitors'][] = [
             'competitor_id' => $t['competitor_id'],
-            'category_id' => $t['tournament_category_id'] ?? null,
+            'category_id' => $categoryId,
         ];
     }
 
     $maxRounds = 1;
 
-    foreach ($groupedTeams as $category => $categoryTeamIds) {
+    foreach ($groupedTeams as $categoryData) {
+        $category = $categoryData['code'];
+        $categoryTeamIds = $categoryData['competitors'];
         if (count($categoryTeamIds) >= 2) {
             $categoryId = $categoryTeamIds[0]['category_id'] ?? null;
             $categoryIds = array_column($categoryTeamIds, 'competitor_id');
@@ -195,25 +187,21 @@ function backfillRegistrationCategories(PDO $pdo, int $tournamentId): void
 
 function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
 {
-    $tStmt = $pdo->prepare("
-        SELECT g.name FROM tournaments t 
-        JOIN games g ON g.game_id = t.game_id 
-        WHERE t.tournament_id = :tid
-    ");
+    $tStmt = $pdo->prepare('SELECT g.play_mode FROM tournaments t
+        JOIN games g ON g.game_id = t.game_id WHERE t.tournament_id = :tid');
     $tStmt->execute(['tid' => $tournamentId]);
-    $gameName = $tStmt->fetchColumn() ?: '';
+    $playMode = $tStmt->fetchColumn();
 
-    $isIndividual = (strpos($gameName, 'Tekken') !== false || strpos($gameName, 'Street Fighter') !== false || strpos($gameName, 'Efootball') !== false || strpos($gameName, 'Roblox') !== false);
-
-    if ($isIndividual) {
+    if ($playMode === 'solo') {
         $stmt = $pdo->prepare("
-            SELECT DISTINCT tr.player_id AS competitor_id, 'open' AS category, tr.tournament_category_id,
+            SELECT DISTINCT tr.player_id AS competitor_id, tr.category AS category, tr.tournament_category_id,
                 tr.seed_no,
                 COALESCE((SELECT pr.points FROM player_rankings pr
                     WHERE pr.player_id = tr.player_id AND pr.game_id = :game_id
                     ORDER BY pr.points DESC LIMIT 1), 0) AS ranking_points
             FROM tournament_registrations tr
-            WHERE tr.tournament_id = :tid 
+            JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id AND tc.is_active = 1
+            WHERE tr.tournament_id = :tid
               AND tr.player_id IS NOT NULL
               AND tr.status = 'approved' AND tr.participation_status = 'qualified_for_draw'
             ORDER BY (tr.seed_no IS NULL), tr.seed_no ASC, ranking_points DESC, RAND()
@@ -222,14 +210,15 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $stmt = $pdo->prepare("
-            SELECT DISTINCT tr.team_id AS competitor_id, tr.category AS category, tm.name AS team_name, tr.tournament_category_id,
+            SELECT DISTINCT tr.team_id AS competitor_id, tc.category_code AS category, tm.name AS team_name, tr.tournament_category_id,
                 tr.seed_no,
                 COALESCE((SELECT trank.points FROM team_rankings trank
                     WHERE trank.team_id = tr.team_id AND trank.game_id = :game_id
                     ORDER BY trank.points DESC LIMIT 1), 0) AS ranking_points
             FROM tournament_registrations tr
             JOIN teams tm ON tm.team_id = tr.team_id
-            WHERE tr.tournament_id = :tid 
+            JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id AND tc.is_active = 1
+            WHERE tr.tournament_id = :tid
               AND tr.team_id IS NOT NULL
               AND tr.status = 'approved' AND tr.participation_status = 'qualified_for_draw'
             ORDER BY (tr.seed_no IS NULL), tr.seed_no ASC, ranking_points DESC, RAND()
@@ -239,13 +228,7 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
 
         $results = [];
         foreach ($rows as $row) {
-            $cat = $row['category'];
-            $tName = $row['team_name'];
-            if (empty($cat)) {
-                if (stripos($tName, 'หญิง') !== false) $cat = 'female';
-                elseif (stripos($tName, 'ชาย') !== false) $cat = 'male';
-                else $cat = 'open';
-            }
+            $cat = $row['category'] ?: 'category_' . (int) $row['tournament_category_id'];
             $results[] = [
                 'competitor_id' => $row['competitor_id'],
                 'category' => $cat,

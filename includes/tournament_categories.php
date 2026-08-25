@@ -159,60 +159,6 @@ function getRegistrationCheckinProgress(PDO $pdo, int $registrationId): array
 function ensureDefaultTournamentCategories(PDO $pdo, int $tournamentId): void
 {
     ensureTournamentCategorySchema($pdo);
-    $stmt = $pdo->prepare('SELECT t.format, t.max_teams, g.name AS game_name FROM tournaments t
-        JOIN games g ON g.game_id = t.game_id WHERE t.tournament_id = :tournament_id');
-    $stmt->execute(['tournament_id' => $tournamentId]);
-    $tournament = $stmt->fetch();
-    if (!$tournament) return;
-
-    $isUnder18 = stripos($tournament['game_name'], 'ต่ำกว่า 18') !== false;
-    $categories = $isUnder18
-        ? [['male', 'ชาย'], ['female', 'หญิง']]
-        : [['open', 'Open']];
-    $categoryFields = $pdo->query('SHOW COLUMNS FROM tournament_categories')->fetchAll(PDO::FETCH_COLUMN);
-    $hasLegacyCode = in_array('code', $categoryFields, true);
-    $findSql = 'SELECT tournament_category_id FROM tournament_categories WHERE tournament_id = :tournament_id AND category_code = :code';
-    if ($hasLegacyCode) $findSql .= ' OR (tournament_id = :tournament_id_legacy AND code = :code_legacy)';
-    $find = $pdo->prepare($findSql . ' LIMIT 1');
-    $insert = $hasLegacyCode
-        ? $pdo->prepare('INSERT INTO tournament_categories
-            (tournament_id, category_code, code, label, max_participants, format, is_active)
-            VALUES (:tournament_id, :code, :legacy_code, :label, :max_participants, :format, 1)')
-        : $pdo->prepare('INSERT INTO tournament_categories
-            (tournament_id, category_code, label, max_participants, format, is_active)
-            VALUES (:tournament_id, :code, :label, :max_participants, :format, 1)');
-    $repairBlank = $pdo->prepare('SELECT tournament_category_id FROM tournament_categories
-        WHERE tournament_id = :tournament_id AND (category_code IS NULL OR TRIM(category_code) = \'\')'
-        . ($hasLegacyCode ? ' AND (code IS NULL OR TRIM(code) = \'\')' : '') . '
-        ORDER BY tournament_category_id LIMIT 1');
-    $repairSql = 'UPDATE tournament_categories SET category_code = :code, label = COALESCE(NULLIF(label, \'\'), :label),
-        max_participants = COALESCE(max_participants, :max_participants), format = COALESCE(NULLIF(format, \'\'), :format), is_active = 1
-        ' . ($hasLegacyCode ? ', code = :legacy_code ' : '') . ' WHERE tournament_category_id = :category_id';
-    $repair = $pdo->prepare($repairSql);
-    foreach ($categories as [$code, $label]) {
-        $params = [
-            'tournament_id' => $tournamentId,
-            'code' => $code,
-            'label' => $label,
-            'max_participants' => $tournament['max_teams'],
-            'format' => $tournament['format'] ?: 'single_elimination',
-        ];
-        $findParams = ['tournament_id' => $tournamentId, 'code' => $code];
-        if ($hasLegacyCode) { $findParams['tournament_id_legacy'] = $tournamentId; $findParams['code_legacy'] = $code; }
-        $find->execute($findParams);
-        if ($find->fetchColumn() === false) {
-            $repairBlank->execute(['tournament_id' => $tournamentId]);
-            $blankId = $repairBlank->fetchColumn();
-            if ($blankId !== false) {
-                $repairParams = ['code' => $code, 'label' => $label, 'max_participants' => $tournament['max_teams'], 'format' => $tournament['format'] ?: 'single_elimination', 'category_id' => $blankId];
-                if ($hasLegacyCode) $repairParams['legacy_code'] = $code;
-                $repair->execute($repairParams);
-            } else {
-                if ($hasLegacyCode) $params['legacy_code'] = $code;
-                $insert->execute($params);
-            }
-        }
-    }
 }
 
 function getTournamentCategoryId(PDO $pdo, int $tournamentId, string $categoryCode): ?int

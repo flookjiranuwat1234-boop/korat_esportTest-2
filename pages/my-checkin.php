@@ -5,6 +5,7 @@ require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/tournament_roster.php';
 require_once '../includes/tournament_categories.php';
+require_once '../includes/tournament_workflow.php';
 requireLogin();
 ensureTournamentRosterTables($pdo);
 ensureTournamentCategorySchema($pdo);
@@ -43,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'playe
             $error = 'คุณไม่มีสิทธิ์เช็คอินในรายการนี้';
         } elseif (!$verifiedRegistration['checkin_open_at'] || !$verifiedRegistration['checkin_close_at']) {
             $error = 'ยังไม่ได้กำหนดเวลา Check-in';
-        } elseif (!$checkinWindowOpen) {
+        } elseif (!$checkinWindowOpen || !canCheckinRegistration($pdo, $registrationId, $now)) {
             $error = $now < new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิด Check-in' : 'ขณะนี้อยู่นอกช่วงเวลา Check-in';
         } else {
             markRosterPlayerCheckedIn($pdo, $registrationId, (int) $myPlayerId, (int) $_SESSION['user_id']);
