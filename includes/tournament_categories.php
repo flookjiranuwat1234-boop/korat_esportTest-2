@@ -219,10 +219,14 @@ function getTournamentCategoryId(PDO $pdo, int $tournamentId, string $categoryCo
 {
     ensureDefaultTournamentCategories($pdo, $tournamentId);
     $stmt = $pdo->prepare('SELECT tournament_category_id FROM tournament_categories
-        WHERE tournament_id = :tournament_id AND category_code = :category_code AND is_active = 1');
+        WHERE tournament_id = :tournament_id AND category_code = :category_code');
     $stmt->execute(['tournament_id' => $tournamentId, 'category_code' => $categoryCode]);
     $id = $stmt->fetchColumn();
-    if ($id !== false) return (int) $id;
+    if ($id !== false) {
+        $pdo->prepare('UPDATE tournament_categories SET is_active = 1 WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id')
+            ->execute(['category_id' => (int) $id, 'tournament_id' => $tournamentId]);
+        return (int) $id;
+    }
 
     $label = ['male' => 'ชาย', 'female' => 'หญิง', 'open' => 'Open'][$categoryCode] ?? $categoryCode;
     $tournamentStmt = $pdo->prepare('SELECT max_teams, format FROM tournaments WHERE tournament_id = :tournament_id');
