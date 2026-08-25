@@ -413,7 +413,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
         if (!$tournament) {
             $error = 'ไม่พบ Tournament ที่ต้องการปิดการแข่งขัน';
         } elseif (!in_array($tournament['status'], ['bracket_generated', 'ongoing'], true) && !isTournamentReadyToClose($pdo, $tournamentId)) {
-            $error = 'Tournament นี้ยังไม่พร้อมปิดการแข่งขัน';
+            $error = 'ยังมี Match ค้างหรือ Match ที่ยังไม่มีผู้ชนะ จึงยังจบ Tournament ไม่ได้';
         } elseif (!isTournamentReadyToClose($pdo, $tournamentId)) {
             $error = 'ยังมี Match ค้างหรือ Match ที่ยังไม่มีผู้ชนะ จึงยังจบ Tournament ไม่ได้';
         } else {
@@ -748,6 +748,48 @@ function uploadTournamentImage($file) {
         }
     }
     return null;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_tournament') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $tournamentId = (int) ($_POST['tournament_id'] ?? 0);
+        $deleteStmt = $pdo->prepare('SELECT tournament_id, name, image_path, status,
+                (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.tournament_id) AS registration_count,
+                (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id) AS match_count,
+                (SELECT COUNT(*) FROM tournament_days WHERE tournament_id = t.tournament_id) AS day_count
+            FROM tournaments t WHERE t.tournament_id = :tournament_id');
+        $deleteStmt->execute(['tournament_id' => $tournamentId]);
+        $tournamentToDelete = $deleteStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$tournamentToDelete) {
+            $error = 'ไม่พบ Tournament ที่ต้องการลบ';
+        } elseif (in_array($tournamentToDelete['status'], ['completed', 'cancelled'], true)) {
+            $error = 'ไม่สามารถลบ Tournament ที่จบหรือยกเลิกแล้วได้';
+        } elseif ((int) $tournamentToDelete['registration_count'] > 0 || (int) $tournamentToDelete['match_count'] > 0 || (int) $tournamentToDelete['day_count'] > 0) {
+            $error = 'ลบไม่ได้ เพราะ Tournament นี้มีผู้สมัคร Match หรือวันแข่งขันที่บันทึกไว้แล้ว';
+        } else {
+            try {
+                $pdo->beginTransaction();
+                foreach (['accommodations', 'tournament_groups', 'tournament_categories', 'tournament_days'] as $table) {
+                    $pdo->prepare("DELETE FROM {$table} WHERE tournament_id = :tournament_id")->execute(['tournament_id' => $tournamentId]);
+                }
+                $pdo->prepare('DELETE FROM tournaments WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
+                $pdo->commit();
+
+                $imagePath = trim((string) ($tournamentToDelete['image_path'] ?? ''));
+                if ($imagePath !== '' && str_starts_with($imagePath, 'uploads/')) {
+                    $absoluteImagePath = __DIR__ . '/../assets/' . $imagePath;
+                    if (is_file($absoluteImagePath)) @unlink($absoluteImagePath);
+                }
+                $success = 'ลบ Tournament "' . $tournamentToDelete['name'] . '" เรียบร้อยแล้ว';
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = 'ไม่สามารถลบ Tournament ได้: ' . $exception->getMessage();
+            }
+        }
+    }
 }
 
 // ==========================================
@@ -2315,6 +2357,16 @@ $csrfToken = generateCsrfToken();
                                         class="admin-action-item text-slate-700 hover:bg-slate-50">
                                         <i class="fa-solid fa-sliders text-slate-400"></i> จัดการ Category
                                     </button>
+                                    <?php if ($canDelete): ?>
+                                        <form method="POST" onsubmit="return confirm('ยืนยันลบ Tournament นี้? การลบจะไม่สามารถย้อนกลับได้')">
+                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>">
+                                            <input type="hidden" name="action" value="delete_tournament">
+                                            <input type="hidden" name="tournament_id" value="<?php echo (int) $t['tournament_id']; ?>">
+                                            <button type="submit" role="menuitem" class="admin-action-item text-rose-700 hover:bg-rose-50">
+                                                <i class="fa-solid fa-trash text-rose-500"></i> ลบ Tournament
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
 
                                             <div class="my-1 border-t border-slate-100"></div>
                                             <div class="admin-action-group">ผู้สมัครและข้อมูล</div>

@@ -20,7 +20,6 @@ function ensureRegistrationStatusHistoryTable(PDO $pdo): void
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $ready = true;
 }
-
 function recordRegistrationStatus(PDO $pdo, int $registrationId, string $newStatus, ?int $changedBy, ?string $note = null): void
 {
     ensureRegistrationStatusHistoryTable($pdo);
@@ -38,4 +37,4 @@ function recordRegistrationStatus(PDO $pdo, int $registrationId, string $newStat
             'changed_by' => $changedBy,
             'note' => $note,
         ]);
-}
+    }

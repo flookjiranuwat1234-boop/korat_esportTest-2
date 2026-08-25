@@ -507,18 +507,6 @@ if ($selectedAlbumId > 0) {
                                 <img src="../assets/<?php echo htmlspecialchars($img['image_path']); ?>"
                                     alt="<?php echo htmlspecialchars($img['caption'] ?? 'Gallery Image'); ?>" loading="lazy">
 
-                                <div class="masonry-overlay space-y-2">
-                                    <?php if ($img['caption']): ?>
-                                        <p class="text-xs sm:text-sm text-gray-200 font-normal line-clamp-3 leading-relaxed">
-                                            <?php echo htmlspecialchars($img['caption']); ?>
-                                        </p>
-                                    <?php endif; ?>
-
-                                    <div class="text-brand-orange text-xs font-bold pt-1 flex items-center gap-2">
-                                        <span>คลิกเพื่อดูรูปภาพเต็มจอ</span>
-                                        <i class="fa-solid fa-arrow-right-long"></i>
-                                    </div>
-                                </div>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -584,27 +572,9 @@ if ($selectedAlbumId > 0) {
                             <div class="masonry-item" data-aos="fade-up" data-aos-delay="<?php echo min($imgIndex * 50, 600); ?>"
                                 onclick="openLightboxFromIndex(<?php echo $imgIndex; ?>)">
 
-                                <?php if (!empty($img['display_album_name'])): ?>
-                                    <div class="floating-badge">
-                                        <i class="fa-solid fa-trophy mr-1 text-[10px]"></i>
-                                        <?php echo htmlspecialchars($img['display_album_name']); ?>
-                                    </div>
-                                <?php endif; ?>
-
                                 <img src="../assets/<?php echo htmlspecialchars($img['image_path'] ?? ''); ?>"
                                     alt="<?php echo htmlspecialchars($img['caption'] ?? 'Gallery Image'); ?>" loading="lazy">
 
-                                <div class="masonry-overlay space-y-2">
-                                    <?php if ($img['caption']): ?>
-                                        <p class="text-xs sm:text-sm text-gray-200 font-normal line-clamp-3 leading-relaxed">
-                                            <?php echo htmlspecialchars($img['caption']); ?>
-                                        </p>
-                                    <?php endif; ?>
-                                    <div class="text-brand-orange text-xs font-bold pt-1 flex items-center gap-2">
-                                        <span>คลิกเพื่อดูรูปภาพเต็มจอ</span>
-                                        <i class="fa-solid fa-arrow-right-long"></i>
-                                    </div>
-                                </div>
                             </div>
                         <?php endforeach; ?>
                     </div>

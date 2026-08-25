@@ -510,7 +510,7 @@ function roundName($roundNum, $totalRounds)
 
                     <?php if (($tournament['status'] ?? '') == 'registration_open'): ?>
                         <div class="shrink-0 relative z-10">
-                            <a href="register-tournament.php?id=<?php echo $tournamentId; ?>" class="shine-btn px-8 py-5 rounded-2xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-sm uppercase tracking-wider transition-all shadow-orange-glow flex items-center justify-center gap-3 w-full sm:w-auto transform hover:-translate-y-1">
+                            <a href="register-tournament.php?id=<?php echo $tournamentId; ?>" <?php echo $isLoggedIn ? '' : 'onclick="openLoginPrompt(); return false;"'; ?> class="shine-btn px-8 py-5 rounded-2xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-sm uppercase tracking-wider transition-all shadow-orange-glow flex items-center justify-center gap-3 w-full sm:w-auto transform hover:-translate-y-1">
                                 <i class="fa-solid fa-trophy text-amber-300 text-lg"></i>
                                 <span>สมัครเข้าร่วมแข่งขัน</span>
                             </a>
@@ -852,11 +852,61 @@ function roundName($roundNum, $totalRounds)
         </footer>
     </div>
 
+    <?php if (!$isLoggedIn): ?>
+        <div id="loginPromptModal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="loginPromptTitle">
+            <div class="w-full max-w-md rounded-3xl border border-white/15 bg-slate-900 p-6 shadow-2xl sm:p-8">
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <div class="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-orange/15 text-brand-orange">
+                            <i class="fa-solid fa-lock text-xl"></i>
+                        </div>
+                        <h2 id="loginPromptTitle" class="text-xl font-bold text-white">กรุณาเข้าสู่ระบบก่อนสมัคร</h2>
+                        <p class="mt-2 text-sm leading-relaxed text-gray-300">คุณต้องเข้าสู่ระบบหรือสมัครสมาชิกก่อน จึงจะสามารถสมัครเข้าร่วม Tournament นี้ได้</p>
+                    </div>
+                    <button type="button" onclick="closeLoginPrompt()" class="shrink-0 rounded-xl p-2 text-gray-400 hover:bg-white/10 hover:text-white" aria-label="ปิดหน้าต่าง">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+                <div class="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <a href="../auth/login.php" class="flex items-center justify-center gap-2 rounded-xl bg-brand-orange px-4 py-3 text-sm font-bold text-white transition hover:bg-brand-glow">
+                        <i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ
+                    </a>
+                    <a href="../auth/register.php" class="flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/20">
+                        <i class="fa-solid fa-user-plus"></i> สมัครสมาชิก
+                    </a>
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
+
    <!-- AOS JS Library -->
     <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
 
     <!-- Script คำนวณพิกัดเส้น SVG แบบสมมาตรตรงกลางเป๊ะ 100% พร้อมเรืองแสงถาวรสำหรับคู่ที่รู้ผลแล้ว -->
     <script>
+        function openLoginPrompt() {
+            const modal = document.getElementById('loginPromptModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            modal.querySelector('a, button')?.focus();
+        }
+
+        function closeLoginPrompt() {
+            const modal = document.getElementById('loginPromptModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeLoginPrompt();
+        });
+
+        document.getElementById('loginPromptModal')?.addEventListener('click', event => {
+            if (event.target.id === 'loginPromptModal') closeLoginPrompt();
+        });
+
         // 3. Team Spotlight Rotator
         const teamSpotlights = [
             { name: "JOSDevil", winRate: "92%", mvp: "PlayerX" },

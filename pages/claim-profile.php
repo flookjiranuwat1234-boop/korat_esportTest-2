@@ -227,6 +227,11 @@ $csrfToken = generateCsrfToken();
                                         <?= htmlspecialchars($currentUser['role'] ?? 'Player') ?>
                                     </span>
                                 </div>
+                                <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
+                                        <i class="fa-solid fa-user-shield text-sm"></i>
+                                    </a>
+                                <?php endif; ?>
                                 <a href="../auth/logout.php" title="ออกจากระบบ" class="w-9 h-9 rounded-xl bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 flex items-center justify-center transition-all">
                                     <i class="fa-solid fa-right-from-bracket text-sm"></i>
                                 </a>

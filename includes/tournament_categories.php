@@ -229,16 +229,23 @@ function getTournamentCategoryId(PDO $pdo, int $tournamentId, string $categoryCo
     $tournamentStmt->execute(['tournament_id' => $tournamentId]);
     $tournament = $tournamentStmt->fetch();
     if (!$tournament) return null;
-    $insert = $pdo->prepare('INSERT INTO tournament_categories
-        (tournament_id, category_code, label, max_participants, format)
-        VALUES (:tournament_id, :category_code, :label, :max_participants, :format)');
-    $insert->execute([
+    $categoryFields = $pdo->query('SHOW COLUMNS FROM tournament_categories')->fetchAll(PDO::FETCH_COLUMN);
+    $insert = in_array('code', $categoryFields, true)
+        ? $pdo->prepare('INSERT INTO tournament_categories
+            (tournament_id, category_code, code, label, max_participants, format)
+            VALUES (:tournament_id, :category_code, :legacy_code, :label, :max_participants, :format)')
+        : $pdo->prepare('INSERT INTO tournament_categories
+            (tournament_id, category_code, label, max_participants, format)
+            VALUES (:tournament_id, :category_code, :label, :max_participants, :format)');
+    $insertParams = [
         'tournament_id' => $tournamentId,
         'category_code' => $categoryCode,
         'label' => $label,
         'max_participants' => $tournament['max_teams'],
         'format' => $tournament['format'] ?: 'single_elimination',
-    ]);
+    ];
+    if (in_array('code', $categoryFields, true)) $insertParams['legacy_code'] = $categoryCode;
+    $insert->execute($insertParams);
     return (int) $pdo->lastInsertId();
 }
 

@@ -270,9 +270,15 @@ if ($type === 'team') {
                                     <span class="text-sm font-bold text-white leading-tight"><?= htmlspecialchars($currentUser['username'] ?? 'User') ?></span>
                                     <span class="text-[10px] font-semibold text-brand-orange uppercase tracking-wider"><?= htmlspecialchars($currentUser['role'] ?? 'Player') ?></span>
                                 </div>
-                                <a href="profile.php" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
-                                    <i class="fa-solid fa-user-gear text-sm"></i>
-                                </a>
+                                <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
+                                        <i class="fa-solid fa-user-shield text-sm"></i>
+                                    </a>
+                                <?php else: ?>
+                                    <a href="profile.php" title="จัดการโปรไฟล์/ทีม" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
+                                        <i class="fa-solid fa-user-gear text-sm"></i>
+                                    </a>
+                                <?php endif; ?>
                                 <a href="../auth/logout.php" class="w-9 h-9 rounded-xl bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 flex items-center justify-center transition-all">
                                     <i class="fa-solid fa-right-from-bracket text-sm"></i>
                                 </a>
