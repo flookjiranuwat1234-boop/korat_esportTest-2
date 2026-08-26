@@ -53,6 +53,10 @@ function updateRankingsAfterMatch($pdo, $matchId)
 
     $gameId = $match['game_id'];
     $tournamentId = $match['tournament_id'];
+    $gameModeStmt = $pdo->prepare("SELECT g.play_mode FROM tournaments t JOIN games g ON g.game_id = t.game_id WHERE t.tournament_id = :tournament_id LIMIT 1");
+    $gameModeStmt->execute(['tournament_id' => $tournamentId]);
+    $gameMode = strtolower(trim((string) $gameModeStmt->fetchColumn()));
+    $gameMode = in_array($gameMode, ['team', 'solo'], true) ? $gameMode : 'team';
     $isDraw = empty($match['winner_team_id']) && $match['team1_score'] !== null;
 
     if (empty($match['winner_team_id']) && !$isDraw) {
@@ -86,9 +90,11 @@ function updateRankingsAfterMatch($pdo, $matchId)
         return $cat2 ? strtolower(trim($cat2)) : 'open';
     };
 
-    // ฟังก์ชันตรวจสอบว่า ID นี้เป็นทีมสโมสรจริงหรือไม่
-    $isTeam = function($id) use ($pdo) {
-        if (empty($id)) return false;
+    // ใช้ play_mode ของเกมเป็นแหล่งข้อมูลจริง เพื่อหลีกเลี่ยงการเดา team/player จาก ID
+    $isTeam = static function($id) use ($pdo, $gameMode) {
+        if (empty($id) || $gameMode === 'solo') {
+            return false;
+        }
         $chk = $pdo->prepare("SELECT COUNT(*) FROM teams WHERE team_id = :id");
         $chk->execute(['id' => $id]);
         return $chk->fetchColumn() > 0;
@@ -98,40 +104,55 @@ function updateRankingsAfterMatch($pdo, $matchId)
     $t2IsTeam = $isTeam($match['team2_id']);
 
     if ($isDraw) {
-        $cat1 = $t1IsTeam ? $getCategoryForTeam($match['team1_id']) : $getCategoryForPlayer($match['team1_id']);
-        $cat2 = $t2IsTeam ? $getCategoryForTeam($match['team2_id']) : $getCategoryForPlayer($match['team2_id']);
+        if ($gameMode === 'solo') {
+            bumpSinglePlayerRanking($pdo, $gameId, $match['team1_id'], $getCategoryForPlayer($match['team1_id']), 'draw');
+            bumpSinglePlayerRanking($pdo, $gameId, $match['team2_id'], $getCategoryForPlayer($match['team2_id']), 'draw');
+        } else {
+            $cat1 = $t1IsTeam ? $getCategoryForTeam($match['team1_id']) : $getCategoryForPlayer($match['team1_id']);
+            $cat2 = $t2IsTeam ? $getCategoryForTeam($match['team2_id']) : $getCategoryForPlayer($match['team2_id']);
 
-        if ($t1IsTeam) bumpTeamRanking($pdo, $gameId, $match['team1_id'], $cat1, 'draw');
-        else bumpSinglePlayerRanking($pdo, $gameId, $match['team1_id'], $cat1, 'draw');
+            if ($t1IsTeam) bumpTeamRanking($pdo, $gameId, $match['team1_id'], $cat1, 'draw');
+            else bumpSinglePlayerRanking($pdo, $gameId, $match['team1_id'], $cat1, 'draw');
 
-        if ($t2IsTeam) bumpTeamRanking($pdo, $gameId, $match['team2_id'], $cat2, 'draw');
-        else bumpSinglePlayerRanking($pdo, $gameId, $match['team2_id'], $cat2, 'draw');
+            if ($t2IsTeam) bumpTeamRanking($pdo, $gameId, $match['team2_id'], $cat2, 'draw');
+            else bumpSinglePlayerRanking($pdo, $gameId, $match['team2_id'], $cat2, 'draw');
 
-        if ($t1IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team1_id'], $cat1, 'draw', $tournamentId);
-        if ($t2IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team2_id'], $cat2, 'draw', $tournamentId);
+            if ($t1IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team1_id'], $cat1, 'draw', $tournamentId);
+            if ($t2IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team2_id'], $cat2, 'draw', $tournamentId);
+        }
     } else {
         $winnerId = $match['winner_team_id'];
         $loserId = ($winnerId == $match['team1_id']) ? $match['team2_id'] : $match['team1_id'];
 
-        $winnerIsTeam = $isTeam($winnerId);
-        $loserIsTeam = $isTeam($loserId);
+        if ($gameMode === 'solo') {
+            $winnerCat = $getCategoryForPlayer($winnerId);
+            $loserCat = !empty($loserId) ? $getCategoryForPlayer($loserId) : 'open';
 
-        $winnerCat = $winnerIsTeam ? $getCategoryForTeam($winnerId) : $getCategoryForPlayer($winnerId);
-        $loserCat = !empty($loserId) ? ($loserIsTeam ? $getCategoryForTeam($loserId) : $getCategoryForPlayer($loserId)) : 'open';
-
-        if ($winnerIsTeam) {
-            bumpTeamRanking($pdo, $gameId, $winnerId, $winnerCat, 'win');
-            bumpPlayerRankings($pdo, $gameId, $winnerId, $winnerCat, 'win', $tournamentId);
-        } else {
             bumpSinglePlayerRanking($pdo, $gameId, $winnerId, $winnerCat, 'win');
-        }
-
-        if (!empty($loserId)) {
-            if ($loserIsTeam) {
-                bumpTeamRanking($pdo, $gameId, $loserId, $loserCat, 'loss');
-                bumpPlayerRankings($pdo, $gameId, $loserId, $loserCat, 'loss', $tournamentId);
-            } else {
+            if (!empty($loserId)) {
                 bumpSinglePlayerRanking($pdo, $gameId, $loserId, $loserCat, 'loss');
+            }
+        } else {
+            $winnerIsTeam = $isTeam($winnerId);
+            $loserIsTeam = $isTeam($loserId);
+
+            $winnerCat = $winnerIsTeam ? $getCategoryForTeam($winnerId) : $getCategoryForPlayer($winnerId);
+            $loserCat = !empty($loserId) ? ($loserIsTeam ? $getCategoryForTeam($loserId) : $getCategoryForPlayer($loserId)) : 'open';
+
+            if ($winnerIsTeam) {
+                bumpTeamRanking($pdo, $gameId, $winnerId, $winnerCat, 'win');
+                bumpPlayerRankings($pdo, $gameId, $winnerId, $winnerCat, 'win', $tournamentId);
+            } else {
+                bumpSinglePlayerRanking($pdo, $gameId, $winnerId, $winnerCat, 'win');
+            }
+
+            if (!empty($loserId)) {
+                if ($loserIsTeam) {
+                    bumpTeamRanking($pdo, $gameId, $loserId, $loserCat, 'loss');
+                    bumpPlayerRankings($pdo, $gameId, $loserId, $loserCat, 'loss', $tournamentId);
+                } else {
+                    bumpSinglePlayerRanking($pdo, $gameId, $loserId, $loserCat, 'loss');
+                }
             }
         }
     }
@@ -244,11 +265,16 @@ function recordRankingHistoryForMatch(PDO $pdo, array $match, int $gameId, ?int 
         ['id' => (int) $match['team1_id'], 'result' => $isDraw ? 'draw' : ($winner === (int) $match['team1_id'] ? 'win' : 'loss')],
         ['id' => (int) $match['team2_id'], 'result' => $isDraw ? 'draw' : ($winner === (int) $match['team2_id'] ? 'win' : 'loss')],
     ];
+    $gameModeRow = $pdo->prepare('SELECT g.play_mode FROM tournaments t JOIN games g ON g.game_id = t.game_id WHERE t.tournament_id = :tournament_id LIMIT 1');
+    $gameModeRow->execute(['tournament_id' => $match['tournament_id']]);
+    $gameMode = strtolower(trim((string) $gameModeRow->fetchColumn()));
+    $gameMode = in_array($gameMode, ['team', 'solo'], true) ? $gameMode : 'team';
+
     foreach ($participants as $participant) {
         if (!$participant['id']) continue;
-        $isTeamStmt = $pdo->prepare('SELECT COUNT(*) FROM teams WHERE team_id = :id');
-        $isTeamStmt->execute(['id' => $participant['id']]);
-        $isTeam = (int) $isTeamStmt->fetchColumn() > 0;
+        $teamCheckStmt = $pdo->prepare('SELECT COUNT(*) FROM teams WHERE team_id = :id');
+        $teamCheckStmt->execute(['id' => $participant['id']]);
+        $isTeam = $gameMode === 'team' && (int) $teamCheckStmt->fetchColumn() > 0;
         $points = resultToStats($participant['result'])[0];
         $historyParams = [
             'game_id' => $gameId,
@@ -267,7 +293,8 @@ function recordRankingHistoryForMatch(PDO $pdo, array $match, int $gameId, ?int 
             $historyParams['reason'] = $participant['result'];
         }
         if (in_array('created_by', $historyColumns, true)) {
-            $historyParams['created_by'] = (int) ($_SESSION['user_id'] ?? 0);
+            $userId = isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : 0;
+            $historyParams['created_by'] = $userId > 0 ? $userId : 1;
         }
         if ($isTeam) {
             $members = $pdo->prepare('SELECT DISTINCT trm.player_id FROM tournament_registration_members trm

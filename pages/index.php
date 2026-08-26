@@ -40,6 +40,9 @@ $topPlayers = $pdo->query("
     LIMIT 5
 ")->fetchAll();
 
+$defaultRankingGame = $pdo->query("SELECT game_id, play_mode FROM games WHERE is_active = 1 ORDER BY game_id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: ['game_id' => 0, 'play_mode' => 'team'];
+$defaultRankingType = in_array(strtolower((string) ($defaultRankingGame['play_mode'] ?? '')), ['solo'], true) ? 'player' : 'team';
+
 // สถิติรวมของทั้งเว็บ (ปรับ Query ให้ตรงกันกับฝั่ง Admin Dashboard)
 $totalTeams = $pdo->query("
     SELECT COUNT(*) FROM teams t
@@ -811,7 +814,7 @@ try {
                         <i class="fa-solid fa-crown text-amber-400"></i> ทำเนียบเกียรติยศ (อันดับสูงสุด)
                     </h2>
                 </div>
-                <a href="ranking.php"
+                <a href="ranking.php?game_id=<?php echo (int) ($defaultRankingGame['game_id'] ?? 0); ?>&type=<?php echo htmlspecialchars($defaultRankingType); ?>&category=all"
                     class="text-xs font-bold text-brand-orange hover:underline uppercase tracking-wider flex items-center gap-1">
                     <span>ดูตารางคะแนนทั้งหมด</span>
                     <i class="fa-solid fa-chevron-right"></i>
@@ -827,7 +830,7 @@ try {
                             class="text-base font-bold font-display text-brand-orange uppercase tracking-wider flex items-center gap-2">
                             <i class="fa-solid fa-shield-halved"></i> สโมสร / ทีมยอดเยี่ยม
                         </h3>
-                        <a href="ranking.php?type=team"
+                        <a href="ranking.php?game_id=<?php echo (int) ($defaultRankingGame['game_id'] ?? 0); ?>&type=team&category=all"
                             class="text-[11px] text-gray-400 hover:text-white uppercase font-bold tracking-wider">ดูทั้งหมด
                             &rarr;</a>
                     </div>
@@ -897,7 +900,7 @@ try {
                             class="text-base font-bold font-display text-amber-400 uppercase tracking-wider flex items-center gap-2">
                             <i class="fa-solid fa-user-ninja"></i> นักกีฬา / ผู้เล่นยอดเยี่ยม
                         </h3>
-                        <a href="ranking.php?type=player"
+                        <a href="ranking.php?game_id=<?php echo (int) ($defaultRankingGame['game_id'] ?? 0); ?>&type=player&category=all"
                             class="text-[11px] text-gray-400 hover:text-white uppercase font-bold tracking-wider">ดูทั้งหมด
                             &rarr;</a>
                     </div>

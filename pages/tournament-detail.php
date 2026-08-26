@@ -36,6 +36,9 @@ if (!$tournament) {
 }
 
 $tournamentName = $tournament['name'] ?? ($tournament['title'] ?? ($tournament['tournament_name'] ?? 'ทัวร์นาเมนต์อีสปอร์ต'));
+$tournamentPlayMode = in_array(strtolower((string) ($tournament['play_mode'] ?? '')), ['team', 'solo'], true)
+    ? strtolower((string) $tournament['play_mode'])
+    : 'team';
 $tournamentStatusLabels = [
     'registration_open' => 'เปิดรับสมัคร',
     'registration_closed' => 'ปิดรับสมัคร',
@@ -102,10 +105,15 @@ try {
 }
 
 // ดึง matches ทั้งหมดของทัวร์นาเมนต์ พร้อมปรับกรองประเภทให้แม่นยำขึ้น
+$matchNameExpression = $tournamentPlayMode === 'solo'
+    ? "COALESCE(p1.display_name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name,
+       COALESCE(p2.display_name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name"
+    : "COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name,
+       COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name";
+
 $sqlMatches = "
     SELECT m.*, 
-           COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name, 
-           COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name,
+           {$matchNameExpression},
            tr1.category AS team1_cat,
            tr2.category AS team2_cat
     FROM matches m
@@ -137,8 +145,7 @@ $matches = $mStmt->fetchAll();
 if (empty($matches) && $selectedCategoryId) {
     $sqlMatchesFallback = "
         SELECT m.*, 
-               COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name, 
-               COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name,
+               {$matchNameExpression},
                tr1.category AS team1_cat,
                tr2.category AS team2_cat
         FROM matches m
@@ -191,7 +198,7 @@ foreach ($groupRows as $row) {
     $groupedStandings[$row['group_name']][] = $row;
 }
 
-if ($selectedCategoryId && $groupRows) {
+if ($selectedCategoryId && $groupRows && $tournamentPlayMode === 'team') {
     foreach ($groupRows as $row) {
         if ((int) ($row['tournament_category_id'] ?? 0) !== $selectedCategoryId) continue;
         $rankingRows[] = [
@@ -203,13 +210,11 @@ if ($selectedCategoryId && $groupRows) {
     }
 } elseif ($selectedCategoryId) {
     $localMatchesStmt = $pdo->prepare("SELECT m.team1_id, m.team2_id, m.winner_team_id, m.status,
-            COALESCE(t1.name, u1.username, p1.display_name, 'ผู้แข่งขัน') AS team1_name,
-            COALESCE(t2.name, u2.username, p2.display_name, 'ผู้แข่งขัน') AS team2_name
+            COALESCE(p1.display_name, u1.username, 'ผู้แข่งขัน') AS team1_name,
+            COALESCE(p2.display_name, u2.username, 'ผู้แข่งขัน') AS team2_name
         FROM matches m
-        LEFT JOIN teams t1 ON t1.team_id = m.team1_id
         LEFT JOIN players p1 ON p1.player_id = m.team1_id
         LEFT JOIN users u1 ON u1.user_id = p1.user_id
-        LEFT JOIN teams t2 ON t2.team_id = m.team2_id
         LEFT JOIN players p2 ON p2.player_id = m.team2_id
         LEFT JOIN users u2 ON u2.user_id = p2.user_id
         WHERE m.tournament_id = :tournament_id AND m.tournament_category_id = :category_id
@@ -833,10 +838,10 @@ function roundName($roundNum, $totalRounds)
             <section id="ranking" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex items-center gap-3 border-b border-white/15 pb-4">
                             <i class="fa-solid fa-ranking-star text-amber-400 text-2xl"></i>
-                            <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">อันดับในรายการ <?php echo htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?> ใช้เฉพาะข้อมูลของ Tournament นี้</p></div>
+                            <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider"><?php echo $tournamentPlayMode === 'solo' ? 'อันดับผู้เล่นในรายการ' : 'อันดับในรายการ'; ?> <?php echo htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?> ใช้เฉพาะข้อมูลของ Tournament นี้</p></div>
                 </div>
                 <div class="glass-panel rounded-2xl overflow-hidden border border-white/15">
-                    <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับในรายการ</th><th class="p-3">ผู้แข่งขัน</th><th class="p-3 text-center">คะแนนในรายการ</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
+                    <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับในรายการ</th><th class="p-3"><?php echo $tournamentPlayMode === 'solo' ? 'ผู้เล่น' : 'ผู้แข่งขัน'; ?></th><th class="p-3 text-center">คะแนนในรายการ</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
                     <?php if (!$rankingRows): ?><tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูล Ranking</td></tr><?php endif; ?>
                     <?php foreach ($rankingRows as $rankIndex => $ranking): ?><tr class="hover:bg-white/10"><td class="p-3 font-bold text-brand-orange">#<?php echo $rankIndex + 1; ?></td><td class="p-3 font-bold text-white"><?php echo htmlspecialchars($ranking['participant_name']); ?></td><td class="p-3 text-center font-display text-brand-orange"><?php echo (float) $ranking['points']; ?></td><td class="p-3 text-center text-emerald-300"><?php echo (int) $ranking['wins']; ?></td><td class="p-3 text-center text-rose-300"><?php echo (int) $ranking['losses']; ?></td></tr><?php endforeach; ?></tbody></table>
                 </div>

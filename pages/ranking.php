@@ -9,8 +9,8 @@ $currentUser = [
     'role' => $_SESSION['role'] ?? null,
 ];
 
-// ดึงรายการเกมจากตาราง games แบบไม่ให้แสดงชื่อซ้ำกัน
-$rawGames = $pdo->query("SELECT game_id, name FROM games WHERE is_active = 1 ORDER BY game_id ASC")->fetchAll(PDO::FETCH_ASSOC);
+// ดึงรายการเกมจากตาราง games แบบไม่ให้แสดงชื่อซ้ำกัน และใช้ play_mode เป็นแหล่งข้อมูลจริง
+$rawGames = $pdo->query("SELECT game_id, name, play_mode FROM games WHERE is_active = 1 ORDER BY game_id ASC")->fetchAll(PDO::FETCH_ASSOC);
 $games = [];
 $seenNames = [];
 foreach ($rawGames as $g) {
@@ -20,13 +20,27 @@ foreach ($rawGames as $g) {
         $seenNames[$lowerName] = true;
         $games[] = [
             'game_id' => $g['game_id'],
-            'name' => $cleanName
+            'name' => $cleanName,
+            'play_mode' => in_array(strtolower((string) ($g['play_mode'] ?? '')), ['team', 'solo'], true) ? strtolower((string) $g['play_mode']) : 'team'
         ];
     }
 }
 
 $gameId = isset($_GET['game_id']) ? (int)$_GET['game_id'] : (!empty($games) ? $games[0]['game_id'] : 0);
-$type = isset($_GET['type']) && $_GET['type'] === 'player' ? 'player' : 'team';
+$gamePlayMode = 'team';
+if ($gameId > 0) {
+    $gameModeStmt = $pdo->prepare('SELECT play_mode FROM games WHERE game_id = :game_id LIMIT 1');
+    $gameModeStmt->execute(['game_id' => $gameId]);
+    $gameModeValue = strtolower(trim((string) $gameModeStmt->fetchColumn()));
+    $gamePlayMode = in_array($gameModeValue, ['team', 'solo'], true) ? $gameModeValue : 'team';
+}
+
+$requestedType = isset($_GET['type']) ? strtolower((string) $_GET['type']) : '';
+$type = ($gamePlayMode === 'solo') ? 'player' : (in_array($requestedType, ['team', 'player'], true) ? $requestedType : 'team');
+if ($gamePlayMode === 'solo' && $type !== 'player') {
+    $type = 'player';
+}
+
 $category = isset($_GET['category']) ? trim((string) $_GET['category']) : 'all';
 $search = trim($_GET['search'] ?? '');
 $categoryOptions = $pdo->prepare($type === 'player'
@@ -315,7 +329,8 @@ if ($type === 'team') {
                     <span class="text-xs font-bold uppercase text-gray-400 shrink-0"><i class="fa-solid fa-trophy mr-1"></i> ประเภทการแข่งขัน:</span>
                     <select onchange="location = this.value;" class="bg-black/60 border border-white/25 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-orange cursor-pointer">
                         <?php foreach ($games as $g): ?>
-                            <option value="ranking.php?game_id=<?php echo $g['game_id']; ?>&type=<?php echo $type; ?>&category=<?php echo $category; ?>" <?php echo $gameId == $g['game_id'] ? 'selected' : ''; ?>>
+                            <?php $optionType = ($g['play_mode'] === 'solo') ? 'player' : (($type === 'player') ? 'player' : 'team'); ?>
+                            <option value="ranking.php?game_id=<?php echo $g['game_id']; ?>&type=<?php echo $optionType; ?>&category=<?php echo $category; ?>" <?php echo $gameId == $g['game_id'] ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($g['name']); ?>
                             </option>
                         <?php endforeach; ?>
@@ -335,16 +350,24 @@ if ($type === 'team') {
                     </div>
 
                     <!-- Type Selector -->
-                    <div class="flex items-center bg-black/40 p-1.5 rounded-2xl border border-white/10 shrink-0 justify-center w-full sm:w-auto">
-                        <a href="ranking.php?game_id=<?php echo $gameId; ?>&type=team&category=<?php echo $category; ?>"
-                            class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center gap-2 <?php echo $type == 'team' ? 'bg-white/20 text-white border border-white/30 shadow' : 'text-gray-400 hover:text-white'; ?>">
-                            <i class="fa-solid fa-shield-halved text-brand-orange"></i> อันดับทีม
-                        </a>
-                        <a href="ranking.php?game_id=<?php echo $gameId; ?>&type=player&category=<?php echo $category; ?>"
-                            class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center gap-2 <?php echo $type == 'player' ? 'bg-white/20 text-white border border-white/30 shadow' : 'text-gray-400 hover:text-white'; ?>">
-                            <i class="fa-solid fa-user text-amber-400"></i> อันดับผู้เล่น
-                        </a>
-                    </div>
+                    <?php if ($gamePlayMode === 'solo'): ?>
+                        <div class="flex items-center bg-black/40 p-1.5 rounded-2xl border border-white/10 shrink-0 justify-center w-full sm:w-auto">
+                            <span class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center gap-2 bg-white/20 text-white border border-white/30 shadow">
+                                <i class="fa-solid fa-user text-amber-400"></i> อันดับผู้เล่น
+                            </span>
+                        </div>
+                    <?php else: ?>
+                        <div class="flex items-center bg-black/40 p-1.5 rounded-2xl border border-white/10 shrink-0 justify-center w-full sm:w-auto">
+                            <a href="ranking.php?game_id=<?php echo $gameId; ?>&type=team&category=<?php echo $category; ?>"
+                                class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center gap-2 <?php echo $type == 'team' ? 'bg-white/20 text-white border border-white/30 shadow' : 'text-gray-400 hover:text-white'; ?>">
+                                <i class="fa-solid fa-shield-halved text-brand-orange"></i> อันดับทีม
+                            </a>
+                            <a href="ranking.php?game_id=<?php echo $gameId; ?>&type=player&category=<?php echo $category; ?>"
+                                class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center gap-2 <?php echo $type == 'player' ? 'bg-white/20 text-white border border-white/30 shadow' : 'text-gray-400 hover:text-white'; ?>">
+                                <i class="fa-solid fa-user text-amber-400"></i> อันดับผู้เล่น
+                            </a>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
             </div>

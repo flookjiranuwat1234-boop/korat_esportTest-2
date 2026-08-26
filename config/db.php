@@ -24,20 +24,33 @@ try {
 }
 
 /**
- * ฟังก์ชันตรวจสอบว่าเกมนี้เป็นการแข่งขันประเภทเดี่ยว (Solo) หรือไม่
- * โดยเช็คจากชื่อเกมที่มีคำเหล่านี้ผสมอยู่
- * * @param string $gameName ชื่อเกมที่ต้องการตรวจสอบ
- * @return bool คืนค่า true หากเป็นเกมเดี่ยว
+ * ดึง play_mode ของเกมจากฐานข้อมูลแบบเป็นแหล่งข้อมูลเดียว
+ * รองรับค่า: team, solo
  */
-function isSoloGame($gameName) {
-    if (empty($gameName)) return false;
-
-    $soloGames = ['Tekken', 'Street Fighter', 'Efootball', 'Roblox'];
-
-    foreach ($soloGames as $solo) {
-        if (stripos($gameName, $solo) !== false) {
-            return true;
-        }
+function getGamePlayMode(PDO $pdo, int $gameId): string
+{
+    if ($gameId <= 0) {
+        return 'team';
     }
+
+    $stmt = $pdo->prepare('SELECT play_mode FROM games WHERE game_id = :game_id LIMIT 1');
+    $stmt->execute(['game_id' => $gameId]);
+    $playMode = strtolower(trim((string) $stmt->fetchColumn()));
+
+    return in_array($playMode, ['team', 'solo'], true) ? $playMode : 'team';
+}
+
+/**
+ * Backward-compatible helper. Avoid hard-coded game names.
+ * When a numeric game ID is passed, resolve from games.play_mode.
+ */
+function isSoloGame($gameIdentifier): bool
+{
+    global $pdo;
+
+    if (is_numeric($gameIdentifier)) {
+        return getGamePlayMode($pdo, (int) $gameIdentifier) === 'solo';
+    }
+
     return false;
 }
