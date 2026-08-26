@@ -348,16 +348,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             } else {
                 try {
                     $pdo->beginTransaction();
-                    $updateStmt = $pdo->prepare('UPDATE tournament_registrations SET status = :status,
-                    participation_status = CASE WHEN :status2 = \'approved\' THEN \'registered\' ELSE :status3 END
-                    WHERE tournament_registration_id = :registration_id')
-                    ;
-                    $updateStmt->execute([
-                        'status' => $newStatus,
-                        'status2' => $newStatus,
-                        'status3' => $newStatus === 'disqualified' ? 'disqualified' : 'registered',
-                        'registration_id' => $registrationId,
-                    ]);
+                    if (in_array($newStatus, ['approved', 'rejected'], true)) {
+                        $updateStmt = $pdo->prepare('UPDATE tournament_registrations SET status = :status,
+                            participation_status = CASE WHEN :status2 = \'approved\' THEN \'registered\' ELSE participation_status END
+                            WHERE tournament_registration_id = :registration_id');
+                        $updateStmt->execute([
+                            'status' => $newStatus,
+                            'status2' => $newStatus,
+                            'registration_id' => $registrationId,
+                        ]);
+                    } else {
+                        $updateStmt = $pdo->prepare('UPDATE tournament_registrations SET participation_status = :participation_status
+                            WHERE tournament_registration_id = :registration_id AND participation_status <> :old_participation_status');
+                        $updateStmt->execute([
+                            'participation_status' => $newStatus,
+                            'registration_id' => $registrationId,
+                            'old_participation_status' => $newStatus,
+                        ]);
+                    }
                     if ($updateStmt->rowCount() !== 1) {
                         throw new RuntimeException('ไม่สามารถเปลี่ยนสถานะใบสมัครได้');
                     }

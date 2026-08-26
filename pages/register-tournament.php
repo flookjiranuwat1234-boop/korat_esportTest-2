@@ -492,9 +492,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                     <i class="fa-solid fa-triangle-exclamation text-xl text-rose-400"></i>
                     <span><?= htmlspecialchars($error); ?></span>
                 </div>
-            <?php endif; ?>
-
-            <?php if ($success): ?>
+            <?php elseif ($success): ?>
                 <div class="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-sm flex items-center gap-3">
                     <i class="fa-solid fa-circle-check text-xl text-emerald-400"></i>
                     <span><?= htmlspecialchars($success); ?></span>
