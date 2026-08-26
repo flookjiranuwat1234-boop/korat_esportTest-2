@@ -11,10 +11,46 @@ $currentUser = [
     'role' => $_SESSION['role'] ?? null,
 ];
 
-// ดึงข้อมูลที่พักแนะนำทั้งหมดจากฐานข้อมูล
-$accommodations = $pdo->query("
-    SELECT * FROM accommodations ORDER BY accommodation_id DESC
-")->fetchAll();
+$selectedTournamentId = filter_var($_GET['tournament_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+$selectedTournamentId = $selectedTournamentId === false ? null : $selectedTournamentId;
+$statusLabels = [
+    'registration_open' => 'เปิดรับสมัคร',
+    'registration_closed' => 'ปิดรับสมัคร',
+    'ongoing' => 'กำลังแข่งขัน',
+    'completed' => 'แข่งขันจบแล้ว',
+];
+function isPublicMapsUrl($url) {
+    $parts = parse_url(trim((string) $url));
+    if (!$parts || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)) return false;
+    return in_array(strtolower($parts['host'] ?? ''), ['google.com', 'www.google.com', 'maps.google.com', 'maps.app.goo.gl'], true) && !empty($parts['path']);
+}
+function getPublicVenueOrigin(array $accommodation): string {
+    $venueValue = trim((string) ($accommodation['venue_lat_lng'] ?? ''));
+    if (preg_match('/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/', $venueValue, $matches)) {
+        $latitude = (float) $matches[1];
+        $longitude = (float) $matches[2];
+        if ($latitude >= -90 && $latitude <= 90 && $longitude >= -180 && $longitude <= 180) return $latitude . ',' . $longitude;
+    }
+    if (preg_match('~@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:[,/]|$)~', $venueValue, $matches)) {
+        $latitude = (float) $matches[1];
+        $longitude = (float) $matches[2];
+        if ($latitude >= -90 && $latitude <= 90 && $longitude >= -180 && $longitude <= 180) return $latitude . ',' . $longitude;
+    }
+    return trim((string) ($accommodation['venue_address'] ?? ''));
+}
+$selectedTournamentIdParam = $selectedTournamentId ?: 0;
+
+$accommodationStmt = $pdo->prepare("SELECT a.accommodation_id, a.tournament_id, a.name, a.address, a.image_path, a.distance, a.link_url,
+    t.name AS tournament_name, t.venue_address, t.venue_lat_lng, t.start_date, t.end_date, t.status, g.name AS game_name
+    FROM accommodations a
+    INNER JOIN tournaments t ON t.tournament_id = a.tournament_id
+    LEFT JOIN games g ON g.game_id = t.game_id
+    WHERE t.status IN ('registration_open', 'registration_closed', 'ongoing', 'completed')
+    ORDER BY CASE WHEN a.tournament_id = :selected_tournament_id THEN 0 ELSE 1 END,
+        CASE t.status WHEN 'registration_open' THEN 1 WHEN 'ongoing' THEN 2 WHEN 'registration_closed' THEN 3 WHEN 'completed' THEN 4 ELSE 5 END,
+        t.start_date DESC, CAST(a.distance AS DECIMAL(10,2)) ASC, a.name ASC");
+$accommodationStmt->execute(['selected_tournament_id' => $selectedTournamentIdParam]);
+$accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
@@ -95,6 +131,69 @@ $accommodations = $pdo->query("
             background: rgba(255, 255, 255, 0.14);
             border-color: rgba(255, 85, 0, 0.6);
             box-shadow: 0 15px 35px -5px rgba(255, 85, 0, 0.35);
+        }
+
+        .lodging-card {
+            position: relative;
+            isolation: isolate;
+            transform: translateZ(0);
+            background: #171b26;
+            transition: transform 130ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 130ms ease, background-color 130ms ease, border-color 130ms ease;
+        }
+        .lodging-card-badge,
+        .lodging-card-distance,
+        .lodging-card-info {
+            transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease, border-color 140ms ease;
+        }
+        .lodging-card-image {
+            transform: none;
+        }
+        .lodging-route-button {
+            position: relative;
+            z-index: 3;
+            transition: transform 160ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+        }
+        .lodging-route-button i {
+            transition: transform 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+        }
+        @media (hover: hover) and (pointer: fine) {
+            .lodging-card:hover {
+                transform: translateY(-7px) scale(1.01) !important;
+                background: #202633;
+                box-shadow: 0 18px 38px -8px rgba(0, 0, 0, 0.58), 0 0 22px rgba(255, 85, 0, 0.34);
+            }
+            .lodging-card:hover .lodging-card-badge,
+            .lodging-card:hover .lodging-card-distance { transform: translateY(-2px); box-shadow: 0 0 12px rgba(255, 183, 77, 0.2); }
+            .lodging-card:hover .lodging-card-info { background-color: rgba(255, 85, 0, 0.08); border-color: rgba(255, 140, 70, 0.55); }
+            .lodging-card:hover .lodging-route-button {
+                transform: translateY(-2px) scale(1.005);
+                box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+            }
+            .lodging-card:hover .lodging-route-button i { transform: translateX(3px); }
+        }
+        @media (hover: none) {
+            .lodging-card:hover {
+                transform: none;
+                background: #171b26;
+                border-color: rgba(255, 255, 255, 0.15);
+                box-shadow: none;
+            }
+        }
+        .lodging-card:active { transform: translateY(-2px) scale(0.995) !important; }
+        @media (prefers-reduced-motion: reduce) {
+            .lodging-card,
+            .lodging-card-image,
+            .lodging-route-button,
+            .lodging-route-button i { transition: none !important; animation: none !important; }
+            .lodging-card:hover { transform: none; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28); }
+            .lodging-card:hover .lodging-card-image { transform: none; filter: none; }
+            .lodging-card-badge,
+            .lodging-card-distance,
+            .lodging-card-info { transition: none !important; }
+        }
+
+        .lodging-selector {
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
         }
 
         .grid-bg {
@@ -240,7 +339,7 @@ $accommodations = $pdo->query("
         </header>
 
         <!-- ================= 2. PAGE HEADER (Animated Text) ================= -->
-        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-6 w-full text-center space-y-4">
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4 w-full text-center space-y-3">
             <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-orange/20 border border-brand-orange/50 text-brand-orange text-xs font-bold uppercase tracking-widest backdrop-blur-md animate-fade-down">
                 <i class="fa-solid fa-hotel"></i> Recommended Accommodations
             </div>
@@ -255,24 +354,26 @@ $accommodations = $pdo->query("
         </section>
 
         <!-- ================= 3. ACCOMMODATIONS LIST SECTION ================= -->
-        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 mb-16 w-full">
-            <?php if (count($accommodations) == 0): ?>
-                <div class="glass-panel p-16 text-center text-gray-300 rounded-3xl max-w-xl mx-auto" data-aos="zoom-in" data-aos-duration="600">
-                    <i class="fa-solid fa-hotel text-5xl mb-4 block text-brand-orange opacity-60"></i>
-                    <h3 class="text-xl font-bold text-white mb-1">ยังไม่มีข้อมูลที่พักแนะนำในขณะนี้</h3>
-                    <p class="text-xs text-gray-400">ข้อมูลสถานที่พักแรมจะถูกอัปเดตเพิ่มเติมในภายหลัง</p>
-                </div>
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 mb-12 w-full">
+            <div class="mb-5 flex items-end justify-between gap-3">
+                <div><h2 class="text-xl font-bold text-white">ที่พักใกล้สถานที่จัดการแข่งขัน</h2><p class="mt-1 text-xs text-gray-300">ที่พักที่ผู้ดูแลแนะนำสำหรับแต่ละ Tournament</p></div>
+                <span class="shrink-0 text-xs text-gray-300">พบที่พักแนะนำ <?= count($accommodations) ?> แห่ง</span>
+            </div>
+            <?php if (!$accommodations): ?>
+                <div class="glass-panel rounded-2xl p-10 text-center text-gray-300"><i class="fa-solid fa-hotel text-4xl mb-3 block text-brand-orange opacity-60"></i><h3 class="text-lg font-bold text-white mb-1">ยังไม่มีข้อมูลที่พักแนะนำ</h3><p class="text-xs text-gray-400">ข้อมูลที่พักจะปรากฏเมื่อผู้ดูแลระบบเพิ่มรายการ</p></div>
             <?php else: ?>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     <?php foreach ($accommodations as $index => $a): ?>
-                        <div class="glass-card rounded-2xl overflow-hidden flex flex-col justify-between group shadow-lg"
+                        <div class="glass-card lodging-card <?= $selectedTournamentId && (int) $a['tournament_id'] === $selectedTournamentId ? 'border-brand-orange shadow-orange-glow' : '' ?> rounded-2xl overflow-hidden flex flex-col justify-between group shadow-lg h-full"
                              data-aos="fade-up"
-                             data-aos-delay="<?php echo $index * 100; ?>">
+                             data-aos-delay="<?php echo min($index * 80, 80); ?>">
                             <div>
                                 <!-- 🖼️ รูปภาพโรงแรมพร้อม Gradient Overlay ด้านล่าง -->
                                 <div class="aspect-video relative overflow-hidden bg-black/60">
+                                    <div class="lodging-card-badge absolute left-3 top-3 z-10 max-w-[75%] truncate rounded-full border border-brand-orange/50 bg-slate-950/85 px-3 py-1 text-[10px] font-bold text-orange-200" title="แนะนำสำหรับ: <?= htmlspecialchars($a['tournament_name']) ?>">แนะนำสำหรับ: <?= htmlspecialchars($a['tournament_name']) ?></div>
                                     <?php if (!empty($a['image_path'])): ?>
-                                        <img src="../assets/<?php echo htmlspecialchars($a['image_path']); ?>" alt="<?php echo htmlspecialchars($a['name']); ?>" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                                        <img src="../assets/<?php echo htmlspecialchars($a['image_path']); ?>" alt="<?php echo htmlspecialchars($a['name']); ?>" loading="lazy" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" class="lodging-card-image w-full h-full object-cover">
+                                        <div class="hidden w-full h-full flex flex-col items-center justify-center text-gray-500 bg-slate-900/80"><i class="fa-solid fa-hotel text-4xl mb-1 text-brand-orange/50"></i><span class="text-[10px] tracking-widest uppercase opacity-70">KORAT ESPORT LODGING</span></div>
                                     <?php else: ?>
                                         <div class="w-full h-full flex flex-col items-center justify-center text-gray-500 bg-slate-900/80">
                                             <i class="fa-solid fa-hotel text-4xl mb-1 text-brand-orange/50 placeholder-icon-pulse"></i>
@@ -284,36 +385,43 @@ $accommodations = $pdo->query("
                                     <div class="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent pointer-events-none"></div>
 
                                     <!-- 📍 ป้ายแสดงระยะทางจากสนามแข่ง พร้อม Glow Pulse -->
-                                    <?php if (!empty($a['distance'])): ?>
-                                        <div class="absolute top-3 right-3 bg-black/85 backdrop-blur-md text-amber-300 text-[11px] font-bold px-3.5 py-1 rounded-full border border-amber-400/50 shadow-xl flex items-center gap-1.5 distance-badge-glow">
-                                            <i class="fa-solid fa-route text-brand-orange"></i> <?php echo htmlspecialchars($a['distance']); ?>
+                                    <?php if ($a['distance'] !== null && $a['distance'] !== ''): ?>
+                                        <div class="lodging-card-distance absolute top-3 right-3 bg-black/85 backdrop-blur-md text-amber-300 text-[11px] font-bold px-3.5 py-1 rounded-full border border-amber-400/50 shadow-xl flex items-center gap-1.5 distance-badge-glow">
+                                            <i class="fa-solid fa-route text-brand-orange"></i> ห่างจากสนามประมาณ <?php echo htmlspecialchars($a['distance']); ?> กม.
                                         </div>
                                     <?php endif; ?>
                                 </div>
 
                                 <div class="p-6 space-y-3">
-                                    <h3 class="text-xl font-bold text-white group-hover:text-brand-orange transition-colors font-display line-clamp-1 leading-snug">
+                                    <h3 class="text-xl font-bold text-white group-hover:text-brand-orange transition-colors font-display line-clamp-2 leading-snug">
                                         <?php echo htmlspecialchars($a['name']); ?>
                                     </h3>
 
                                     <?php if (!empty($a['address'])): ?>
                                         <p class="text-xs text-gray-300 flex items-start gap-2 leading-relaxed font-normal">
                                             <i class="fa-solid fa-location-dot text-brand-orange mt-0.5 shrink-0"></i>
-                                            <span class="line-clamp-2"><?php echo htmlspecialchars($a['address']); ?></span>
+                                            <span class="line-clamp-3"><?php echo htmlspecialchars($a['address']); ?></span>
                                         </p>
                                     <?php endif; ?>
+                                    <div class="lodging-card-info rounded-xl border border-brand-orange/30 bg-slate-950/55 p-3 text-xs text-gray-300 space-y-1.5">
+                                        <p class="flex items-center justify-between gap-2 font-bold text-orange-200"><span><i class="fa-solid fa-trophy text-brand-orange mr-2"></i>ใกล้สถานที่จัดการแข่งขัน</span><span class="shrink-0 rounded-full border border-brand-orange/30 px-2 py-0.5 text-[10px] text-brand-orange"><?= htmlspecialchars($statusLabels[$a['status']] ?? 'ไม่ทราบสถานะ') ?></span></p>
+                                        <p><i class="fa-solid fa-trophy text-brand-orange mr-2"></i>Tournament: <?= htmlspecialchars($a['tournament_name']) ?></p>
+                                        <p><i class="fa-solid fa-gamepad text-brand-orange mr-2"></i>เกม: <?= htmlspecialchars($a['game_name'] ?: 'ไม่ระบุเกม') ?></p>
+                                        <p><i class="fa-solid fa-location-dot text-brand-orange mr-2"></i>สนาม: <?= htmlspecialchars($a['venue_address'] ?: 'ยังไม่ได้ระบุสถานที่แข่งขัน') ?></p>
+                                        <p><i class="fa-regular fa-calendar text-brand-orange mr-2"></i>วันที่: <?= $a['start_date'] && $a['end_date'] ? htmlspecialchars(date('d/m/Y', strtotime($a['start_date'])) . ' - ' . date('d/m/Y', strtotime($a['end_date']))) : 'ยังไม่ได้กำหนดวันแข่งขัน' ?></p>
+                                    </div>
+                                    <?php if ($selectedTournamentId && (int) $a['tournament_id'] === $selectedTournamentId): ?><p class="text-[10px] font-bold text-brand-orange">แนะนำสำหรับ Tournament ที่คุณกำลังดู</p><?php endif; ?>
                                 </div>
                             </div>
 
                             <div class="p-6 pt-0 border-t border-white/10 mt-2">
-                                <?php if (!empty($a['link_url'])): ?>
-                                    <a href="<?php echo htmlspecialchars($a['link_url']); ?>" target="_blank" rel="noopener"
-                                       class="shine-btn w-full py-2.5 px-4 rounded-xl bg-blue-600/30 hover:bg-blue-600 text-blue-200 hover:text-white border border-blue-500/40 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md">
+                                <?php $venueOrigin = getPublicVenueOrigin($a); $destination = trim((string) $a['name'] . ' ' . (string) ($a['address'] ?? '')); $directionsUrl = $venueOrigin !== '' && trim((string) $a['name']) !== '' ? 'https://www.google.com/maps/dir/?api=1&origin=' . urlencode($venueOrigin) . '&destination=' . urlencode($destination) . '&travelmode=driving' : ''; ?>
+                                <?php if ($directionsUrl): ?>
+                                    <a href="<?php echo htmlspecialchars($directionsUrl); ?>" target="_blank" rel="noopener noreferrer"
+                                       class="shine-btn lodging-route-button w-full py-2.5 px-4 rounded-xl bg-blue-600/30 hover:bg-blue-600 text-blue-200 hover:text-white border border-blue-500/40 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-orange">
                                         <i class="fa-solid fa-map-location-dot"></i>
-                                        <span>เปิดแผนที่ / Google Maps</span>
+                                        <span>ดูเส้นทางจากสนาม</span>
                                     </a>
-                                <?php else: ?>
-                                    <span class="block text-center text-xs text-gray-500 font-semibold italic py-2">ไม่มีลิงก์แผนที่นำทาง</span>
                                 <?php endif; ?>
                             </div>
                         </div>

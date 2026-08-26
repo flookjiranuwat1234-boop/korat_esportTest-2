@@ -517,6 +517,16 @@ if ($memberPlayerIds) {
 
 // ดึงรายชื่อนักกีฬาสำหรับเพิ่มเข้าทีมใน Modal
 $allPlayers = $pdo->query("SELECT p.player_id, p.display_name, u.username FROM players p JOIN users u ON u.user_id = p.user_id ORDER BY p.display_name ASC")->fetchAll();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'manage-members.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) {
+    if ($flash['type'] === 'error') $error = $flash['message'];
+    else $success = $flash['message'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full">

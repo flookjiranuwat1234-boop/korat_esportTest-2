@@ -9,6 +9,10 @@ $error = $accountStatus === 'suspended'
     : ($accountStatus === 'disabled' ? 'บัญชีของคุณถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ' : '');
 $justRegistered = isset($_GET['registered']);
 $resetSuccess = isset($_GET['reset_success']);
+$flash = consumeFlashMessage();
+$flashSuccess = $flash && $flash['type'] !== 'error' ? $flash['message'] : '';
+$flashError = $flash && $flash['type'] === 'error' ? $flash['message'] : '';
+$error = $error ?: $flashError;
 
 // ดึงข้อมูลสถิติสำหรับ Infographic ฝั่งซ้าย
 $totalTeamsLogin = $pdo->query("
@@ -32,9 +36,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             // ส่งแต่ละ role ไปหน้าที่เหมาะกับตัวเอง
             if ($user['role'] == 'admin') {
-                header('Location: ../admin/dashboard.php');
+                header('Location: ../admin/dashboard.php', true, 303);
             } else {
-                header('Location: ../pages/index.php');
+                header('Location: ../pages/index.php', true, 303);
             }
             exit;
         } catch (Exception $e) {
@@ -225,6 +229,13 @@ $csrfToken = generateCsrfToken();
                     <div class="mb-6 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-semibold flex items-center gap-3">
                         <i class="fa-solid fa-circle-check text-lg text-emerald-500"></i>
                         <span>เปลี่ยนรหัสผ่านสำเร็จแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่</span>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($justRegistered || $flashSuccess): ?>
+                    <div class="mb-6 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-semibold flex items-center gap-3" role="status">
+                        <i class="fa-solid fa-circle-check text-lg text-emerald-500"></i>
+                        <span><?php echo htmlspecialchars($flashSuccess ?: 'สมัครสมาชิกเรียบร้อยแล้ว กรุณาเข้าสู่ระบบ'); ?></span>
                     </div>
                 <?php endif; ?>
 

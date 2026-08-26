@@ -168,6 +168,13 @@ foreach ($rankings as $rk) {
 }
 
 $csrfToken = $isOwner ? generateCsrfToken() : '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: ($success ?? 'บันทึกข้อมูลเรียบร้อยแล้ว'));
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'player-profile.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">

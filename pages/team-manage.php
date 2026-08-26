@@ -148,6 +148,13 @@ foreach ($members as &$member) {
 unset($member);
 
 $csrfToken = generateCsrfToken();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: ($success ?? 'ดำเนินการเรียบร้อยแล้ว'));
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'team-manage.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
 ?>
 <!DOCTYPE html>
 <html lang="th">

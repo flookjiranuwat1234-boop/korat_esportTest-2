@@ -16,6 +16,14 @@ $search = trim((string) ($_GET['q'] ?? ''));
 $tournamentFilter = (int) ($_GET['tournament_id'] ?? 0);
 $sort = $_GET['sort'] ?? 'latest';
 
+function isSafeMapsUrl($url) {
+    $parts = parse_url(trim($url));
+    if (!$parts || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)) return false;
+    $host = strtolower($parts['host'] ?? '');
+    return in_array($host, ['google.com', 'www.google.com', 'maps.google.com', 'maps.app.goo.gl'], true)
+        && !empty($parts['path']);
+}
+
 // ฟังก์ชันช่วยอัปโหลดรูปภาพที่พัก
 function uploadAccommodationImage($file) {
     if (isset($file) && $file['error'] == UPLOAD_ERR_OK) {
@@ -56,33 +64,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         if (empty($name) || mb_strlen($name) > 150) {
             $error = 'กรุณากรอกชื่อที่พัก';
         } elseif ($tournamentId <= 0) {
-            $error = 'กรุณาเลือก Tournament และสถานที่แข่งขัน';
-        } elseif ($distance !== '' && (!is_numeric($distance) || (float) $distance < 0)) {
+            $error = 'กรุณาเลือก Tournament ก่อนเพิ่มที่พัก';
+        } elseif ($address === '' || mb_strlen($address) > 255) {
+            $error = 'กรุณากรอกที่อยู่ที่พัก';
+        } elseif ($distance === '' || !is_numeric($distance) || (float) $distance < 0) {
             $error = 'ระยะทางต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป';
-        } elseif ($linkUrl !== '' && !preg_match('#^https://(www\.)?google\.com/maps/|^https://maps\.app\.goo\.gl/#i', $linkUrl)) {
+        } elseif ($linkUrl === '' || mb_strlen($linkUrl) > 255 || !isSafeMapsUrl($linkUrl)) {
             $error = 'ลิงก์ต้องเป็น Google Maps URL ที่ปลอดภัย';
         } else {
             try {
+                $tournamentStmt = $pdo->prepare("SELECT tournament_id FROM tournaments WHERE tournament_id = :id AND status <> 'cancelled' LIMIT 1");
+                $tournamentStmt->execute(['id' => $tournamentId]);
+                if (!$tournamentStmt->fetchColumn()) throw new RuntimeException('ไม่พบ Tournament ที่เลือก หรือ Tournament นี้ถูกยกเลิกแล้ว');
                 $imagePath = uploadAccommodationImage($_FILES['hotel_image'] ?? null);
-                $duplicate = $pdo->prepare('SELECT accommodation_id FROM accommodations WHERE LOWER(name) = LOWER(:name) AND link_url = :link_url AND accommodation_id <> :id LIMIT 1');
-                $duplicate->execute(['name' => $name, 'link_url' => $linkUrl, 'id' => $accommodationId]);
-                if ($duplicate->fetchColumn()) throw new RuntimeException('พบที่พักชื่อและลิงก์เดียวกันอยู่แล้ว กรุณาแก้ไขรายการเดิม');
+                $duplicate = $pdo->prepare('SELECT accommodation_id FROM accommodations WHERE tournament_id = :tournament_id AND LOWER(name) = LOWER(:name) AND accommodation_id <> :id LIMIT 1');
+                $duplicate->execute(['tournament_id' => $tournamentId, 'name' => $name, 'id' => $accommodationId]);
+                if ($duplicate->fetchColumn()) throw new RuntimeException('Tournament นี้มีที่พักชื่อดังกล่าวอยู่แล้ว');
                 if ($accommodationId > 0) {
                     $sql = 'UPDATE accommodations SET tournament_id = :tournament_id, name = :name, address = :address, distance = :distance, link_url = :link_url';
                     $params = compact('tournamentId', 'name', 'address', 'distance', 'linkUrl', 'accommodationId');
                     if ($imagePath) { $sql .= ', image_path = :image_path'; $params['imagePath'] = $imagePath; }
                     $sql .= ' WHERE accommodation_id = :accommodationId';
-                    $pdo->prepare($sql)->execute(['tournament_id' => $tournamentId, 'name' => $name, 'address' => $address, 'distance' => $distance ?: null, 'link_url' => $linkUrl ?: null, 'image_path' => $imagePath, 'accommodationId' => $accommodationId]);
+                    $updateParams = ['tournament_id' => $tournamentId, 'name' => $name, 'address' => $address, 'distance' => $distance, 'link_url' => $linkUrl, 'accommodationId' => $accommodationId];
+                    if ($imagePath) $updateParams['image_path'] = $imagePath;
+                    $pdo->prepare($sql)->execute($updateParams);
                     $success = 'แก้ไขข้อมูลที่พักเรียบร้อยแล้ว';
                 } else {
                     $pdo->prepare('INSERT INTO accommodations (tournament_id, name, address, image_path, distance, link_url) VALUES (:tournament_id, :name, :address, :image_path, :distance, :link_url)')->execute(['tournament_id' => $tournamentId, 'name' => $name, 'address' => $address, 'image_path' => $imagePath, 'distance' => $distance ?: null, 'link_url' => $linkUrl ?: null]);
                     $success = 'เพิ่มข้อมูลที่พักแนะนำเรียบร้อยแล้ว';
                 }
+            } catch (RuntimeException $e) {
+                $error = $e->getMessage();
             } catch (PDOException $e) {
-                $error = 'เกิดข้อผิดพลาดในการบันทึก: ' . $e->getMessage();
+                error_log($e->getMessage());
+                $error = 'เกิดข้อผิดพลาดในการบันทึก กรุณาลองใหม่อีกครั้ง';
             }
         }
     }
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: recommended-lodging.php', true, 303);
+    exit;
 }
 
 // ลบข้อมูลที่พักด้วย POST เท่านั้น
@@ -100,14 +121,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $error = 'เกิดข้อผิดพลาดในการลบข้อมูล: ' . $e->getMessage();
     }
     }
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: recommended-lodging.php', true, 303);
+    exit;
 }
 
 // ดึงรายการที่พักทั้งหมดจากตาราง accommodations
-$tournaments = $pdo->query('SELECT tournament_id, name, venue_address, venue_lat_lng FROM tournaments ORDER BY start_date DESC, tournament_id DESC')->fetchAll(PDO::FETCH_ASSOC);
+$tournaments = $pdo->query("SELECT tournament_id, name, venue_address, venue_lat_lng, start_date, end_date, status FROM tournaments WHERE status <> 'cancelled' ORDER BY start_date DESC, tournament_id DESC")->fetchAll(PDO::FETCH_ASSOC);
 $where = ['1=1']; $params = [];
 if ($search !== '') { $where[] = '(a.name LIKE :search OR a.address LIKE :search)'; $params['search'] = '%' . $search . '%'; }
 if ($tournamentFilter > 0) { $where[] = 'a.tournament_id = :tournament_id'; $params['tournament_id'] = $tournamentFilter; }
-$orderBy = $sort === 'distance_asc' ? 'CAST(a.distance AS DECIMAL(10,2)) ASC' : ($sort === 'distance_desc' ? 'CAST(a.distance AS DECIMAL(10,2)) DESC' : 'a.accommodation_id DESC');
+$orderBy = $sort === 'distance_asc' ? 'CAST(a.distance AS DECIMAL(10,2)) ASC, a.name ASC' : ($sort === 'distance_desc' ? 'CAST(a.distance AS DECIMAL(10,2)) DESC, a.name ASC' : ($sort === 'name_asc' ? 'a.name ASC' : 'a.accommodation_id DESC'));
 $accommodationStmt = $pdo->prepare("SELECT a.*, t.name AS tournament_name, t.venue_address, t.venue_lat_lng FROM accommodations a LEFT JOIN tournaments t ON t.tournament_id = a.tournament_id WHERE " . implode(' AND ', $where) . " ORDER BY {$orderBy}");
 $accommodationStmt->execute($params);
 $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -115,6 +139,11 @@ $allAccommodationCount = (int) $pdo->query('SELECT COUNT(*) FROM accommodations'
 $activeAccommodationCount = $allAccommodationCount;
 $tournamentAccommodationCount = (int) $pdo->query('SELECT COUNT(DISTINCT tournament_id) FROM accommodations WHERE tournament_id IS NOT NULL')->fetchColumn();
 $csrfToken = generateCsrfToken();
+$flash = consumeFlashMessage();
+if ($flash) {
+    if ($flash['type'] === 'error') $error = $flash['message'];
+    else $success = $flash['message'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full">
@@ -160,6 +189,14 @@ $csrfToken = generateCsrfToken();
         }
         .lodging-action-item { min-height: 2.5rem; width: 100%; display: flex; align-items: center; padding: .625rem .75rem; border-radius: .5rem; text-align: left; font-size: .75rem; font-weight: 600; color: #334155; }
         .lodging-action-item:hover { background: #f8fafc; }
+        #lodgingForm { display: flex; flex-direction: column; }
+        #lodgingForm > div:nth-of-type(1) { order: 2; }
+        #lodgingForm > div:nth-of-type(2) { order: 1; }
+        #lodgingForm > div:nth-of-type(3) { order: 4; }
+        #lodgingForm > div:nth-of-type(4) { order: 5; }
+        #lodgingForm > div:nth-of-type(5) { order: 6; }
+        #lodgingForm > div:nth-of-type(6) { order: 7; }
+        #lodgingForm > div:last-child { order: 7; }
     </style>
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
@@ -257,16 +294,18 @@ $csrfToken = generateCsrfToken();
 
             <!-- Alert Messages -->
             <?php if ($error): ?>
-                <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3">
+                <div class="flash-alert p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3" role="alert">
                     <i class="fa-solid fa-triangle-exclamation text-lg shrink-0 text-rose-500"></i>
-                    <span><?php echo htmlspecialchars($error); ?></span>
+                    <span class="flex-1"><?php echo htmlspecialchars($error); ?></span>
+                    <button type="button" class="flash-alert-close text-rose-500 hover:text-rose-700 text-lg" aria-label="ปิดการแจ้งเตือน">&times;</button>
                 </div>
             <?php endif; ?>
 
             <?php if ($success): ?>
-                <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm flex items-center gap-3">
+                <div class="flash-alert p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm flex items-center gap-3" role="status" data-auto-hide="5000">
                     <i class="fa-solid fa-circle-check text-lg shrink-0 text-emerald-500"></i>
-                    <span><?php echo htmlspecialchars($success); ?></span>
+                    <span class="flex-1"><?php echo htmlspecialchars($success); ?></span>
+                    <button type="button" class="flash-alert-close text-emerald-500 hover:text-emerald-700 text-lg" aria-label="ปิดการแจ้งเตือน">&times;</button>
                 </div>
             <?php endif; ?>
 
@@ -449,6 +488,197 @@ $csrfToken = generateCsrfToken();
         function closeLodgingDetail() { hideLodgingModal('lodgingDetailModal'); }
         function openLodgingActionMenu(button) { const menu = button.parentElement.parentElement.querySelector('.lodging-action-menu'); if (!menu) return; document.querySelectorAll('.lodging-action-menu').forEach(item => item.classList.add('hidden')); const opening = menu.classList.contains('hidden'); if (!opening) return; document.body.appendChild(menu); menu.classList.remove('hidden'); const rect = button.getBoundingClientRect(); const width = menu.offsetWidth || 208; const height = menu.offsetHeight || 180; menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`; menu.style.top = `${rect.bottom + height + 8 <= window.innerHeight - 8 ? rect.bottom + 8 : Math.max(8, rect.top - height - 8)}px`; button.setAttribute('aria-expanded', 'true'); }
         document.addEventListener('DOMContentLoaded', () => { document.getElementById('lodgingForm')?.querySelectorAll('input, textarea, select').forEach(field => field.addEventListener('input', () => { lodgingDirty = true; })); document.querySelectorAll('.lodging-action-menu').forEach(menu => menu.addEventListener('click', event => event.stopPropagation())); document.addEventListener('click', () => document.querySelectorAll('.lodging-action-menu').forEach(menu => menu.classList.add('hidden'))); document.querySelectorAll('[id$="Modal"]').forEach(modal => modal.addEventListener('click', event => { if (event.target === modal) hideLodgingModal(modal.id); })); document.addEventListener('keydown', event => { if (event.key === 'Escape') { document.querySelectorAll('.lodging-action-menu').forEach(menu => menu.classList.add('hidden')); closeLodgingForm(); closeLodgingDetail(); } }); document.getElementById('lodgingForm')?.addEventListener('submit', () => { const button = document.getElementById('lodgingSubmit'); button.disabled = true; button.textContent = 'กำลังบันทึก...'; }); });
+    </script>
+    <script>
+        function getTournamentMapUrl(tournament) {
+            const venueValue = String(tournament?.venue_lat_lng || '').trim();
+            const coordinateMatch = venueValue.match(/@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:[,\/]|$)/);
+            const coordinates = coordinateMatch ? [coordinateMatch[1], coordinateMatch[2]] : venueValue.split(',').map(value => value.trim());
+            if (coordinates.length === 2 && coordinates.every(value => value !== '' && Number.isFinite(Number(value)))) {
+                const latitude = Number(coordinates[0]);
+                const longitude = Number(coordinates[1]);
+                if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+                    return `https://www.google.com/maps/search/${encodeURIComponent('โรงแรม')}/@${latitude},${longitude},15z`;
+                }
+            }
+            const venueAddress = String(tournament?.venue_address || '').trim();
+            return venueAddress ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('โรงแรมใกล้ ' + venueAddress) : '';
+        }
+        function updateLodgingTournamentCard() {
+            const select = document.getElementById('lodgingTournament');
+            const venue = document.getElementById('lodgingVenue');
+            const submit = document.getElementById('lodgingSubmit');
+            const tournament = tournamentData[select?.value] || null;
+            if (!venue || !select) return;
+            venue.innerHTML = '';
+            if (!tournament) {
+                venue.textContent = 'กรุณาเลือก Tournament ก่อนเพิ่มที่พัก';
+                if (submit) submit.disabled = true;
+                return;
+            }
+            const details = document.createElement('div');
+            details.textContent = 'Tournament ที่เลือก: ' + tournament.name + ' | สถานที่แข่งขัน: ' + (tournament.venue_address || 'ยังไม่ได้ระบุสถานที่แข่งขัน') + ' | วันที่แข่งขัน: ' + (tournament.start_date && tournament.end_date ? tournament.start_date + ' - ' + tournament.end_date : 'ยังไม่ได้กำหนดวันแข่งขัน') + ' | สถานะ: ' + (tournament.status || 'ไม่ทราบสถานะ');
+            venue.appendChild(details);
+            const mapUrl = getTournamentMapUrl(tournament);
+            const coordinateParts = String(tournament.venue_lat_lng || '').split(',').map(value => value.trim());
+            const coordinatesValid = coordinateParts.length === 2 && coordinateParts.every(value => value !== '' && Number.isFinite(Number(value))) && Number(coordinateParts[0]) >= -90 && Number(coordinateParts[0]) <= 90 && Number(coordinateParts[1]) >= -180 && Number(coordinateParts[1]) <= 180;
+            const coordinates = coordinatesValid ? coordinateParts.join(', ') : '';
+            const venueAddress = String(tournament.venue_address || '').trim();
+            const locationInfo = document.createElement('p');
+            locationInfo.className = 'mt-2 text-slate-600';
+            locationInfo.textContent = coordinates ? 'พิกัด: ' + coordinates + ' | การค้นหา: ค้นหาโรงแรมรอบสนามในระยะพื้นที่ใกล้เคียง' : (venueAddress ? 'กำลังค้นหาจากที่อยู่ เนื่องจากยังไม่มีพิกัดสนาม' : '');
+            venue.appendChild(locationInfo);
+            if (mapUrl) {
+                const mapButton = document.createElement('button');
+                mapButton.type = 'button';
+                mapButton.className = 'mt-3 inline-flex rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700';
+                mapButton.textContent = 'ค้นหาที่พักใกล้สนาม';
+                mapButton.addEventListener('click', () => window.open(mapUrl, '_blank', 'noopener,noreferrer'));
+                venue.appendChild(mapButton);
+            } else {
+                const notice = document.createElement('p');
+                notice.className = 'mt-2 text-rose-600';
+                notice.textContent = 'Tournament นี้ยังไม่มีข้อมูลสถานที่แข่งขัน';
+                venue.appendChild(notice);
+            }
+            if (submit) submit.disabled = false;
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const select = document.getElementById('lodgingTournament');
+            if (select) {
+                select.addEventListener('change', updateLodgingTournamentCard);
+                updateLodgingTournamentCard();
+            }
+        });
+        function showLodgingVenue(select) {
+            updateLodgingTournamentCard();
+        }
+    </script>
+    <script>
+        function setLodgingFieldsEnabled(enabled) {
+            ['lodgingName', 'lodgingDistance', 'lodgingLink', 'lodgingAddress', 'lodgingImage'].forEach(id => {
+                const field = document.getElementById(id);
+                if (field) field.disabled = !enabled;
+            });
+            const submit = document.getElementById('lodgingSubmit');
+            if (submit) submit.disabled = !enabled || !lodgingRequiredFieldsComplete();
+        }
+
+        function lodgingRequiredFieldsComplete() {
+            return ['lodgingName', 'lodgingAddress', 'lodgingDistance', 'lodgingLink'].every(id => document.getElementById(id)?.value.trim());
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const select = document.getElementById('lodgingTournament');
+            if (!select) return;
+            let previousTournament = select.value;
+            setLodgingFieldsEnabled(Boolean(select.value));
+            select.addEventListener('change', event => {
+                const hasEnteredData = ['lodgingName', 'lodgingAddress', 'lodgingDistance', 'lodgingLink'].some(id => document.getElementById(id)?.value.trim());
+                if (previousTournament && previousTournament !== select.value && hasEnteredData && !window.confirm('การเปลี่ยน Tournament อาจทำให้ข้อมูลที่พักอ้างอิงเปลี่ยน ต้องการดำเนินการต่อหรือไม่?')) {
+                    select.value = previousTournament;
+                    return;
+                }
+                previousTournament = select.value;
+                setLodgingFieldsEnabled(Boolean(select.value));
+                if (select.value) document.getElementById('lodgingName')?.focus();
+            });
+            ['lodgingName', 'lodgingAddress', 'lodgingDistance', 'lodgingLink'].forEach(id => document.getElementById(id)?.addEventListener('input', () => {
+                const submit = document.getElementById('lodgingSubmit');
+                if (submit) submit.disabled = !select.value || !lodgingRequiredFieldsComplete();
+            }));
+        });
+
+        const originalOpenLodgingForm = openLodgingForm;
+        openLodgingForm = function (id = 0) {
+            originalOpenLodgingForm(id);
+            const select = document.getElementById('lodgingTournament');
+            setLodgingFieldsEnabled(Boolean(select?.value));
+            if (select?.value) document.getElementById('lodgingName')?.focus();
+        };
+    </script>
+    <script>
+        let activeLodgingMenu = null;
+        let activeLodgingButton = null;
+
+        function closeLodgingActionMenus(restoreFocus = false) {
+            document.querySelectorAll('.lodging-action-menu').forEach(menu => {
+                menu.classList.add('hidden');
+                menu.setAttribute('aria-hidden', 'true');
+            });
+            if (activeLodgingButton) activeLodgingButton.setAttribute('aria-expanded', 'false');
+            const button = activeLodgingButton;
+            activeLodgingMenu = null;
+            activeLodgingButton = null;
+            if (restoreFocus) button?.focus();
+        }
+
+        function openLodgingActionMenu(button) {
+            const menu = button.parentElement.parentElement.querySelector('.lodging-action-menu');
+            if (!menu) return;
+            const isOpen = activeLodgingMenu === menu && !menu.classList.contains('hidden');
+            closeLodgingActionMenus();
+            if (isOpen) return;
+            activeLodgingMenu = menu;
+            activeLodgingButton = button;
+            menu.classList.remove('hidden');
+            menu.setAttribute('aria-hidden', 'false');
+            button.setAttribute('aria-expanded', 'true');
+            const rect = button.getBoundingClientRect();
+            const width = menu.offsetWidth || 208;
+            const height = menu.offsetHeight || 180;
+            menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+            menu.style.top = `${rect.bottom + height + 8 <= window.innerHeight - 8 ? rect.bottom + 8 : Math.max(8, rect.top - height - 8)}px`;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.lodging-action-toggle').forEach((button, index) => {
+                const menu = button.parentElement.parentElement.querySelector('.lodging-action-menu');
+                if (!menu) return;
+                const menuId = `lodging-action-menu-${index + 1}`;
+                menu.id = menuId;
+                menu.setAttribute('role', 'menu');
+                menu.setAttribute('aria-hidden', 'true');
+                button.setAttribute('aria-haspopup', 'menu');
+                button.setAttribute('aria-controls', menuId);
+                button.addEventListener('click', event => event.stopPropagation());
+                button.addEventListener('keydown', event => {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeLodgingActionMenus(true);
+                    }
+                });
+                menu.querySelectorAll('button, a').forEach(item => {
+                    item.setAttribute('role', 'menuitem');
+                    item.addEventListener('click', () => closeLodgingActionMenus());
+                });
+                menu.addEventListener('keydown', event => {
+                    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+                    const currentIndex = items.indexOf(document.activeElement);
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeLodgingActionMenus(true);
+                    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        const nextIndex = event.key === 'ArrowDown' ? (currentIndex + 1) % items.length : (currentIndex - 1 + items.length) % items.length;
+                        items[nextIndex]?.focus();
+                    }
+                });
+            });
+        });
+    </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.flash-alert').forEach(alert => {
+                const close = () => {
+                    alert.style.opacity = '0';
+                    window.setTimeout(() => alert.remove(), 250);
+                };
+                alert.querySelector('.flash-alert-close')?.addEventListener('click', close);
+                const duration = Number(alert.dataset.autoHide || 0);
+                if (duration > 0) window.setTimeout(close, duration);
+            });
+        });
     </script>
 </body>
 </html>

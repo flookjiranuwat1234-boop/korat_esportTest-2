@@ -118,6 +118,16 @@ if ($member['player_id']) {
 }
 
 function h($value): string { return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8'); }
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'member-detail.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) {
+    if ($flash['type'] === 'error') $error = $flash['message'];
+    else $success = $flash['message'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="th">

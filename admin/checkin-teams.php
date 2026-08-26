@@ -129,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_
     $lookupStmt->execute(['tournament_id' => $tournamentId, 'token' => $token]);
     $registration = $lookupStmt->fetch(PDO::FETCH_ASSOC);
     if (!$error && $registration) {
-        header('Location: checkin-teams.php?tournament_id=' . $tournamentId . '&category_id=' . (int) $registration['tournament_category_id'] . '&registration_id=' . (int) $registration['tournament_registration_id']);
+        header('Location: checkin-teams.php?tournament_id=' . $tournamentId . '&category_id=' . (int) $registration['tournament_category_id'] . '&registration_id=' . (int) $registration['tournament_registration_id'], true, 303);
         exit;
     }
     if (!$error) {
@@ -192,6 +192,16 @@ foreach ($registrations as &$registration) {
 unset($registration);
 
 $csrfToken = generateCsrfToken();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'checkin-teams.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) {
+    if ($flash['type'] === 'error') $error = $flash['message'];
+    else $success = $flash['message'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full">

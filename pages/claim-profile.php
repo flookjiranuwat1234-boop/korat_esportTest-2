@@ -61,7 +61,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'claim')
         $claim->execute(['user_id' => $_SESSION['user_id'], 'player_id' => $playerId]);
 
         if ($claim->rowCount() > 0) {
-            header('Location: profile.php?claimed=1');
+            setFlashMessage('success', 'Claim โปรไฟล์เรียบร้อยแล้ว');
+            header('Location: profile.php', true, 303);
             exit;
         } else {
             $error = 'โปรไฟล์นี้เพิ่งถูก claim ไปแล้วโดยคนอื่น ลองค้นหาใหม่';
@@ -85,12 +86,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create_
             'user_id' => $_SESSION['user_id'],
             'display_name' => $newDisplayName,
         ]);
-        header('Location: profile.php?created=1');
+        setFlashMessage('success', 'สร้างโปรไฟล์เรียบร้อยแล้ว');
+        header('Location: profile.php', true, 303);
         exit;
     }
 }
 
 $csrfToken = generateCsrfToken();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: ($success ?? 'ดำเนินการเรียบร้อยแล้ว'));
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'claim-profile.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">

@@ -159,6 +159,16 @@ function formatAdminNewsDate(?string $date): string
 }
 
 $csrfToken = generateCsrfToken();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'manage-news.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) {
+    if ($flash['type'] === 'error') $error = $flash['message'];
+    else $success = $flash['message'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full">

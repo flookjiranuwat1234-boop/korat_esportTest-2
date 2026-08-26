@@ -70,7 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $addMember->execute(['team_id' => $teamId, 'player_id' => $playerId]);
 
                 // ส่งกลับไปหน้าโปรไฟล์พร้อมแสดงแจ้งเตือนสร้างทีมสำเร็จ
-                header('Location: profile.php?created_team=1');
+                setFlashMessage('success', 'สร้างทีมเรียบร้อยแล้ว คุณเป็นกัปตันทีม');
+                header('Location: profile.php', true, 303);
                 exit;
             }
         }
@@ -78,6 +79,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $csrfToken = generateCsrfToken();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: ($success ?? 'สร้างทีมเรียบร้อยแล้ว'));
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'create-team.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">

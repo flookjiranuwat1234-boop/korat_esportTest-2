@@ -67,7 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['step'] ?? '') == '3') {
         } else {
             setNewPassword($pdo, $_SESSION['reset_user_id'], $newPassword);
             unset($_SESSION['reset_user_id'], $_SESSION['reset_step']);
-            header('Location: login.php?reset_success=1');
+            setFlashMessage('success', 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว');
+            header('Location: login.php', true, 303);
             exit;
         }
     }

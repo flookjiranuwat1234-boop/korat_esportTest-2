@@ -42,7 +42,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         } else {
             try {
                 registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer);
-                header('Location: login.php?registered=1');
+                setFlashMessage('success', 'สมัครสมาชิกเรียบร้อยแล้ว');
+                header('Location: login.php', true, 303);
                 exit;
             } catch (Exception $e) {
                 $error = $e->getMessage();

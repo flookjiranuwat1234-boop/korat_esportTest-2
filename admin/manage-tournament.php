@@ -18,6 +18,11 @@ $currentUser = [
 
 $error = '';
 $success = '';
+$flash = consumeFlashMessage();
+if ($flash) {
+    if ($flash['type'] === 'error') $error = $flash['message'];
+    else $success = $flash['message'];
+}
 
 function getTournamentCloseSummary(PDO $pdo, int $tournamentId): array
 {
@@ -1097,6 +1102,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'manage-tournament.php'), true, 303);
+    exit;
+}
+
 // ==========================================
 // 4. ลบทัวร์นาเมนต์
 // ==========================================
@@ -1146,7 +1157,7 @@ if (isset($_GET['close_registration'])) {
 
             if ($error === '') {
                 $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :id AND status IN ('registration_open', 'registration_closed')")->execute(['id' => $tid]);
-                header("Location: record-match.php?tournament_id=" . $tid);
+                header("Location: record-match.php?tournament_id=" . $tid, true, 303);
                 exit;
             }
         } catch (Exception $e) {
@@ -1155,14 +1166,21 @@ if (isset($_GET['close_registration'])) {
     }
 }
 
-if (isset($_GET['generate_playoff'])) {
-    $tid = (int) $_GET['generate_playoff'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_playoff') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    }
+    $tid = (int) ($_POST['tournament_id'] ?? 0);
+    if (!$error && $tid > 0) {
     try {
         generateGroupPlayoff($pdo, $tid);
         $pdo->prepare("UPDATE tournaments SET status = 'ongoing' WHERE tournament_id = :id AND status IN ('registration_open', 'registration_closed', 'ongoing')")->execute(['id' => $tid]);
         $success = 'สร้างสาย Playoff จากทีมที่ผ่านรอบแบ่งกลุ่มแล้ว';
     } catch (Exception $e) {
         $error = 'สร้างสาย Playoff ไม่สำเร็จ: ' . $e->getMessage();
+    }
+    } elseif (!$error) {
+        $error = 'ไม่พบ Tournament ที่ต้องการสร้างสาย Playoff';
     }
 }
 
@@ -2265,16 +2283,18 @@ $csrfToken = generateCsrfToken();
 
         <main class="p-8 space-y-8 flex-1">
             <?php if ($error): ?>
-                <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3">
+                <div class="flash-alert p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3" role="alert">
                     <i class="fa-solid fa-triangle-exclamation text-lg shrink-0 text-rose-500"></i>
-                    <span><?php echo htmlspecialchars($error); ?></span>
+                    <span class="flex-1"><?php echo htmlspecialchars($error); ?></span>
+                    <button type="button" class="flash-alert-close text-rose-500 hover:text-rose-700 text-lg" aria-label="ปิดการแจ้งเตือน">&times;</button>
                 </div>
             <?php endif; ?>
 
             <?php if ($success): ?>
-                <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm flex items-center gap-3">
+                <div class="flash-alert p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm flex items-center gap-3" role="status" data-auto-hide="5000">
                     <i class="fa-solid fa-circle-check text-lg shrink-0 text-emerald-500"></i>
-                    <span><?php echo htmlspecialchars($success); ?></span>
+                    <span class="flex-1"><?php echo htmlspecialchars($success); ?></span>
+                    <button type="button" class="flash-alert-close text-emerald-500 hover:text-emerald-700 text-lg" aria-label="ปิดการแจ้งเตือน">&times;</button>
                 </div>
             <?php endif; ?>
 
@@ -2477,10 +2497,14 @@ $csrfToken = generateCsrfToken();
                                             <i class="fa-solid fa-sitemap"></i> จัดสายอัตโนมัติ
                                         </button>
                                     <?php elseif ($t['status'] == 'bracket_generated' && $t['format'] == 'group_playoff'): ?>
-                                        <a role="menuitem" href="?generate_playoff=<?php echo $t['tournament_id']; ?>" onclick="return confirm('ยืนยันสร้างสาย Playoff จากอันดับ Group?')"
-                                           class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-sm">
-                                            <i class="fa-solid fa-forward"></i> สร้างสาย Playoff
-                                        </a>
+                                        <form method="POST" onsubmit="return confirm('ยืนยันสร้างสาย Playoff จากอันดับ Group?')">
+                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>">
+                                            <input type="hidden" name="action" value="generate_playoff">
+                                            <input type="hidden" name="tournament_id" value="<?php echo (int) $t['tournament_id']; ?>">
+                                            <button type="submit" role="menuitem" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-sm">
+                                                <i class="fa-solid fa-forward"></i> สร้างสาย Playoff
+                                            </button>
+                                        </form>
                                     <?php endif; ?>
                                     <?php if (in_array($t['status'], ['bracket_generated', 'ongoing', 'completed'], true)): ?>
                                         <?php if ((int) $t['total_matches_count'] > 0): ?>
@@ -2997,5 +3021,18 @@ $csrfToken = generateCsrfToken();
             window.addEventListener('scroll', closeMenus, true);
         });
     </script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('.flash-alert').forEach(alert => {
+            const close = () => {
+                alert.style.opacity = '0';
+                window.setTimeout(() => alert.remove(), 250);
+            };
+            alert.querySelector('.flash-alert-close')?.addEventListener('click', close);
+            const duration = Number(alert.dataset.autoHide || 0);
+            if (duration > 0) window.setTimeout(close, duration);
+        });
+    });
+</script>
 </body>
 </html>

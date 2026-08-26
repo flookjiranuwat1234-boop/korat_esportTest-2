@@ -243,6 +243,16 @@ if ($selectedAlbumId > 0) {
 } else {
     $galleryPhotos = $pdo->query("SELECT g.*, a.title AS album_title FROM gallery g LEFT JOIN gallery_albums a ON a.album_id = g.album_id WHERE g.media_type = 'activity' ORDER BY g.gallery_id DESC")->fetchAll();
 }
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: $success);
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'manage-gallery.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) {
+    if ($flash['type'] === 'error') $error = $flash['message'];
+    else $success = $flash['message'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full">

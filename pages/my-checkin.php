@@ -78,6 +78,13 @@ $stmt->execute(['pid' => $myPlayerId]);
 $checkins = $stmt->fetchAll();
 
 $csrfToken = generateCsrfToken();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    setFlashMessage($error ? 'error' : 'success', $error ?: ($success ?? 'ดำเนินการเรียบร้อยแล้ว'));
+    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'my-checkin.php'), true, 303);
+    exit;
+}
+$flash = consumeFlashMessage();
+if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
 ?>
 <!DOCTYPE html>
 <html lang="th">

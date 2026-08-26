@@ -5,6 +5,22 @@
 
 session_start();
 
+function setFlashMessage(string $type, string $message): void
+{
+    $allowedTypes = ['success', 'error', 'warning', 'info'];
+    $_SESSION['flash_message'] = [
+        'type' => in_array($type, $allowedTypes, true) ? $type : 'info',
+        'message' => $message,
+    ];
+}
+
+function consumeFlashMessage(): ?array
+{
+    $flash = $_SESSION['flash_message'] ?? null;
+    unset($_SESSION['flash_message']);
+    return is_array($flash) && isset($flash['type'], $flash['message']) ? $flash : null;
+}
+
 // สมัครสมาชิกใหม่ ค่าเริ่มต้น role = athlete (แอดมินสร้างเองแยกต่างหาก ไม่เปิดให้สมัครผ่านหน้าเว็บ)
 // $securityQuestion / $securityAnswer ใช้สำหรับฟีเจอร์ "ลืมรหัสผ่าน"
 // (ระบบไม่มีการส่งอีเมลจริง จึงใช้คำถามกันลืมแทนลิงก์รีเซ็ตทางอีเมล)
