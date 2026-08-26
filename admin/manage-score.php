@@ -4,6 +4,7 @@ require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/ranking.php';
 require_once '../includes/bracket.php';
+require_once '../includes/tournament_workflow.php';
 requireRole('admin');
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
@@ -24,6 +25,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
         $matchId = (int) $_POST['match_id'];
         $score1 = (int) $_POST['score1'];
         $score2 = (int) $_POST['score2'];
+
+        $matchCheck = $pdo->prepare('SELECT m.status, m.tournament_id, t.status AS tournament_status
+            FROM matches m JOIN tournaments t ON t.tournament_id = m.tournament_id
+            WHERE m.match_id = :match_id LIMIT 1');
+        $matchCheck->execute(['match_id' => $matchId]);
+        $matchState = $matchCheck->fetch(PDO::FETCH_ASSOC);
+
+        if (!$matchState) {
+            $error = 'ไม่พบ Match ที่ต้องการบันทึกผล';
+        } elseif ($matchState['tournament_status'] !== 'ongoing' || !in_array($matchState['status'], ['scheduled', 'ongoing'], true)) {
+            $error = 'Tournament หรือ Match นี้ไม่อนุญาตให้บันทึกผลในสถานะปัจจุบัน';
+        } else {
 
         // ต้องรู้ก่อนว่าแมตช์นี้อยู่ในทัวร์นาเมนต์รูปแบบไหน เพราะ Single Elimination ห้ามเสมอ
         $fmtStmt = $pdo->prepare("
@@ -48,11 +61,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                 UPDATE matches
                 SET team1_score = :s1, team2_score = :s2, winner_team_id = :winner,
                     status = 'completed', completed_at = NOW()
-                WHERE match_id = :id
+                WHERE match_id = :id AND status IN ('scheduled', 'ongoing')
             ");
             $update->execute([
                 's1' => $score1, 's2' => $score2, 'winner' => $winnerId, 'id' => $matchId,
             ]);
+
+            if ($update->rowCount() !== 1) {
+                $error = 'แมตช์นี้ถูกบันทึกผลการแข่งขันไปแล้ว ไม่สามารถบันทึกซ้ำได้';
+            } else {
 
             try {
                 // คำนวณคะแนนสะสมของทีม/ผู้เล่น
@@ -67,6 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
             } catch (Exception $e) {
                 $error = 'บันทึกผลแล้ว แต่อัปเดตคะแนนไม่สำเร็จ: ' . $e->getMessage();
             }
+            }
+        }
         }
     }
 }

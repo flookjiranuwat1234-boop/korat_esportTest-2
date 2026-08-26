@@ -36,6 +36,15 @@ if (!$tournament) {
 }
 
 $tournamentName = $tournament['name'] ?? ($tournament['title'] ?? ($tournament['tournament_name'] ?? 'ทัวร์นาเมนต์อีสปอร์ต'));
+$tournamentStatusLabels = [
+    'registration_open' => 'เปิดรับสมัคร',
+    'registration_closed' => 'ปิดรับสมัคร',
+    'ongoing' => 'กำลังแข่งขัน',
+    'completed' => 'แข่งขันจบแล้ว',
+    'cancelled' => 'ยกเลิกแล้ว',
+];
+$tournamentStatusLabel = $tournamentStatusLabels[$tournament['status'] ?? ''] ?? 'ไม่ทราบสถานะ';
+$isOfficialResult = ($tournament['status'] ?? '') === 'completed';
 $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
 $categoryStmt->execute(['tournament_id' => $tournamentId]);
 $availableCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -53,19 +62,6 @@ foreach ($availableCategories as $category) {
 $isOpenGame = count($availableCategories) === 1 && ($categoryCodes[0] ?? '') === 'open';
 $publicTab = $_GET['tab'] ?? 'overview';
 $rankingRows = [];
-if ($tournament['play_mode'] === 'solo') {
-    $rankingStmt = $pdo->prepare('SELECT pr.points, pr.wins, pr.losses, p.display_name AS participant_name
-        FROM player_rankings pr JOIN players p ON p.player_id = pr.player_id
-        WHERE pr.game_id = :game_id AND pr.category = :category
-        ORDER BY pr.points DESC, pr.wins DESC LIMIT 10');
-} else {
-    $rankingStmt = $pdo->prepare('SELECT trank.points, trank.wins, trank.losses, t.name AS participant_name
-        FROM team_rankings trank JOIN teams t ON t.team_id = trank.team_id
-        WHERE trank.game_id = :game_id AND trank.category = :category
-        ORDER BY trank.points DESC, trank.wins DESC LIMIT 10');
-}
-$rankingStmt->execute(['game_id' => $tournament['game_id'], 'category' => $selectedCategory]);
-$rankingRows = $rankingStmt->fetchAll();
 
 $myPlayerId = null;
 $myRegistrations = [];
@@ -193,6 +189,48 @@ foreach ($groupRows as $row) {
         continue;
     }
     $groupedStandings[$row['group_name']][] = $row;
+}
+
+if ($selectedCategoryId && $groupRows) {
+    foreach ($groupRows as $row) {
+        if ((int) ($row['tournament_category_id'] ?? 0) !== $selectedCategoryId) continue;
+        $rankingRows[] = [
+            'participant_name' => $row['team_name'],
+            'points' => (int) $row['points'],
+            'wins' => (int) $row['wins'],
+            'losses' => (int) $row['losses'],
+        ];
+    }
+} elseif ($selectedCategoryId) {
+    $localMatchesStmt = $pdo->prepare("SELECT m.team1_id, m.team2_id, m.winner_team_id, m.status,
+            COALESCE(t1.name, u1.username, p1.display_name, 'ผู้แข่งขัน') AS team1_name,
+            COALESCE(t2.name, u2.username, p2.display_name, 'ผู้แข่งขัน') AS team2_name
+        FROM matches m
+        LEFT JOIN teams t1 ON t1.team_id = m.team1_id
+        LEFT JOIN players p1 ON p1.player_id = m.team1_id
+        LEFT JOIN users u1 ON u1.user_id = p1.user_id
+        LEFT JOIN teams t2 ON t2.team_id = m.team2_id
+        LEFT JOIN players p2 ON p2.player_id = m.team2_id
+        LEFT JOIN users u2 ON u2.user_id = p2.user_id
+        WHERE m.tournament_id = :tournament_id AND m.tournament_category_id = :category_id
+            AND m.status IN ('completed', 'walkover')");
+    $localMatchesStmt->execute(['tournament_id' => $tournamentId, 'category_id' => $selectedCategoryId]);
+    $localStandings = [];
+    foreach ($localMatchesStmt->fetchAll(PDO::FETCH_ASSOC) as $match) {
+        foreach ([['id' => $match['team1_id'], 'name' => $match['team1_name']], ['id' => $match['team2_id'], 'name' => $match['team2_name']]] as $participant) {
+            $participantId = (int) ($participant['id'] ?? 0);
+            if ($participantId <= 0) continue;
+            if (!isset($localStandings[$participantId])) $localStandings[$participantId] = ['participant_name' => $participant['name'], 'points' => 0, 'wins' => 0, 'losses' => 0];
+            if ((int) $match['winner_team_id'] === $participantId) {
+                $localStandings[$participantId]['points'] += 3;
+                $localStandings[$participantId]['wins']++;
+            } elseif (!empty($match['winner_team_id'])) {
+                $localStandings[$participantId]['losses']++;
+            }
+        }
+    }
+    $rankingRows = array_values($localStandings);
+    usort($rankingRows, static fn(array $left, array $right): int => [$right['points'], $right['wins'], $left['participant_name']] <=> [$left['points'], $left['wins'], $right['participant_name']]);
 }
 
 // ที่พักแนะนำ
@@ -493,6 +531,10 @@ function roundName($roundNum, $totalRounds)
                             <?php echo htmlspecialchars($tournamentName); ?>
                         </h1>
                         <p class="text-gray-300">เกม: <?php echo htmlspecialchars($tournament['game_name']); ?></p>
+                        <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold <?php echo $isOfficialResult ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200' : 'bg-amber-500/15 border-amber-400/40 text-amber-200'; ?>">
+                            <i class="fa-solid <?php echo $isOfficialResult ? 'fa-flag-checkered' : 'fa-clock'; ?>"></i>
+                            <?php echo htmlspecialchars($isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'); ?>
+                        </span>
                         <?php foreach ($myRegistrations as $registration): ?>
                             <?php
                                 $entryState = $registration['status'] === 'approved'
@@ -519,14 +561,6 @@ function roundName($roundNum, $totalRounds)
                 </div>
             </div>
         </section>
-
-        <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 w-full" aria-label="Tournament sections">
-            <div class="glass-panel rounded-2xl p-2 flex gap-2 overflow-x-auto border border-white/15">
-                <?php foreach ([['overview', 'รายละเอียด', 'fa-circle-info'], ['rules', 'กติกา', 'fa-scroll'], ['schedule', 'ตารางแข่งขัน', 'fa-calendar-days'], ['groups', 'Group Stage', 'fa-table-cells-large'], ['bracket', 'สายแข่งขัน', 'fa-sitemap'], ['ranking', 'Ranking', 'fa-ranking-star']] as $tabItem): ?>
-                    <a href="?id=<?php echo $tournamentId; ?>&category=<?php echo urlencode($selectedCategory); ?>&tab=<?php echo $tabItem[0]; ?>#<?php echo $tabItem[0]; ?>" class="whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold <?php echo $publicTab === $tabItem[0] ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/5 text-gray-300 hover:bg-white/10'; ?>"><i class="fa-solid <?php echo $tabItem[2]; ?> mr-1"></i><?php echo $tabItem[1]; ?></a>
-                <?php endforeach; ?>
-            </div>
-        </nav>
 
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-12">
 
@@ -563,7 +597,7 @@ function roundName($roundNum, $totalRounds)
                                     <i class="fa-solid fa-circle-dot text-brand-orange text-[10px]"></i> สถานะการรับสมัคร
                                 </span>
                                 <span class="px-3 py-1 rounded-full font-bold uppercase tracking-wider text-[11px] <?php echo ($tournament['status'] == 'registration_open') ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'; ?>">
-                                    <?php echo ($tournament['status'] == 'registration_open') ? 'เปิดรับสมัครอยู่' : 'ปิดรับสมัคร / กำลังแข่ง'; ?>
+                                    <?php echo htmlspecialchars($tournamentStatusLabel); ?>
                                 </span>
                             </div>
 
@@ -798,11 +832,11 @@ function roundName($roundNum, $totalRounds)
 
             <section id="ranking" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex items-center gap-3 border-b border-white/15 pb-4">
-                    <i class="fa-solid fa-ranking-star text-amber-400 text-2xl"></i>
-                    <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">Ranking <?php echo htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400">คะแนนแยกตามเกมและ Category ของ Tournament นี้</p></div>
+                            <i class="fa-solid fa-ranking-star text-amber-400 text-2xl"></i>
+                            <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">อันดับในรายการ <?php echo htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?> ใช้เฉพาะข้อมูลของ Tournament นี้</p></div>
                 </div>
                 <div class="glass-panel rounded-2xl overflow-hidden border border-white/15">
-                    <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับ</th><th class="p-3">ผู้แข่งขัน</th><th class="p-3 text-center">คะแนน</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
+                    <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับในรายการ</th><th class="p-3">ผู้แข่งขัน</th><th class="p-3 text-center">คะแนนในรายการ</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
                     <?php if (!$rankingRows): ?><tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูล Ranking</td></tr><?php endif; ?>
                     <?php foreach ($rankingRows as $rankIndex => $ranking): ?><tr class="hover:bg-white/10"><td class="p-3 font-bold text-brand-orange">#<?php echo $rankIndex + 1; ?></td><td class="p-3 font-bold text-white"><?php echo htmlspecialchars($ranking['participant_name']); ?></td><td class="p-3 text-center font-display text-brand-orange"><?php echo (float) $ranking['points']; ?></td><td class="p-3 text-center text-emerald-300"><?php echo (int) $ranking['wins']; ?></td><td class="p-3 text-center text-rose-300"><?php echo (int) $ranking['losses']; ?></td></tr><?php endforeach; ?></tbody></table>
                 </div>

@@ -25,7 +25,7 @@ function getTournamentCloseSummary(PDO $pdo, int $tournamentId): array
     $summary = ['total_matches' => 0, 'completed_matches' => 0, 'pending_matches' => 0, 'categories' => [], 'problems' => []];
     if ($tournamentId === 0) return $summary;
 
-    $matchStmt = $pdo->prepare("SELECT m.tournament_category_id, m.round_number, m.status, m.result_type, m.winner_team_id,
+    $matchStmt = $pdo->prepare("SELECT m.tournament_category_id, m.bracket_type, m.round_number, m.status, m.result_type, m.winner_team_id,
             COALESCE(tc.label, tc.category_code, 'ไม่ระบุ Category') AS category_label,
             COALESCE(winner.name, winner_user.username, '-') AS winner_name
         FROM matches m
@@ -40,14 +40,16 @@ function getTournamentCloseSummary(PDO $pdo, int $tournamentId): array
     foreach ($matchStmt->fetchAll(PDO::FETCH_ASSOC) as $match) {
         $summary['total_matches']++;
         $isFinished = in_array($match['status'], ['completed', 'walkover'], true) || $match['result_type'] === 'bye';
-        if ($isFinished) $summary['completed_matches']++; else $summary['pending_matches']++;
+        $isOptionalReset = !$isFinished && strpos((string) ($match['bracket_type'] ?? ''), 'double_grand_final_reset_') === 0;
+        if ($isFinished) $summary['completed_matches']++;
+        elseif (!$isOptionalReset) $summary['pending_matches']++;
         $categoryId = (int) ($match['tournament_category_id'] ?? 0);
         $matchesByCategory[$categoryId]['label'] = $match['category_label'];
         $matchesByCategory[$categoryId]['matches'][] = $match;
         if ($isFinished && $match['result_type'] !== 'bye' && empty($match['winner_team_id'])) {
             $summary['problems'][] = $match['category_label'] . ': Match จบแล้วแต่ยังไม่มี Winner';
         }
-        if (!$isFinished) $summary['problems'][] = $match['category_label'] . ': มี Match ค้าง';
+        if (!$isFinished && !$isOptionalReset) $summary['problems'][] = $match['category_label'] . ': มี Match ค้าง';
     }
 
     $categoryStmt = $pdo->prepare('SELECT tournament_category_id, COALESCE(label, category_code, \'ไม่ระบุ Category\') AS category_label
@@ -56,15 +58,27 @@ function getTournamentCloseSummary(PDO $pdo, int $tournamentId): array
     foreach ($categoryStmt->fetchAll(PDO::FETCH_ASSOC) as $category) {
         $categoryId = (int) $category['tournament_category_id'];
         $categoryMatches = $matchesByCategory[$categoryId]['matches'] ?? [];
+        $finalCandidates = array_values(array_filter($categoryMatches, static function (array $match): bool {
+            return strpos((string) ($match['bracket_type'] ?? ''), 'double_grand_final_') === 0;
+        }));
         $final = null;
-        foreach ($categoryMatches as $match) {
-            if ($final === null || (int) $match['round_number'] > (int) $final['round_number']) $final = $match;
+        foreach ($finalCandidates as $match) {
+            $isFinished = in_array($match['status'], ['completed', 'walkover'], true);
+            $isReset = strpos((string) ($match['bracket_type'] ?? ''), 'double_grand_final_reset_') === 0;
+            if ($final === null || ($isFinished && !$isReset && !in_array($final['status'], ['completed', 'walkover'], true)) || ($isFinished && $isReset && strpos((string) ($final['bracket_type'] ?? ''), 'double_grand_final_reset_') !== 0)) {
+                $final = $match;
+            }
+        }
+        if ($final === null) {
+            foreach ($categoryMatches as $match) {
+                if ($final === null || (int) $match['round_number'] > (int) $final['round_number']) $final = $match;
+            }
         }
         $winnerName = $final['winner_name'] ?? '-';
         $finalHasWinner = $final && !empty($final['winner_team_id']);
         if (!$categoryMatches) $summary['problems'][] = $category['category_label'] . ': ไม่มี Match';
         elseif (!$finalHasWinner) $summary['problems'][] = $category['category_label'] . ': Final ยังไม่มี Winner';
-        $summary['categories'][] = ['label' => $category['category_label'], 'total_matches' => count($categoryMatches), 'completed_matches' => count(array_filter($categoryMatches, static function (array $match): bool { return in_array($match['status'], ['completed', 'walkover'], true) || $match['result_type'] === 'bye'; })), 'pending_matches' => count(array_filter($categoryMatches, static function (array $match): bool { return !(in_array($match['status'], ['completed', 'walkover'], true) || $match['result_type'] === 'bye'); })), 'winner' => $winnerName];
+        $summary['categories'][] = ['label' => $category['category_label'], 'total_matches' => count($categoryMatches), 'completed_matches' => count(array_filter($categoryMatches, static function (array $match): bool { return in_array($match['status'], ['completed', 'walkover'], true) || $match['result_type'] === 'bye'; })), 'pending_matches' => count(array_filter($categoryMatches, static function (array $match): bool { return !(in_array($match['status'], ['completed', 'walkover'], true) || $match['result_type'] === 'bye') && strpos((string) ($match['bracket_type'] ?? ''), 'double_grand_final_reset_') !== 0; })), 'winner' => $winnerName];
     }
     $summary['problems'] = array_values(array_unique($summary['problems']));
     $summary['ready'] = $summary['total_matches'] > 0 && $summary['pending_matches'] === 0 && !$summary['problems'];
@@ -2333,6 +2347,7 @@ $csrfToken = generateCsrfToken();
                                 $activeCategories = $activeCategoryStmt->fetchAll(PDO::FETCH_ASSOC);
                                 $canDraw = $t['status'] === 'registration_open' && (empty($t['checkin_close_at']) || strtotime($t['checkin_close_at']) <= time());
                                 $canDelete = (int) $t['total_registrations'] === 0 && (int) $t['total_matches_count'] === 0 && (int) $t['tournament_days_count'] === 0 && !in_array($t['status'], ['completed', 'cancelled'], true);
+                                $canEditTournament = $t['status'] !== 'completed';
                             ?>
                             <tr class="hover:bg-slate-50/80 transition-colors">
                                 <td class="p-4">
@@ -2422,6 +2437,7 @@ $csrfToken = generateCsrfToken();
                                         </button>
                                         <div id="tournament-menu-<?php echo (int) $t['tournament_id']; ?>" class="admin-action-menu admin-action-menu-panel fixed z-[45] hidden rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
                                             <div class="admin-action-group">การตั้งค่า</div>
+                                    <?php if ($canEditTournament): ?>
                                     <button type="button" role="menuitem"
                                         onclick="openEditModal(<?php echo $t['tournament_id']; ?>)" 
                                         title="แก้ไข"
@@ -2432,6 +2448,7 @@ $csrfToken = generateCsrfToken();
                                         class="admin-action-item text-slate-700 hover:bg-slate-50">
                                         <i class="fa-solid fa-sliders text-slate-400"></i> จัดการ Category
                                     </button>
+                                    <?php endif; ?>
                                     <?php if ($canDelete): ?>
                                         <form method="POST" onsubmit="return confirm('ยืนยันลบ Tournament นี้? การลบจะไม่สามารถย้อนกลับได้')">
                                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>">

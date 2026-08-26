@@ -140,10 +140,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'approve_registration')
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
         $registrationId = (int) ($_POST['registration_id'] ?? 0);
-        $approveStmt = $pdo->prepare('SELECT tr.*, tc.is_active AS category_active
+        $approveStmt = $pdo->prepare('SELECT tr.*, tc.is_active AS category_active, tour.status AS tournament_status
             FROM tournament_registrations tr
             LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
                 AND tc.tournament_id = tr.tournament_id
+            JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
             WHERE tr.tournament_registration_id = :registration_id LIMIT 1');
         $approveStmt->execute(['registration_id' => $registrationId]);
         $registration = $approveStmt->fetch(PDO::FETCH_ASSOC);
@@ -157,6 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'approve_registration')
         }
         if (!$registration || $registration['status'] !== 'pending') {
             $error = 'ใบสมัครนี้ไม่อยู่ในสถานะรอตรวจสอบ';
+        } elseif ($registration['tournament_status'] === 'completed') {
+            $error = 'Tournament จบการแข่งขันแล้ว ไม่สามารถอนุมัติผู้สมัครเพิ่มได้';
         } elseif ((int) ($registration['category_active'] ?? 0) !== 1) {
             $error = 'Category ของใบสมัครนี้ไม่พร้อมใช้งาน';
         } elseif (!$validParticipant) {
