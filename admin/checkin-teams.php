@@ -250,6 +250,31 @@ if ($flash) {
             color: #FF5500;
             border-left: 4px solid #FF5500;
         }
+        .compact-card {
+            border-radius: 1rem;
+            border: 1px solid #e2e8f0;
+            background: #fff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        .mini-label {
+            font-size: 10px;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #64748b;
+        }
+        .soft-chip {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 0.35rem 0.7rem;
+            font-size: 10px;
+            font-weight: 700;
+        }
+        .panel-scroll {
+            max-height: 520px;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
@@ -345,14 +370,18 @@ if ($flash) {
 
         <main class="p-8 space-y-8 flex-1">
 
-            <!-- SELECT TOURNAMENT CARD -->
-            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-                <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider">
-                    <i class="fa-solid fa-trophy text-brand-orange mr-1"></i> เลือกทัวร์นาเมนต์ที่ต้องการดำเนินการเช็คอิน
-                </label>
-                <form method="GET" action="checkin-teams.php">
-                    <select name="tournament_id" onchange="this.form.submit()" 
-                        class="w-full md:w-1/2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-900 font-medium focus:bg-white focus:outline-none focus:border-brand-orange transition-all cursor-pointer">
+            <div class="compact-card p-5">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <div class="mini-label text-slate-500">Tournament</div>
+                        <h2 class="mt-2 text-lg font-bold text-slate-900">เลือกทัวร์นาเมนต์</h2>
+                    </div>
+                    <div class="rounded-full bg-orange-50 text-brand-orange px-3 py-1 text-[10px] font-bold uppercase tracking-[0.15em]">
+                        Check-in
+                    </div>
+                </div>
+                <form method="GET" action="checkin-teams.php" class="mt-4">
+                    <select name="tournament_id" onchange="this.form.submit()" class="w-full md:w-1/2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-900 font-medium focus:bg-white focus:outline-none focus:border-brand-orange transition-all cursor-pointer">
                         <option value="">-- กรุณาเลือกรายการแข่งขัน --</option>
                         <?php foreach ($tournaments as $t): ?>
                             <?php 
@@ -390,15 +419,26 @@ if ($flash) {
                         <span>ไม่พบข้อมูลเกมของทัวร์นาเมนต์นี้</span>
                     </div>
                 <?php endif; ?>
-                <section class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">เกม / รูปแบบ</div><div class="mt-2 font-bold text-slate-900"><?= $gameMissing ? 'ไม่พบข้อมูลเกมของทัวร์นาเมนต์นี้' : htmlspecialchars($tournament['game_name']) . ' · ' . ($isSolo ? 'Solo' : 'Team') ?></div></div>
-                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">สถานะ Check-in</div><div class="mt-2 font-bold <?= $checkinClosed ? 'text-rose-600' : ($checkinOpen ? 'text-emerald-600' : 'text-amber-600') ?>"><?= $checkinWindowLabel ?></div></div>
-                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">เปิด Check-in</div><div class="mt-2 text-sm font-bold text-slate-900"><?= !empty($tournament['checkin_open_at']) ? date('d/m/Y H:i:s', strtotime($tournament['checkin_open_at'])) : 'ไม่กำหนด' ?></div></div>
-                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">ปิด Check-in</div><div class="mt-2 text-sm font-bold text-slate-900"><?= $checkinCloseAt ? date('d/m/Y H:i:s', strtotime($checkinCloseAt)) : 'ไม่กำหนด' ?></div></div>
-                    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">จำนวน Check-in</div><div class="mt-2 text-sm font-bold text-slate-900"><?= (int) $completeCount ?> / <?= (int) $totalCount ?> ครบ</div><div class="text-[10px] text-slate-500">ยังไม่ครบ <?= max(0, (int) $totalCount - (int) $completeCount) ?> รายการ</div></div>
+                <section class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div class="compact-card p-4">
+                        <div class="mini-label">Game</div>
+                        <div class="mt-2 text-sm font-bold text-slate-900"><?= $gameMissing ? 'ไม่พบข้อมูลเกม' : htmlspecialchars($tournament['game_name']) . ' · ' . ($isSolo ? 'Solo' : 'Team') ?></div>
+                    </div>
+                    <div class="compact-card p-4">
+                        <div class="mini-label">Check-in</div>
+                        <div class="mt-2 text-sm font-bold <?= $checkinClosed ? 'text-rose-600' : ($checkinOpen ? 'text-emerald-600' : 'text-amber-600') ?>"><?= $checkinWindowLabel ?></div>
+                    </div>
+                    <div class="compact-card p-4">
+                        <div class="mini-label">Open</div>
+                        <div class="mt-2 text-sm font-bold text-slate-900"><?= !empty($tournament['checkin_open_at']) ? date('d/m/Y H:i', strtotime($tournament['checkin_open_at'])) : 'ไม่กำหนด' ?></div>
+                    </div>
+                    <div class="compact-card p-4">
+                        <div class="mini-label">Complete</div>
+                        <div class="mt-2 text-sm font-bold text-slate-900"><?= (int) $completeCount ?> / <?= (int) $totalCount ?></div>
+                    </div>
                 </section>
 
-                <div class="flex gap-2 overflow-x-auto border-b border-slate-200 pb-1"><a href="?tournament_id=<?= $tournamentId ?>&category_id=0" class="min-w-max rounded-t-xl px-4 py-2 text-xs font-bold <?= !$selectedCategoryId ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500' ?>">ทั้งหมด</a><?php foreach ($categories as $category): ?><a href="?tournament_id=<?= $tournamentId ?>&category_id=<?= (int) $category['tournament_category_id'] ?>" class="min-w-max rounded-t-xl px-4 py-2 text-xs font-bold <?= $selectedCategoryId === (int) $category['tournament_category_id'] ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500' ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']) ?></a><?php endforeach; ?></div>
+                <div class="flex gap-2 overflow-x-auto border-b border-slate-200 pb-1 pt-1"><a href="?tournament_id=<?= $tournamentId ?>&category_id=0" class="min-w-max rounded-t-xl px-4 py-2 text-xs font-bold <?= !$selectedCategoryId ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500' ?>">ทั้งหมด</a><?php foreach ($categories as $category): ?><a href="?tournament_id=<?= $tournamentId ?>&category_id=<?= (int) $category['tournament_category_id'] ?>" class="min-w-max rounded-t-xl px-4 py-2 text-xs font-bold <?= $selectedCategoryId === (int) $category['tournament_category_id'] ? 'border-b-2 border-brand-orange bg-orange-50 text-brand-orange' : 'text-slate-500' ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']) ?></a><?php endforeach; ?></div>
 
                 <!-- Alert Messages -->
                 <?php if ($error): ?>
@@ -415,53 +455,41 @@ if ($flash) {
                     </div>
                 <?php endif; ?>
 
-                <!-- SCANNER & INPUT SECTION -->
-                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-4 gap-2">
-                        <div>
-                            <h2 class="text-lg font-bold font-display text-slate-900 flex items-center gap-2">
-                                <i class="fa-solid fa-qrcode text-brand-orange text-xl"></i>
-                                สแกน QR Code หรือกรอกรหัสเช็คอิน
-                            </h2>
-                            <p class="text-xs text-slate-500 mt-1">QR ใช้ค้นหา Registration ส่วนการ Check-in ต้องกดให้สมาชิกใน Tournament Roster ทีละคน</p>
+                <div class="compact-card p-4 sm:p-5">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-orange-50 text-brand-orange">
+                                <i class="fa-solid fa-qrcode"></i>
+                            </span>
+                            <div>
+                                <div class="mini-label text-slate-500">Quick check-in</div>
+                                <div class="text-sm font-bold text-slate-800">สแกน QR หรือกรอกรหัสเช็คอิน</div>
+                            </div>
                         </div>
-
-                        <div class="px-3 py-1.5 rounded-full bg-slate-100 text-slate-900 text-xs font-bold flex items-center gap-2">
-                            <i class="fa-solid fa-users text-sm"></i>
-                            <span>อนุมัติแล้ว: <?php echo $totalCount; ?> รายการ</span>
-                        </div>
+                        <div class="soft-chip bg-slate-100 text-slate-700">อนุมัติแล้ว: <?php echo $totalCount; ?></div>
                     </div>
 
-                    <form method="POST" class="flex flex-col sm:flex-row gap-3 pt-2">
+                    <form method="POST" class="mt-4 flex flex-col gap-3 sm:flex-row">
                         <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                         <input type="hidden" name="action" value="checkin">
-                        
-                        <div class="relative flex-1">
-                            <span class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
-                                <i class="fa-solid fa-barcode text-lg"></i>
-                            </span>
-                            <input type="text" name="token" autofocus required <?= $checkinOpen ? '' : 'disabled' ?>
-                                class="w-full bg-slate-50 border-2 border-slate-200 rounded-xl pl-12 pr-4 py-3.5 text-base sm:text-lg font-mono font-bold text-slate-900 tracking-widest uppercase focus:bg-white focus:outline-none focus:border-brand-orange transition-all placeholder-slate-400"
-                                placeholder="สแกน หรือพิมพ์รหัสเช็คอินที่นี่...">
-                        </div>
-
+                        <input type="text" name="token" autofocus required <?= $checkinOpen ? '' : 'disabled' ?>
+                            class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono font-bold uppercase tracking-[0.15em] text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange placeholder:text-slate-400"
+                            placeholder="SCAN OR ENTER CHECK-IN CODE">
                         <button type="submit" <?= $checkinOpen ? '' : 'disabled' ?>
-                            class="px-8 py-3.5 rounded-xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-sm uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer shrink-0">
-                            <i class="fa-solid fa-user-check"></i>
-                            <span>ยืนยันเช็คอิน</span>
+                            class="rounded-xl bg-brand-orange px-5 py-3 text-sm font-bold text-white hover:bg-brand-glow disabled:opacity-50">
+                            <i class="fa-solid fa-user-check mr-2"></i>ยืนยันเช็คอิน
                         </button>
                     </form>
                 </div>
 
-                <!-- REAL-TIME SEARCH BAR -->
-                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                <div class="compact-card p-3">
                     <form method="GET" action="checkin-teams.php" id="searchFilterForm" class="relative">
                         <input type="hidden" name="tournament_id" value="<?php echo $tournamentId; ?>">
                         <input type="hidden" name="category_id" value="<?php echo $selectedCategoryId; ?>">
                         <span class="absolute inset-y-0 left-0 pl-4 flex items-center text-slate-400">
                             <i class="fa-solid fa-magnifying-glass text-sm"></i>
                         </span>
-                        <input type="text" name="team_search" id="teamSearchInput" value="<?php echo htmlspecialchars($teamSearch); ?>" placeholder="พิมพ์ค้นหาชื่อ (หลายตัวอักษรเพื่อกรองทั้ง 2 ช่อง)..."
+                        <input type="text" name="team_search" id="teamSearchInput" value="<?php echo htmlspecialchars($teamSearch); ?>" placeholder="ค้นหาชื่อทีม / ผู้เล่น / รหัสใบสมัคร"
                             class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-11 pr-10 py-3 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange font-medium"
                             autocomplete="off">
                         <?php if ($teamSearch !== ''): ?>
@@ -491,50 +519,31 @@ if ($flash) {
                     </div>
                 <?php endif; ?>
 
-                <!-- 2-COLUMN SIDE-BY-SIDE LAYOUT -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-                    
-                    <!-- ฝั่งซ้าย: เช็คอินแล้ว -->
-                    <div class="bg-white rounded-2xl border border-emerald-200 shadow-sm overflow-hidden">
-                        <div class="p-4 border-b border-emerald-100 bg-emerald-50/70 flex items-center justify-between">
-                            <h2 class="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-2">
-                                <i class="fa-solid fa-circle-check text-emerald-600 text-sm"></i>
-                                <?php echo $isSolo ? 'ผู้เล่นที่เช็คอินเข้าสนามแล้ว' : 'ทีมที่เช็คอินเข้าสนามแล้ว'; ?>
-                            </h2>
-                            <span class="px-2.5 py-0.5 rounded-full bg-emerald-200/60 text-emerald-800 text-xs font-bold">
-                                <?php echo count($checkedInList); ?> รายการ
-                            </span>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                    <div class="compact-card overflow-hidden border-emerald-200">
+                        <div class="flex items-center justify-between border-b border-emerald-100 bg-emerald-50 px-4 py-3">
+                            <div class="flex items-center gap-2 font-bold text-emerald-800 text-xs uppercase tracking-[0.18em]">
+                                <i class="fa-solid fa-circle-check"></i>
+                                <?php echo $isSolo ? 'Checked-in' : 'Checked-in'; ?>
+                            </div>
+                            <span class="soft-chip bg-emerald-100 text-emerald-700"><?php echo count($checkedInList); ?></span>
                         </div>
-
-                        <div class="overflow-x-auto max-h-[550px] overflow-y-auto">
+                        <div class="panel-scroll">
                             <table class="w-full text-left text-sm text-slate-600">
-                                <thead class="bg-slate-50 text-[11px] uppercase font-bold text-slate-500 border-b border-slate-200 sticky top-0">
-                                    <tr>
-                                        <th class="p-3.5"><?php echo $isSolo ? 'ชื่อผู้เล่น' : 'ชื่อทีม / สโมสร'; ?></th>
-                                        <th class="p-3.5 text-center">Category</th>
-                                        <th class="p-3.5 text-center">เวลาเช็คอิน</th>
-                                    </tr>
-                                </thead>
                                 <tbody class="divide-y divide-slate-100">
                                     <?php if (count($checkedInList) == 0): ?>
-                                        <tr>
-                                            <td colspan="3" class="p-8 text-center text-slate-400 text-xs">
-                                                ยังไม่มีรายการที่เช็คอิน
-                                            </td>
-                                        </tr>
+                                        <tr><td class="p-6 text-center text-slate-400 text-xs">ยังไม่มีรายการที่เช็คอิน</td></tr>
                                     <?php endif; ?>
-
                                     <?php foreach ($checkedInList as $r): ?>
-                                    <tr class="hover:bg-slate-50/80 transition-colors bg-emerald-50/5">
-                                        <td class="p-3.5 font-bold text-slate-900 text-xs">
-                                            <i class="fa-solid <?php echo $isSolo ? 'fa-user' : 'fa-shield-halved'; ?> text-emerald-600 mr-1.5"></i>
-                                            <?php echo htmlspecialchars($r['participant_name']); ?>
-                                        </td>
-                                        <td class="p-3.5 text-center text-[11px] text-slate-600">
-                                            <?= htmlspecialchars($r['category_label'] ?: $r['category_code'] ?: $r['category'] ?: 'ไม่ระบุ') ?>
-                                        </td>
-                                        <td class="p-3.5 text-center text-[11px] text-emerald-700 font-semibold">
-                                            <?php echo !empty($r['latest_checkin_at']) ? date('H:i:s d/m/Y', strtotime($r['latest_checkin_at'])) : '-'; ?>
+                                    <tr class="hover:bg-slate-50">
+                                        <td class="p-3">
+                                            <div class="flex items-center justify-between gap-3">
+                                                <div class="min-w-0">
+                                                    <div class="truncate font-bold text-slate-900 text-xs"><?php echo htmlspecialchars($r['participant_name']); ?></div>
+                                                    <div class="mt-1 text-[10px] text-slate-500"><?= htmlspecialchars($r['category_label'] ?: $r['category_code'] ?: $r['category'] ?: 'ไม่ระบุ') ?></div>
+                                                </div>
+                                                <div class="text-[10px] text-emerald-700 font-bold whitespace-nowrap"><?php echo !empty($r['latest_checkin_at']) ? date('H:i d/m', strtotime($r['latest_checkin_at'])) : '-'; ?></div>
+                                            </div>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
@@ -543,77 +552,51 @@ if ($flash) {
                         </div>
                     </div>
 
-                    <!-- ฝั่งขวา: ยังไม่เช็คอิน -->
-                    <div class="bg-white rounded-2xl border border-amber-200 shadow-sm overflow-hidden">
-                        <div class="p-4 border-b border-amber-100 bg-amber-50/70 flex items-center justify-between">
-                            <h2 class="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center gap-2">
-                                <i class="fa-solid fa-clock text-amber-600 text-sm"></i>
-                                <?php echo $isSolo ? 'ผู้เล่นที่ยังไม่มารายงานตัว' : 'ทีมที่ยังไม่มารายงานตัว'; ?>
-                            </h2>
-                            <span class="px-2.5 py-0.5 rounded-full bg-amber-200/60 text-amber-800 text-xs font-bold">
-                                <?php echo count($pendingList); ?> รายการ
-                            </span>
+                    <div class="compact-card overflow-hidden border-amber-200">
+                        <div class="flex items-center justify-between border-b border-amber-100 bg-amber-50 px-4 py-3">
+                            <div class="flex items-center gap-2 font-bold text-amber-800 text-xs uppercase tracking-[0.18em]">
+                                <i class="fa-solid fa-clock"></i>
+                                Pending
+                            </div>
+                            <span class="soft-chip bg-amber-100 text-amber-700"><?php echo count($pendingList); ?></span>
                         </div>
-
-                        <div class="overflow-x-auto max-h-[550px] overflow-y-auto">
+                        <div class="panel-scroll">
                             <table class="w-full text-left text-sm text-slate-600">
-                                <thead class="bg-slate-50 text-[11px] uppercase font-bold text-slate-500 border-b border-slate-200 sticky top-0">
-                                    <tr>
-                                        <th class="p-3.5"><?php echo $isSolo ? 'ชื่อผู้เล่น' : 'ชื่อทีม / สโมสร'; ?></th>
-                                        <th class="p-3.5 text-center">Progress</th>
-                                        <th class="p-3.5 text-center">สถานะ</th>
-                                    </tr>
-                                </thead>
                                 <tbody class="divide-y divide-slate-100">
                                     <?php if (count($pendingList) == 0): ?>
-                                        <tr>
-                                            <td colspan="3" class="p-8 text-center text-slate-400 text-xs">
-                                                ครบทุกรายการแล้ว! ไม่มีตกค้าง
-                                            </td>
-                                        </tr>
+                                        <tr><td class="p-6 text-center text-slate-400 text-xs">ครบทุกรายการแล้ว</td></tr>
                                     <?php endif; ?>
-
                                     <?php foreach ($pendingList as $r): ?>
-                                    <tr class="hover:bg-slate-50/80 transition-colors">
-                                        <td class="p-3.5 font-bold text-slate-900 text-xs">
-                                            <i class="fa-solid <?php echo $isSolo ? 'fa-user' : 'fa-shield-halved'; ?> text-brand-orange mr-1.5"></i>
-                                            <?php echo htmlspecialchars($r['participant_name']); ?>
-                                        </td>
-                                        <td class="p-3.5 text-center text-[11px] text-slate-600">
-                                            <?= (int) $r['progress']['checked_in'] ?>/<?= (int) $r['progress']['required'] ?> คน
-                                        </td>
-                                        <td class="p-3.5 text-center">
-                                            <?php $progress = getRegistrationCheckinProgress($pdo, (int) $r['tournament_registration_id']); ?>
-                                            <span class="inline-block px-2.5 py-0.5 rounded-full <?php echo $progress['checked_in'] > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-50 text-slate-600 border-slate-200'; ?> border text-[10px] font-bold">
-                                                <?php echo $progress['checked_in']; ?>/<?php echo $progress['required']; ?> คน
-                                            </span>
-                                        </td>
-                                    </tr>
-                                    <?php
-                                        $memberStmt = $pdo->prepare("SELECT trm.id AS roster_member_id, trm.player_id, trm.is_required_for_checkin, trm.member_roles,
-                                            trm.is_starter, trm.checkin_status, trm.checkin_at, p.display_name, p.real_name, p.avatar_path, u.username
-                                            FROM tournament_registration_members trm
-                                            JOIN players p ON p.player_id = trm.player_id
-                                            LEFT JOIN users u ON u.user_id = p.user_id
-                                            WHERE trm.tournament_registration_id = :registration_id AND trm.roster_status = 'active'
-                                            ORDER BY trm.is_required_for_checkin DESC, trm.is_starter DESC, u.username");
-                                        $memberStmt->execute(['registration_id' => $r['tournament_registration_id']]);
-                                        $rosterMembers = $memberStmt->fetchAll();
-                                    ?>
-                                    <tr class="bg-slate-50/70">
-                                        <td colspan="3" class="p-3">
-                                            <div class="flex flex-wrap gap-2">
+                                    <tr class="hover:bg-slate-50">
+                                        <td class="p-3">
+                                            <div class="flex items-center justify-between gap-3">
+                                                <div class="min-w-0">
+                                                    <div class="truncate font-bold text-slate-900 text-xs"><?php echo htmlspecialchars($r['participant_name']); ?></div>
+                                                    <div class="mt-1 text-[10px] text-slate-500"><?= (int) $r['progress']['checked_in'] ?>/<?= (int) $r['progress']['required'] ?> คน</div>
+                                                </div>
+                                                <div class="text-[10px] font-bold text-amber-700"><?= (int) $r['progress']['checked_in'] ?>/<?= (int) $r['progress']['required'] ?></div>
+                                            </div>
+                                            <?php
+                                                $memberStmt = $pdo->prepare("SELECT trm.player_id, trm.is_required_for_checkin, trm.checkin_status, p.display_name, p.real_name, u.username
+                                                    FROM tournament_registration_members trm
+                                                    JOIN players p ON p.player_id = trm.player_id
+                                                    LEFT JOIN users u ON u.user_id = p.user_id
+                                                    WHERE trm.tournament_registration_id = :registration_id AND trm.roster_status = 'active'
+                                                    ORDER BY trm.is_required_for_checkin DESC, u.username");
+                                                $memberStmt->execute(['registration_id' => $r['tournament_registration_id']]);
+                                                $rosterMembers = $memberStmt->fetchAll();
+                                            ?>
+                                            <div class="mt-2 flex flex-wrap gap-1.5">
                                                 <?php foreach ($rosterMembers as $member): ?>
                                                     <?php $memberChecked = in_array($member['checkin_status'], ['checked_in', 'waived'], true); ?>
-                                                            <span class="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] <?php echo $memberChecked ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
-                                                        <?php echo htmlspecialchars($member['display_name'] ?: $member['username']); ?><?php echo $member['is_required_for_checkin'] ? ' *' : ''; ?>
+                                                    <span class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-medium <?php echo $memberChecked ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
+                                                        <?php echo htmlspecialchars($member['display_name'] ?: $member['username']); ?>
                                                         <?php if (!$memberChecked): ?>
-                                                            <button type="button" class="font-bold underline" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">เช็กอิน</button>
+                                                            <button type="button" class="font-bold underline" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">+</button>
                                                         <?php else: ?>✓<?php endif; ?>
                                                     </span>
                                                 <?php endforeach; ?>
                                             </div>
-                                            <p class="mt-1 text-[10px] text-slate-400">* สมาชิกที่ต้อง Check-in ตาม Tournament Roster</p>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
@@ -621,7 +604,6 @@ if ($flash) {
                             </table>
                         </div>
                     </div>
-
                 </div>
 
             <?php endif; ?>

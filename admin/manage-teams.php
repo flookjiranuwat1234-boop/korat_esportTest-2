@@ -15,6 +15,44 @@ $currentUser = [
     'role' => $_SESSION['role'] ?? 'Administrator',
 ];
 
+function getTournamentRegistrationState(array $tournament, DateTimeImmutable $now): array
+{
+    $status = strtolower((string) ($tournament['status'] ?? 'draft'));
+    $start = !empty($tournament['registration_start'])
+        ? new DateTimeImmutable((string) $tournament['registration_start'], new DateTimeZone('Asia/Bangkok'))
+        : null;
+    $end = !empty($tournament['registration_end'])
+        ? new DateTimeImmutable((string) $tournament['registration_end'], new DateTimeZone('Asia/Bangkok'))
+        : null;
+
+    if ($status === 'draft') {
+        return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ยังไม่เปิดรับสมัคร'];
+    }
+    if ($status === 'registration_closed') {
+        return ['allowed' => false, 'message' => 'ปิดรับสมัครแล้ว'];
+    }
+    if ($status === 'ongoing') {
+        return ['allowed' => false, 'message' => 'การแข่งขันเริ่มแล้ว ไม่สามารถสมัครได้'];
+    }
+    if ($status === 'completed') {
+        return ['allowed' => false, 'message' => 'การแข่งขันสิ้นสุดแล้ว'];
+    }
+    if ($status === 'cancelled') {
+        return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ถูกยกเลิก'];
+    }
+    if ($start && $now < $start) {
+        return ['allowed' => false, 'message' => 'ยังไม่ถึงวันเปิดรับสมัคร'];
+    }
+    if ($end && $now > $end) {
+        return ['allowed' => false, 'message' => 'ปิดรับสมัครแล้ว'];
+    }
+    if ($status === 'registration_open' && (!$start || $now >= $start) && (!$end || $now <= $end)) {
+        return ['allowed' => true, 'message' => ''];
+    }
+
+    return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ยังไม่เปิดรับสมัคร'];
+}
+
 function statusBadge(string $status, string $type = 'approval'): string
 {
     $approvedMap = [
@@ -165,8 +203,267 @@ $search = trim((string) ($_GET['search'] ?? ''));
 $approvalStatus = trim((string) ($_GET['approval_status'] ?? 'all'));
 $checkinStatus = trim((string) ($_GET['checkin_status'] ?? 'all'));
 $drawStatus = trim((string) ($_GET['draw_status'] ?? 'all'));
+$addPlayerSearch = trim((string) ($_GET['add_player_search'] ?? ''));
+$isAddPlayerSearchAjax = ($_GET['ajax'] ?? '') === 'search_add_solo_players';
+$tournament = null;
+if ($tournamentId) {
+    $tStmt = $pdo->prepare("
+        SELECT t.*, g.name AS game_name, g.play_mode
+        FROM tournaments t
+        JOIN games g ON g.game_id = t.game_id
+        WHERE t.tournament_id = :id
+        LIMIT 1
+    ");
+    $tStmt->execute(['id' => $tournamentId]);
+    $tournament = $tStmt->fetch(PDO::FETCH_ASSOC);
+}
+$addPlayerSearchResults = [];
+if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo' && $addPlayerSearch !== '') {
+    $playerSearchSql = "
+         SELECT p.player_id, p.display_name, p.real_name, p.avatar_path, p.eligibility_status,
+             u.user_id, u.username, u.email, u.status AS account_status,
+               (SELECT COUNT(*)
+                FROM tournament_registrations tr
+                WHERE tr.player_id = p.player_id
+                  AND tr.tournament_id = :tournament_id
+                  AND tr.status IN ('pending', 'approved')) AS already_registered_count
+        FROM players p
+        LEFT JOIN users u ON u.user_id = p.user_id
+        WHERE u.status = 'active'
+          AND p.user_id IS NOT NULL
+    ";
+    $playerSearchParams = ['tournament_id' => $tournamentId];
+    if ($addPlayerSearch !== '') {
+        $playerSearchSql .= "
+          AND (
+              p.display_name LIKE :search OR
+              p.real_name LIKE :search OR
+              u.username LIKE :search OR
+              u.email LIKE :search
+          )
+        ";
+        $playerSearchParams['search'] = '%' . $addPlayerSearch . '%';
+    }
+    $playerSearchSql .= ' ORDER BY p.display_name ASC, u.username ASC LIMIT 10';
+    $playerSearchStmt = $pdo->prepare($playerSearchSql);
+    $playerSearchStmt->execute($playerSearchParams);
+    $addPlayerSearchResults = $playerSearchStmt->fetchAll(PDO::FETCH_ASSOC);
+} elseif ($tournament && ($tournament['play_mode'] ?? 'team') === 'team' && $addPlayerSearch !== '') {
+    $teamSearchSql = "
+        SELECT t.team_id, t.name, t.logo_path, t.status, t.game_id,
+               COALESCE(cu.username, '-') AS captain_username,
+               COUNT(DISTINCT CASE WHEN tm.is_active = 1 THEN tm.player_id END) AS active_member_count,
+             tc.starters_count,
+               (SELECT COUNT(*)
+                FROM tournament_registrations tr
+                WHERE tr.team_id = t.team_id
+                  AND tr.tournament_id = :tournament_id
+                  AND tr.tournament_category_id = :category_id
+                  AND tr.status IN ('pending', 'approved')) AS already_registered_count
+        FROM teams t
+        JOIN tournament_categories tc ON tc.tournament_category_id = :category_id AND tc.tournament_id = :tournament_id AND tc.is_active = 1
+        LEFT JOIN players cp ON cp.player_id = t.captain_player_id
+        LEFT JOIN users cu ON cu.user_id = cp.user_id
+        LEFT JOIN team_members tm ON tm.team_id = t.team_id
+        WHERE t.game_id = :game_id
+          AND t.status = 'active'
+    ";
+    $teamSearchParams = [
+        'tournament_id' => $tournamentId,
+        'category_id' => $selectedCategoryId,
+        'game_id' => (int) $tournament['game_id'],
+    ];
+    if ($addPlayerSearch !== '') {
+        $teamSearchSql .= "
+          AND (t.name LIKE :search OR cu.username LIKE :search)
+        ";
+        $teamSearchParams['search'] = '%' . $addPlayerSearch . '%';
+    }
+    $teamSearchSql .= ' GROUP BY t.team_id, t.name, t.logo_path, t.status, t.game_id, cu.username, tc.starters_count ORDER BY t.name ASC LIMIT 10';
+    $teamSearchStmt = $pdo->prepare($teamSearchSql);
+    $teamSearchStmt->execute($teamSearchParams);
+    $addPlayerSearchResults = $teamSearchStmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+if ($isAddPlayerSearchAjax) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($addPlayerSearchResults, JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 $action = $_POST['action'] ?? '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_solo_player') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $targetTournamentId = (int) ($_POST['tournament_id'] ?? 0);
+        $targetCategoryId = (int) ($_POST['tournament_category_id'] ?? 0);
+        $targetPlayerId = (int) ($_POST['player_id'] ?? 0);
+
+        if ($targetTournamentId <= 0 || $targetCategoryId <= 0 || $targetPlayerId <= 0) {
+            $error = 'กรุณาเลือกผู้เล่นและประเภทการแข่งขันให้ครบถ้วน';
+        } else {
+            $targetTournamentStmt = $pdo->prepare('SELECT t.tournament_id, t.name, t.status, t.game_id, g.play_mode
+                FROM tournaments t
+                JOIN games g ON g.game_id = t.game_id
+                WHERE t.tournament_id = :id LIMIT 1');
+            $targetTournamentStmt->execute(['id' => $targetTournamentId]);
+            $targetTournament = $targetTournamentStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$targetTournament) {
+                $error = 'ไม่พบทัวร์นาเมนต์ที่เลือก';
+            } elseif (($targetTournament['play_mode'] ?? 'team') !== 'solo') {
+                $error = 'ฟังก์ชันเพิ่มผู้แข่งขันแบบเดี่ยวใช้ได้เฉพาะทัวร์นาเมนต์ Solo เท่านั้น';
+            } else {
+                $windowState = getTournamentRegistrationState($targetTournament, new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
+                if (!$windowState['allowed']) {
+                    $error = $windowState['message'];
+                } else {
+                    $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label, max_participants, starters_count
+                        FROM tournament_categories
+                        WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1 LIMIT 1');
+                    $categoryStmt->execute(['category_id' => $targetCategoryId, 'tournament_id' => $targetTournamentId]);
+                    $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
+
+                    if (!$category) {
+                        $error = 'Category ที่เลือกไม่พร้อมใช้งาน';
+                    } else {
+                        $duplicateStmt = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations
+                            WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND player_id = :player_id AND status IN (\'pending\', \'approved\') LIMIT 1');
+                        $duplicateStmt->execute([
+                            'tournament_id' => $targetTournamentId,
+                            'category_id' => $targetCategoryId,
+                            'player_id' => $targetPlayerId,
+                        ]);
+                        if ($duplicateStmt->fetchColumn()) {
+                            $error = 'ผู้เล่นรายนี้สมัคร Category นี้แล้ว';
+                        } else {
+                            $registeredCountStmt = $pdo->prepare("SELECT COUNT(*) FROM tournament_registrations
+                                WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND status IN ('pending', 'approved')");
+                            $registeredCountStmt->execute([
+                                'tournament_id' => $targetTournamentId,
+                                'category_id' => $targetCategoryId,
+                            ]);
+                            $registeredCount = (int) $registeredCountStmt->fetchColumn();
+                            $maxParticipants = (int) ($category['max_participants'] ?? 0);
+                            if ($maxParticipants > 0 && $registeredCount >= $maxParticipants) {
+                                $error = 'Category นี้มีผู้สมัครเต็มแล้ว';
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (empty($error)) {
+            try {
+                $pdo->beginTransaction();
+                $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status, participation_status)
+                    VALUES (:tournament_id, :category_id, :player_id, NULL, :category, :status, :participation_status)');
+                $insert->execute([
+                    'tournament_id' => $targetTournamentId,
+                    'category_id' => $targetCategoryId,
+                    'player_id' => $targetPlayerId,
+                    'category' => (string) ($category['category_code'] ?? 'open'),
+                    'status' => 'pending',
+                    'participation_status' => 'registered',
+                ]);
+
+                $registrationId = (int) $pdo->lastInsertId();
+                snapshotTournamentRoster($pdo, $registrationId, null, $targetPlayerId);
+                recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'Admin เพิ่มผู้แข่งขันเดี่ยวจากหน้า Manage Teams', null);
+                $pdo->commit();
+                $success = 'เพิ่มผู้แข่งขันรายบุคคลเรียบร้อยแล้ว';
+                $tournamentId = $targetTournamentId;
+                $selectedCategoryId = $targetCategoryId;
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = 'เพิ่มผู้แข่งขันรายบุคคลไม่สำเร็จ';
+            }
+        }
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $targetTournamentId = (int) ($_POST['tournament_id'] ?? 0);
+        $targetCategoryId = (int) ($_POST['tournament_category_id'] ?? 0);
+        $targetTeamId = (int) ($_POST['team_id'] ?? 0);
+        $targetTournamentStmt = $pdo->prepare('SELECT t.tournament_id, t.name, t.status, t.game_id, g.play_mode
+            FROM tournaments t JOIN games g ON g.game_id = t.game_id
+            WHERE t.tournament_id = :id LIMIT 1');
+        $targetTournamentStmt->execute(['id' => $targetTournamentId]);
+        $targetTournament = $targetTournamentStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($targetTournamentId <= 0 || $targetCategoryId <= 0 || $targetTeamId <= 0 || !$targetTournament) {
+            $error = 'กรุณาเลือกทีมและประเภทการแข่งขันให้ครบถ้วน';
+        } elseif (($targetTournament['play_mode'] ?? '') !== 'team') {
+            $error = 'ฟังก์ชันเพิ่มทีมใช้ได้เฉพาะทัวร์นาเมนต์ Team เท่านั้น';
+        } else {
+            $windowState = getTournamentRegistrationState($targetTournament, new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
+            $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, max_participants, starters_count
+                FROM tournament_categories WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1 LIMIT 1');
+            $categoryStmt->execute(['category_id' => $targetCategoryId, 'tournament_id' => $targetTournamentId]);
+            $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
+            $teamStmt = $pdo->prepare('SELECT team_id, name, game_id, status FROM teams WHERE team_id = :team_id LIMIT 1');
+            $teamStmt->execute(['team_id' => $targetTeamId]);
+            $team = $teamStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$windowState['allowed']) {
+                $error = $windowState['message'];
+            } elseif (!$category) {
+                $error = 'Category ที่เลือกไม่พร้อมใช้งาน';
+            } elseif (!$team || $team['status'] !== 'active' || (int) $team['game_id'] !== (int) $targetTournament['game_id']) {
+                $error = 'ทีมนี้ไม่พร้อมใช้งานกับ Tournament นี้';
+            } else {
+                $memberStmt = $pdo->prepare('SELECT COUNT(*) FROM team_members WHERE team_id = :team_id AND is_active = 1');
+                $memberStmt->execute(['team_id' => $targetTeamId]);
+                $memberCount = (int) $memberStmt->fetchColumn();
+                $duplicateStmt = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations
+                    WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND team_id = :team_id AND status IN (\'pending\', \'approved\') LIMIT 1');
+                $duplicateStmt->execute(['tournament_id' => $targetTournamentId, 'category_id' => $targetCategoryId, 'team_id' => $targetTeamId]);
+                $registeredCountStmt = $pdo->prepare("SELECT COUNT(*) FROM tournament_registrations
+                    WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND status IN ('pending', 'approved')");
+                $registeredCountStmt->execute(['tournament_id' => $targetTournamentId, 'category_id' => $targetCategoryId]);
+
+                if ($duplicateStmt->fetchColumn()) {
+                    $error = 'ทีมนี้สมัคร Category นี้แล้ว';
+                } elseif ((int) ($category['starters_count'] ?? 0) > $memberCount) {
+                    $error = 'จำนวนสมาชิกทีมยังไม่ครบตามกติกา';
+                } elseif ((int) ($category['max_participants'] ?? 0) > 0 && (int) $registeredCountStmt->fetchColumn() >= (int) $category['max_participants']) {
+                    $error = 'Category นี้มีผู้สมัครเต็มแล้ว';
+                }
+            }
+        }
+
+        if (empty($error)) {
+            try {
+                $pdo->beginTransaction();
+                $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status, participation_status)
+                    VALUES (:tournament_id, :category_id, :team_id, NULL, :category, \'pending\', \'registered\')');
+                $insert->execute([
+                    'tournament_id' => $targetTournamentId,
+                    'category_id' => $targetCategoryId,
+                    'team_id' => $targetTeamId,
+                    'category' => (string) ($category['category_code'] ?? 'open'),
+                ]);
+                $registrationId = (int) $pdo->lastInsertId();
+                snapshotTournamentRoster($pdo, $registrationId, $targetTeamId, null);
+                recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'Admin เพิ่มทีมจากหน้า Manage Teams', null);
+                $pdo->commit();
+                $success = 'เพิ่มทีมเรียบร้อยแล้ว';
+                $tournamentId = $targetTournamentId;
+                $selectedCategoryId = $targetCategoryId;
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = 'เพิ่มทีมไม่สำเร็จ';
+            }
+        }
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'approve_registration') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
@@ -580,6 +877,7 @@ if ($flash) {
     <style>
         body {
             background: #F4F6F9;
+            overflow-x: hidden;
         }
         .nav-item { transition: all 0.2s ease; }
         .nav-item:hover, .nav-item.active {
@@ -593,6 +891,19 @@ if ($flash) {
         .admin-action-group { padding: 0.35rem 0.75rem 0.25rem; color: #94a3b8; font-size: 0.625rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
         .scrollbar-thin::-webkit-scrollbar { height: 6px; }
         .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+        .page-shell {
+            max-width: 100vw;
+            min-width: 0;
+        }
+        .content-panel {
+            min-width: 0;
+            max-width: 100%;
+        }
+        .main-content {
+            min-width: 0;
+            width: 100%;
+            max-width: 100%;
+        }
     </style>
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
@@ -638,7 +949,7 @@ if ($flash) {
         </div>
     </aside>
 
-    <div class="flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col">
+    <div class="page-shell flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col">
         <header class="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
             <div class="flex items-center gap-3">
                 <button type="button" id="adminMenuToggle" class="lg:hidden inline-flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200" aria-label="เปิดเมนู Admin" aria-expanded="false">
@@ -662,7 +973,7 @@ if ($flash) {
             </div>
         </header>
 
-        <main class="p-8 space-y-8">
+        <main class="main-content p-8 space-y-8">
             <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div class="w-full lg:w-72">
@@ -777,7 +1088,7 @@ if ($flash) {
                 <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
                     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 p-4 border-b border-slate-200 bg-slate-50/60">
                         <h2 class="text-sm font-bold uppercase tracking-[0.2em] text-slate-700">รายการสมัคร</h2>
-                        <button type="button" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2 text-sm font-bold text-white hover:bg-brand-glow">
+                        <button type="button" id="openAddSoloPlayerModal" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2 text-sm font-bold text-white hover:bg-brand-glow">
                             <i class="fa-solid fa-plus"></i> + เพิ่มทีม/ผู้แข่งขัน
                         </button>
                     </div>
@@ -884,6 +1195,40 @@ if ($flash) {
             <?php endif; ?>
         </main>
     </div>
+
+    <?php if ($tournament && in_array(($tournament['play_mode'] ?? 'team'), ['solo', 'team'], true)): ?>
+        <div id="addSoloPlayerModal" data-play-mode="<?= htmlspecialchars((string) $tournament['play_mode'], ENT_QUOTES) ?>" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4">
+            <div class="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-visible">
+                <div class="flex items-center justify-between rounded-t-2xl border-b border-slate-200 bg-slate-50 px-6 py-4">
+                    <div>
+                        <p class="text-[10px] uppercase tracking-[0.2em] text-slate-500">เพิ่มผู้แข่งขัน</p>
+                        <h3 id="addPlayerModalTitle" class="text-lg font-black text-slate-900">เพิ่ม<?= ($tournament['play_mode'] ?? 'team') === 'solo' ? 'ผู้แข่งขัน Solo' : 'ทีม' ?></h3>
+                    </div>
+                    <button type="button" id="closeAddSoloPlayerModal" class="text-slate-400 hover:text-slate-600 p-1" aria-label="ปิดหน้าต่างเพิ่มผู้แข่งขัน"><i class="fa-solid fa-xmark text-xl"></i></button>
+                </div>
+                <div class="p-6 space-y-5">
+                    <form id="addPlayerSearchForm" method="GET" class="grid gap-3 md:grid-cols-[1fr_auto]">
+                        <input type="hidden" name="tournament_id" value="<?= (int) $tournamentId ?>">
+                        <input type="hidden" name="category_id" value="<?= (int) $selectedCategoryId ?>">
+                        <div class="relative">
+                            <label id="addPlayerSearchLabel" class="block text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-1">ค้นหาผู้เล่นที่มีบัญชีและโปรไฟล์แล้ว</label>
+                            <input id="addPlayerSearchInput" type="text" name="add_player_search" value="<?= htmlspecialchars($addPlayerSearch) ?>" placeholder="ชื่อ / Username / Email" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
+                            <div id="addPlayerSearchResultsContainer" class="hidden absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                                <div id="addPlayerSearchEmptyState" class="hidden p-4 text-sm text-slate-600">ไม่พบผู้เล่นที่ตรงกับคำค้นหา</div>
+                                <div id="addPlayerSearchLoadingState" class="hidden p-4 text-sm text-sky-700">กำลังค้นหา...</div>
+                                <div id="addPlayerSearchErrorState" class="hidden p-4 text-sm text-red-700">ไม่สามารถค้นหาข้อมูลได้ กรุณาลองใหม่</div>
+                                <div id="addPlayerSearchResultsList" class="max-h-[320px] overflow-y-auto divide-y divide-slate-200"></div>
+                            </div>
+                        </div>
+                        <div class="flex items-end">
+                            <button type="submit" class="rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow">ค้นหา</button>
+                        </div>
+                    </form>
+
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
 
     <?php if ($autoOpenRegistrationId): ?>
         <div id="registrationDetailModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4" data-registration-id="<?= (int) $autoOpenRegistrationId ?>" data-tournament-id="<?= (int) $tournamentId ?>" data-category-id="<?= (int) $selectedCategoryId ?>">
@@ -1051,14 +1396,10 @@ if ($flash) {
                     <button type="button" id="registrationDetailCloseFooter" class="inline-flex items-center rounded-xl bg-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-300">ปิด</button>
                     <?php if ($registrationAction === 'detail'): ?>
                         <button type="button" id="registrationManageAction" data-registration-id="<?= (int) $autoOpenRegistrationId ?>" class="inline-flex items-center rounded-xl bg-brand-orange px-4 py-2 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-list-check mr-1"></i>จัดการใบสมัคร</button>
-                    <?php elseif ($registrationAction === 'view_roster'): ?>
-                        <span class="inline-flex items-center rounded-xl bg-slate-100 px-4 py-2 text-xs font-bold text-slate-500"><i class="fa-solid fa-lock mr-1"></i>ดูข้อมูล Roster</span>
                     <?php elseif ($registrationAction === 'view_checkin'): ?>
                         <a href="checkin-teams.php?tournament_id=<?= (int) $tournamentId ?>" class="inline-flex items-center rounded-xl bg-brand-orange px-4 py-2 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-user-check mr-1"></i>เปิดหน้าจัดการ Check-in</a>
                     <?php elseif ($registrationAction === 'show_qr'): ?>
                         <?php if ($autoOpenRegistration && $autoOpenRegistration['status'] === 'approved' && !empty($autoOpenRegistration['qr_code_token'])): ?><button type="button" onclick="window.print()" class="inline-flex items-center rounded-xl bg-brand-orange px-4 py-2 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-print mr-1"></i>พิมพ์ QR</button><?php endif; ?>
-                    <?php elseif (in_array($registrationAction, ['change_registration_status', 'withdraw_registration', 'disqualify_registration'], true)): ?>
-                        <span class="inline-flex items-center rounded-xl bg-slate-100 px-4 py-2 text-xs font-bold text-slate-500">ดำเนินการผ่านแบบฟอร์มด้านบน</span>
                     <?php endif; ?>
                 </div>
             </div>
@@ -1134,6 +1475,47 @@ if ($flash) {
                 window.history.replaceState({}, '', url);
             }
 
+            const addSoloPlayerModal = document.getElementById('addSoloPlayerModal');
+            const openAddSoloPlayerModal = document.getElementById('openAddSoloPlayerModal');
+            const closeAddSoloPlayerModalBtn = document.getElementById('closeAddSoloPlayerModal');
+
+            function openAddPlayerModal() {
+                if (!addSoloPlayerModal) return;
+                if (addPlayerSearchInput) addPlayerSearchInput.value = '';
+                addPlayerSearchResultsList?.replaceChildren();
+                addPlayerSearchResultsContainer?.classList.add('hidden');
+                addPlayerSearchEmptyState?.classList.add('hidden');
+                addPlayerSearchLoadingState?.classList.add('hidden');
+                addPlayerSearchErrorState?.classList.add('hidden');
+                addSoloPlayerModal.classList.remove('hidden');
+                addSoloPlayerModal.classList.add('flex');
+                addPlayerSearchInput?.focus();
+            }
+
+            function closeAddPlayerModal() {
+                if (!addSoloPlayerModal) return;
+                addSoloPlayerModal.classList.add('hidden');
+                addSoloPlayerModal.classList.remove('flex');
+                if (addPlayerSearchInput) addPlayerSearchInput.value = '';
+                addPlayerSearchResultsList?.replaceChildren();
+                addPlayerSearchResultsContainer?.classList.add('hidden');
+                addPlayerSearchEmptyState?.classList.add('hidden');
+                addPlayerSearchLoadingState?.classList.add('hidden');
+                addPlayerSearchErrorState?.classList.add('hidden');
+            }
+
+            if (openAddSoloPlayerModal) {
+                openAddSoloPlayerModal.addEventListener('click', openAddPlayerModal);
+            }
+            if (closeAddSoloPlayerModalBtn) {
+                closeAddSoloPlayerModalBtn.addEventListener('click', closeAddPlayerModal);
+            }
+            if (addSoloPlayerModal) {
+                addSoloPlayerModal.addEventListener('click', event => {
+                    if (event.target === addSoloPlayerModal) closeAddPlayerModal();
+                });
+            }
+
             window.closeRegistrationDetailModal = closeRegistrationDetailModal;
 
             if (registrationDetailModal) {
@@ -1185,6 +1567,160 @@ if ($flash) {
             });
             window.addEventListener('resize', closeRegistrationMenus);
             window.addEventListener('scroll', closeRegistrationMenus, true);
+
+            const addPlayerSearchForm = document.getElementById('addPlayerSearchForm');
+            const addPlayerSearchInput = document.getElementById('addPlayerSearchInput');
+            const addPlayerSearchResultsContainer = document.getElementById('addPlayerSearchResultsContainer');
+            const addPlayerSearchResultsList = document.getElementById('addPlayerSearchResultsList');
+            const addPlayerSearchEmptyState = document.getElementById('addPlayerSearchEmptyState');
+            const addPlayerSearchLoadingState = document.getElementById('addPlayerSearchLoadingState');
+            const addPlayerSearchErrorState = document.getElementById('addPlayerSearchErrorState');
+            let addPlayerSearchRequestId = 0;
+            let addPlayerSearchDebounce;
+
+            function renderAddPlayerSearchResults(players) {
+                if (!addPlayerSearchResultsList || !addPlayerSearchResultsContainer || !addPlayerSearchEmptyState) return;
+
+                addPlayerSearchResultsList.replaceChildren();
+                const isSolo = addSoloPlayerModal?.dataset.playMode === 'solo';
+                players.forEach(player => {
+                    const row = document.createElement('div');
+                    row.className = 'player-search-result flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-4 py-3';
+
+                    const details = document.createElement('div');
+                    details.className = 'flex items-center gap-3';
+                    const avatar = document.createElement('div');
+                    avatar.className = 'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-orange-100 text-sm font-black text-brand-orange';
+                    const imagePath = isSolo ? player.avatar_path : player.logo_path;
+                    if (imagePath) {
+                        const image = document.createElement('img');
+                        image.src = `../${String(imagePath).replace(/^\/+/, '')}`;
+                        image.alt = '';
+                        image.className = 'h-full w-full object-cover';
+                        avatar.append(image);
+                    } else {
+                        avatar.textContent = (isSolo ? (player.display_name || player.real_name) : player.name || 'T').trim().charAt(0).toUpperCase();
+                    }
+                    const name = document.createElement('div');
+                    name.className = 'font-bold text-slate-800';
+                    name.textContent = isSolo ? (player.display_name || player.real_name || 'Player') : (player.name || 'Team');
+                    const account = document.createElement('div');
+                    account.className = 'text-[11px] text-slate-500';
+                    account.textContent = isSolo
+                        ? `${player.username || '-'} • ${player.email || '-'} • ${player.eligibility_status || 'ไม่ระบุสถานะ'}`
+                        : `กัปตัน: ${player.captain_username || '-'} • สมาชิก ${player.active_member_count || 0}/${player.starters_count || 0} คน • ${player.status || 'ไม่ระบุสถานะ'}`;
+                    const text = document.createElement('div');
+                    text.append(name, account);
+                    details.append(avatar, text);
+                    row.append(details);
+
+                    const cannotAdd = Number(player.already_registered_count || 0) > 0 || (!isSolo && Number(player.active_member_count || 0) < Number(player.starters_count || 0));
+                    if (cannotAdd) {
+                        const registered = document.createElement('span');
+                        registered.className = 'inline-flex items-center rounded-lg bg-slate-200 px-3 py-2 text-xs font-bold text-slate-600';
+                        registered.textContent = Number(player.already_registered_count || 0) > 0 ? 'สมัครแล้ว' : 'สมาชิกไม่ครบ';
+                        row.append(registered);
+                    } else {
+                        const form = document.createElement('form');
+                        form.method = 'POST';
+                        form.action = `manage-teams.php?tournament_id=<?= (int) $tournamentId ?>&category_id=<?= (int) $selectedCategoryId ?>`;
+                        form.className = 'inline-flex';
+                        const participantId = isSolo ? player.player_id : player.team_id;
+                        const action = isSolo ? 'add_solo_player' : 'add_team';
+                        const participantField = isSolo ? 'player_id' : 'team_id';
+                        [["csrf_token", '<?= htmlspecialchars($csrfToken, ENT_QUOTES) ?>'], ['action', action], ['tournament_id', '<?= (int) $tournamentId ?>'], ['tournament_category_id', '<?= (int) $selectedCategoryId ?>'], [participantField, participantId]].forEach(([nameValue, value]) => {
+                            const hidden = document.createElement('input');
+                            hidden.type = 'hidden';
+                            hidden.name = nameValue;
+                            hidden.value = value;
+                            form.append(hidden);
+                        });
+                        const button = document.createElement('button');
+                        button.type = 'submit';
+                        button.className = 'rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700';
+                        button.textContent = isSolo ? 'เพิ่มผู้แข่งขัน' : 'เพิ่มทีม';
+                        button.addEventListener('click', event => {
+                            if (!confirm(isSolo ? 'ยืนยันเพิ่มผู้เล่นรายนี้เข้าสู่ Tournament นี้หรือไม่?' : 'ยืนยันเพิ่มทีมนี้เข้าสู่ Tournament หรือไม่?')) event.preventDefault();
+                        });
+                        form.addEventListener('submit', () => {
+                            button.disabled = true;
+                            button.textContent = 'กำลังเพิ่ม...';
+                        });
+                        form.append(button);
+                        row.append(form);
+                    }
+                    addPlayerSearchResultsList.append(row);
+                });
+
+                const hasResults = players.length > 0;
+                addPlayerSearchLoadingState?.classList.add('hidden');
+                addPlayerSearchErrorState?.classList.add('hidden');
+                addPlayerSearchEmptyState.textContent = addSoloPlayerModal?.dataset.playMode === 'solo'
+                    ? 'ไม่พบผู้เล่นที่ตรงกับคำค้นหา'
+                    : 'ไม่พบทีมที่ตรงกับคำค้นหา';
+                addPlayerSearchResultsContainer.classList.toggle('hidden', !hasResults);
+                if (!hasResults) addPlayerSearchResultsContainer.classList.remove('hidden');
+                addPlayerSearchEmptyState.classList.toggle('hidden', hasResults);
+            }
+
+            async function updateAddPlayerSearchResults() {
+                if (!addPlayerSearchForm || !addPlayerSearchInput || !addPlayerSearchResultsList) return;
+
+                const query = (addPlayerSearchInput.value || '').trim().toLowerCase();
+                if (query.length < 2) {
+                    addPlayerSearchResultsList.replaceChildren();
+                    addPlayerSearchResultsContainer?.classList.add('hidden');
+                    addPlayerSearchEmptyState?.classList.add('hidden');
+                    addPlayerSearchLoadingState?.classList.add('hidden');
+                    addPlayerSearchErrorState?.classList.add('hidden');
+                    return;
+                }
+                const requestId = ++addPlayerSearchRequestId;
+                const url = new URL(window.location.href);
+                url.searchParams.set('ajax', 'search_add_solo_players');
+                url.searchParams.set('add_player_search', query);
+                addPlayerSearchLoadingState?.classList.remove('hidden');
+                addPlayerSearchErrorState?.classList.add('hidden');
+                addPlayerSearchEmptyState?.classList.add('hidden');
+                addPlayerSearchResultsContainer?.classList.add('hidden');
+                addPlayerSearchResultsContainer?.classList.remove('hidden');
+                try {
+                    const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                    if (!response.ok || requestId !== addPlayerSearchRequestId) throw new Error('Search request failed');
+                    renderAddPlayerSearchResults(await response.json());
+                } catch (error) {
+                    if (requestId === addPlayerSearchRequestId) {
+                        addPlayerSearchLoadingState?.classList.add('hidden');
+                        addPlayerSearchErrorState?.classList.remove('hidden');
+                    }
+                }
+            }
+
+            if (addPlayerSearchForm && addPlayerSearchInput) {
+                addPlayerSearchForm.addEventListener('submit', (event) => {
+                    event.preventDefault();
+                    clearTimeout(addPlayerSearchDebounce);
+                    updateAddPlayerSearchResults();
+                });
+
+                addPlayerSearchInput.addEventListener('input', () => {
+                    clearTimeout(addPlayerSearchDebounce);
+                    const query = addPlayerSearchInput.value.trim();
+                    if (query.length > 0 && query.length < 2) {
+                        updateAddPlayerSearchResults();
+                        return;
+                    }
+                    addPlayerSearchDebounce = setTimeout(updateAddPlayerSearchResults, 400);
+                });
+                addPlayerSearchInput.addEventListener('focus', () => {
+                    if (addPlayerSearchInput.value.trim().length >= 2) updateAddPlayerSearchResults();
+                });
+                document.addEventListener('click', event => {
+                    if (!addPlayerSearchForm.contains(event.target) && !addPlayerSearchResultsContainer.contains(event.target)) {
+                        addPlayerSearchResultsContainer.classList.add('hidden');
+                    }
+                });
+            }
 
             if (adminMenuToggle) {
                 adminMenuToggle.addEventListener('click', () => {
