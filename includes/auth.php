@@ -24,7 +24,7 @@ function consumeFlashMessage(): ?array
 // สมัครสมาชิกใหม่ ค่าเริ่มต้น role = athlete (แอดมินสร้างเองแยกต่างหาก ไม่เปิดให้สมัครผ่านหน้าเว็บ)
 // $securityQuestion / $securityAnswer ใช้สำหรับฟีเจอร์ "ลืมรหัสผ่าน"
 // (ระบบไม่มีการส่งอีเมลจริง จึงใช้คำถามกันลืมแทนลิงก์รีเซ็ตทางอีเมล)
-function registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer)
+function registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer, $gender, $birthDate)
 {
     // เช็คก่อนว่า username หรือ email ซ้ำไหม
     $check = $pdo->prepare("SELECT user_id FROM users WHERE username = :username OR email = :email");
@@ -38,23 +38,34 @@ function registerUser($pdo, $username, $email, $password, $securityQuestion, $se
     $normalizedAnswer = mb_strtolower(trim($securityAnswer));
     $answerHash = password_hash($normalizedAnswer, PASSWORD_DEFAULT);
 
-    $insert = $pdo->prepare("
-        INSERT INTO users (username, email, password_hash, role, security_question, security_answer_hash)
-        VALUES (:username, :email, :password_hash, 'athlete', :question, :answer_hash)
-    ");
-    $insert->execute([
-        'username' => $username,
-        'email' => $email,
-        'password_hash' => $hashedPassword,
-        'question' => $securityQuestion,
-        'answer_hash' => $answerHash,
-    ]);
+    $pdo->beginTransaction();
+    try {
+        $insert = $pdo->prepare("
+            INSERT INTO users (username, email, password_hash, role, security_question, security_answer_hash)
+            VALUES (:username, :email, :password_hash, 'athlete', :question, :answer_hash)
+        ");
+        $insert->execute([
+            'username' => $username,
+            'email' => $email,
+            'password_hash' => $hashedPassword,
+            'question' => $securityQuestion,
+            'answer_hash' => $answerHash,
+        ]);
 
-    $userId = $pdo->lastInsertId();
-
-    // ไม่สร้างโปรไฟล์ players ให้ตรงนี้แล้ว (เคยทำแบบนั้นตอนแรก)
-    // เปลี่ยนเป็นให้ผู้ใช้เลือกเองตอน login ครั้งแรกว่าจะ claim โปรไฟล์เก่า
-    // ที่ import มาจาก RoV หรือจะสร้างโปรไฟล์ใหม่ (ดูหน้า pages/claim-profile.php)
+        $userId = $pdo->lastInsertId();
+        $playerInsert = $pdo->prepare('INSERT INTO players (user_id, display_name, gender, birth_date)
+            VALUES (:user_id, :display_name, :gender, :birth_date)');
+        $playerInsert->execute([
+            'user_id' => $userId,
+            'display_name' => $username,
+            'gender' => $gender,
+            'birth_date' => $birthDate,
+        ]);
+        $pdo->commit();
+    } catch (Throwable $exception) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $exception;
+    }
 
     return $userId;
 }

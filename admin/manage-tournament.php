@@ -6,6 +6,7 @@ require_once '../includes/bracket.php';
 require_once '../includes/round_robin.php';
 require_once '../includes/tournament_categories.php';
 require_once '../includes/registration_status.php';
+require_once '../includes/tournament_demo.php';
 requireRole('admin');
 ensureTournamentCategorySchema($pdo);
 ensureRegistrationStatusHistoryTable($pdo);
@@ -830,14 +831,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 
         if (!$tournamentToDelete) {
             $error = 'ไม่พบ Tournament ที่ต้องการลบ';
-        } elseif (in_array($tournamentToDelete['status'], ['completed', 'cancelled'], true)) {
-            $error = 'ไม่สามารถลบ Tournament ที่จบหรือยกเลิกแล้วได้';
-        } elseif ((int) $tournamentToDelete['registration_count'] > 0 || (int) $tournamentToDelete['match_count'] > 0 || (int) $tournamentToDelete['day_count'] > 0) {
-            $error = 'ลบไม่ได้ เพราะ Tournament นี้มีผู้สมัคร Match หรือวันแข่งขันที่บันทึกไว้แล้ว';
         } else {
             try {
                 $pdo->beginTransaction();
-                foreach (['accommodations', 'tournament_groups', 'tournament_categories', 'tournament_days'] as $table) {
+                $pdo->prepare('DELETE FROM bracket_edges WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tournament_id) OR next_match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tournament_id_next)')
+                    ->execute(['tournament_id' => $tournamentId, 'tournament_id_next' => $tournamentId]);
+                $pdo->prepare('DELETE FROM match_participants WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tournament_id)')
+                    ->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM ranking_history WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM player_tournament_checkins WHERE tournament_registration_id IN (SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id)')
+                    ->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM registration_status_history WHERE tournament_registration_id IN (SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id)')
+                    ->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM tournament_registration_members WHERE tournament_registration_id IN (SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id)')
+                    ->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM tournament_registrations WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM group_teams WHERE group_id IN (SELECT tournament_group_id FROM tournament_groups WHERE tournament_id = :tournament_id)')
+                    ->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare('DELETE FROM tournament_groups WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
+                foreach (['accommodations', 'tournament_categories', 'tournament_days'] as $table) {
                     $pdo->prepare("DELETE FROM {$table} WHERE tournament_id = :tournament_id")->execute(['tournament_id' => $tournamentId]);
                 }
                 $pdo->prepare('DELETE FROM tournaments WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
@@ -864,6 +877,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
         $name = trim($_POST['name'] ?? '');
+        $demoRequested = ($_POST['demo_mode'] ?? '') === '1';
+        if ($demoRequested && !isTournamentDemoEnvironment()) {
+            $error = 'โหมดทดสอบเปิดได้เฉพาะ Local/Test และต้องตั้ง ENABLE_TOURNAMENT_DEMO_MODE=true';
+        }
+        if ($demoRequested && $error === '' && !str_starts_with($name, '[DEMO]')) {
+            $name = '[DEMO] ' . $name;
+        }
         $gameId = trim($_POST['game_id'] ?? '');
         $categoryForm = selectedCategoryFormData($_POST);
         $format = $categoryForm['format'];
@@ -1125,14 +1145,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if (isset($_GET['close_registration'])) {
     $tid = (int) $_GET['close_registration'];
 
-    $windowStmt = $pdo->prepare('SELECT registration_end, checkin_close_at, status FROM tournaments WHERE tournament_id = :tournament_id');
+    $windowStmt = $pdo->prepare('SELECT name, registration_end, checkin_close_at, status FROM tournaments WHERE tournament_id = :tournament_id');
     $windowStmt->execute(['tournament_id' => $tid]);
     $window = $windowStmt->fetch();
     if (!$window) {
         $error = 'ไม่พบ Tournament ที่ต้องการจัดสาย';
-    } elseif (!empty($window['registration_end']) && strtotime($window['registration_end']) > time()) {
+    } elseif (!isDemoTournament($window) && !empty($window['registration_end']) && strtotime($window['registration_end']) > time()) {
         $error = 'ยังไม่ถึงเวลาปิดรับสมัคร';
-    } elseif (!empty($window['checkin_close_at']) && strtotime($window['checkin_close_at']) > time()) {
+    } elseif (!isDemoTournament($window) && !empty($window['checkin_close_at']) && strtotime($window['checkin_close_at']) > time()) {
         $error = 'ยังไม่ถึงเวลาปิด Check-in จึงยังจัดสายไม่ได้';
     }
 
@@ -1798,6 +1818,10 @@ $csrfToken = generateCsrfToken();
                 const current = originalValues();
                 if (commandName === 'test-now') {
                     const now = roundedNow(); const base = format(now);
+                    const demoField = form.querySelector('[name="demo_mode"]');
+                    if (demoField) demoField.value = '1';
+                    const nameField = form.querySelector('[name="name"]');
+                    if (nameField && nameField.value.trim() && !nameField.value.trim().startsWith('[DEMO]')) nameField.value = `[DEMO] ${nameField.value.trim()}`;
                     request({ registration_start: base, registration_end: addMinutes(base, 15), roster_lock_at: addMinutes(base, 20), checkin_open_at: addMinutes(base, 25), checkin_close_at: addMinutes(base, 35), start_date: addMinutes(base, 40), end_date: addMinutes(base, 120) }, 'ทดสอบตอนนี้ (สำหรับทดสอบ)');
                 } else if (commandName === 'open-registration') {
                     const now = format(roundedNow()); const next = { registration_start: now };
@@ -2373,8 +2397,7 @@ $csrfToken = generateCsrfToken();
                                 $activeCategoryStmt = $pdo->prepare('SELECT category_code, label, max_participants FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
                                 $activeCategoryStmt->execute(['tournament_id' => (int) $t['tournament_id']]);
                                 $activeCategories = $activeCategoryStmt->fetchAll(PDO::FETCH_ASSOC);
-                                $canDraw = $t['status'] === 'registration_open' && (empty($t['checkin_close_at']) || strtotime($t['checkin_close_at']) <= time());
-                                $canDelete = (int) $t['total_registrations'] === 0 && (int) $t['total_matches_count'] === 0 && (int) $t['tournament_days_count'] === 0 && !in_array($t['status'], ['completed', 'cancelled'], true);
+                                $canDraw = isDemoTournament($t) || ($t['status'] === 'registration_open' && (empty($t['checkin_close_at']) || strtotime($t['checkin_close_at']) <= time()));
                                 $canEditTournament = $t['status'] !== 'completed';
                             ?>
                             <tr class="hover:bg-slate-50/80 transition-colors">
@@ -2477,14 +2500,12 @@ $csrfToken = generateCsrfToken();
                                         <i class="fa-solid fa-sliders text-slate-400"></i> จัดการ Category
                                     </button>
                                     <?php endif; ?>
-                                    <?php if ($canDelete): ?>
                                         <form method="POST" onsubmit="return confirm('ยืนยันลบ Tournament นี้? การลบจะไม่สามารถย้อนกลับได้')">
                                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>">
                                             <input type="hidden" name="action" value="delete_tournament">
                                             <input type="hidden" name="tournament_id" value="<?php echo (int) $t['tournament_id']; ?>">
                                             <button type="submit" role="menuitem" class="admin-action-item text-rose-700 hover:bg-rose-50"><i class="fa-solid fa-trash text-rose-500"></i> ลบ Tournament</button>
                                         </form>
-                                    <?php endif; ?>
                                             <div class="my-1 border-t border-slate-100"></div>
                                             <div class="admin-action-group">ผู้สมัครและข้อมูล</div>
                                     <button type="button" role="menuitem" onclick="openRegistrationModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
@@ -2552,6 +2573,7 @@ $csrfToken = generateCsrfToken();
             <form method="POST" enctype="multipart/form-data" class="space-y-4">
                 <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                 <input type="hidden" name="action" value="create">
+                <input type="hidden" name="demo_mode" value="0">
 
                 <nav class="tournament-stepper" data-stepper="create">
                     <?php foreach ([['ข้อมูลทั่วไป', 'create-general'], ['เกมและรูปแบบ', 'create-format'], ['Category/Roster', 'create-category'], ['วันเวลาและสถานที่', 'create-schedule'], ['กติกาและสรุป', 'create-rules']] as $stepIndex => $step): ?><div class="tournament-step" data-step="<?php echo $stepIndex + 1; ?>"><div><span class="tournament-step-circle"><?php echo $stepIndex + 1; ?></span><span class="tournament-step-label"><?php echo $step[0]; ?></span></div><?php if ($stepIndex < 4): ?><span class="tournament-step-line"></span><?php endif; ?></div><?php endforeach; ?>

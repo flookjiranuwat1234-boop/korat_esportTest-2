@@ -74,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_
             LEFT JOIN teams t ON t.team_id = tr.team_id
             LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
             WHERE tr.tournament_registration_id = :registration_id AND trm.player_id = :player_id
-              AND trm.roster_status = 'active' AND tr.status = 'approved'
+                            AND trm.roster_status = 'active' AND trm.is_required_for_checkin = 1 AND tr.status = 'approved'
               AND tr.participation_status NOT IN ('withdrawn', 'disqualified')
               AND tr.tournament_id = :tournament_id");
         $stmt->execute(['registration_id' => $registrationId, 'player_id' => $playerId, 'tournament_id' => $tournamentId]);
@@ -90,9 +90,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_
         $openAt = $window['category_open'] ?: $window['tournament_open'];
         $closeAt = $window['category_close'] ?: $window['tournament_close'];
         $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
-        $windowOpen = $openAt && $closeAt
+        $windowOpen = isDemoTournament($tournament ?? []) || ($openAt && $closeAt
             && $now >= new DateTimeImmutable($openAt, new DateTimeZone('Asia/Bangkok'))
-            && $now <= new DateTimeImmutable($closeAt, new DateTimeZone('Asia/Bangkok'));
+            && $now <= new DateTimeImmutable($closeAt, new DateTimeZone('Asia/Bangkok')));
 
         if (!$member) {
             $error = 'ไม่พบสมาชิกใน Tournament Roster ที่ได้รับอนุมัติ';
@@ -406,12 +406,12 @@ if ($flash) {
                     $checkinCloseAt = $selectedCategory['checkin_deadline'] ?? null;
                     $checkinOpenAt = $checkinOpenAt ?: ($tournament['checkin_open_at'] ?? null);
                     $checkinCloseAt = $checkinCloseAt ?: ($tournament['checkin_close_at'] ?? null);
-                    $checkinOpen = $checkinOpenAt && $checkinCloseAt
+                    $checkinOpen = isDemoTournament($tournament ?? []) || ($checkinOpenAt && $checkinCloseAt
                         && $now >= new DateTimeImmutable($checkinOpenAt, new DateTimeZone('Asia/Bangkok'))
-                        && $now <= new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok'));
+                        && $now <= new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok')));
                     $checkinNotStarted = $checkinOpenAt && $now < new DateTimeImmutable($checkinOpenAt, new DateTimeZone('Asia/Bangkok'));
                     $checkinClosed = $checkinCloseAt && $now > new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok'));
-                    $checkinWindowLabel = (!$checkinOpenAt || !$checkinCloseAt) ? 'ยังไม่ได้กำหนดเวลา Check-in' : ($checkinNotStarted ? 'ยังไม่เปิด Check-in' : ($checkinClosed ? 'ปิด Check-in แล้ว' : 'เปิด Check-in'));
+                    $checkinWindowLabel = isDemoTournament($tournament ?? []) ? 'เปิด Check-in (DEMO)' : ((!$checkinOpenAt || !$checkinCloseAt) ? 'ยังไม่ได้กำหนดเวลา Check-in' : ($checkinNotStarted ? 'ยังไม่เปิด Check-in' : ($checkinClosed ? 'ปิด Check-in แล้ว' : 'เปิด Check-in')));
                 ?>
                 <?php if ($gameMissing): ?>
                     <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3 shadow-sm">
@@ -577,12 +577,14 @@ if ($flash) {
                                                 <div class="text-[10px] font-bold text-amber-700"><?= (int) $r['progress']['checked_in'] ?>/<?= (int) $r['progress']['required'] ?></div>
                                             </div>
                                             <?php
-                                                $memberStmt = $pdo->prepare("SELECT trm.player_id, trm.is_required_for_checkin, trm.checkin_status, p.display_name, p.real_name, u.username
+                                                                                                $memberStmt = $pdo->prepare("SELECT trm.player_id, trm.is_required_for_checkin, trm.checkin_status, p.display_name, p.real_name, u.username
                                                     FROM tournament_registration_members trm
                                                     JOIN players p ON p.player_id = trm.player_id
                                                     LEFT JOIN users u ON u.user_id = p.user_id
-                                                    WHERE trm.tournament_registration_id = :registration_id AND trm.roster_status = 'active'
-                                                    ORDER BY trm.is_required_for_checkin DESC, u.username");
+                                                                                                        WHERE trm.tournament_registration_id = :registration_id
+                                                                                                            AND trm.roster_status = 'active'
+                                                                                                            AND trm.is_required_for_checkin = 1
+                                                                                                        ORDER BY u.username");
                                                 $memberStmt->execute(['registration_id' => $r['tournament_registration_id']]);
                                                 $rosterMembers = $memberStmt->fetchAll();
                                             ?>
@@ -592,7 +594,7 @@ if ($flash) {
                                                     <span class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-medium <?php echo $memberChecked ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
                                                         <?php echo htmlspecialchars($member['display_name'] ?: $member['username']); ?>
                                                         <?php if (!$memberChecked): ?>
-                                                            <button type="button" class="font-bold underline" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">+</button>
+                                                            <button type="button" aria-label="Check-in <?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>" class="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-rose-300 bg-white px-2 text-sm font-black leading-none text-rose-600 shadow-sm transition hover:bg-rose-600 hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-300" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">+</button>
                                                         <?php else: ?>✓<?php endif; ?>
                                                     </span>
                                                 <?php endforeach; ?>

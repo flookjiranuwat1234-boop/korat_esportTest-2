@@ -47,16 +47,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
             $error = 'แมตช์นี้ถูกบันทึกผลการแข่งขันไปแล้ว ไม่สามารถบันทึกซ้ำได้';
         } else {
             $fmtStmt = $pdo->prepare("
-                SELECT t.format, t.start_date, t.end_date, m.team1_id, m.team2_id, m.tournament_id, m.bracket_type, m.best_of
+                SELECT t.format, t.start_date, t.end_date, m.team1_id, m.team2_id, m.tournament_id, m.tournament_category_id, m.bracket_type, m.best_of
                 FROM matches m JOIN tournaments t ON t.tournament_id = m.tournament_id
                 WHERE m.match_id = :id
             ");
             $fmtStmt->execute(['id' => $matchId]);
             $matchInfo = $fmtStmt->fetch();
 
+            $withdrawnParticipantStmt = $pdo->prepare("SELECT COUNT(*)
+                FROM tournament_registrations tr
+                WHERE tr.tournament_id = :tournament_id
+                  AND tr.tournament_category_id = :category_id
+                   AND ((tr.team_id IS NOT NULL AND tr.team_id IN (:team1_id, :team2_id))
+                       OR (tr.player_id IS NOT NULL AND tr.player_id IN (:team1_id_player, :team2_id_player)))
+                  AND tr.participation_status IN ('withdrawn', 'disqualified')");
+            $withdrawnParticipantStmt->execute([
+                'tournament_id' => $tournamentId,
+                'category_id' => (int) ($matchInfo['tournament_category_id'] ?? 0),
+                'team1_id' => (int) $matchInfo['team1_id'],
+                'team2_id' => (int) $matchInfo['team2_id'],
+                'team1_id_player' => (int) $matchInfo['team1_id'],
+                'team2_id_player' => (int) $matchInfo['team2_id'],
+            ]);
+            if ((int) $withdrawnParticipantStmt->fetchColumn() > 0) {
+                $error = 'ไม่สามารถกรอกคะแนนได้ เนื่องจากผู้เข้าแข่งขันถอนตัวหรือถูกตัดสิทธิ์แล้ว';
+            }
+
             $bestOf = max(1, (int) ($matchInfo['best_of'] ?? 1));
 
-            if ($bestOf <= 1) {
+            if ($error === '' && $bestOf <= 1) {
                     $score1raw = $_POST['score1'] ?? '';
                     $score2raw = $_POST['score2'] ?? '';
                     $score1 = (int) $score1raw;
@@ -101,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                         $error = 'บันทึกผลไม่สำเร็จ: ' . $e->getMessage();
                     }
                 }
-            } else {
+            } elseif ($error === '') {
                 $gameScores1 = $_POST['game_s1'] ?? [];
                 $gameScores2 = $_POST['game_s2'] ?? [];
 
@@ -333,6 +352,8 @@ if ($tournamentId) {
                COALESCE(t2.name, u2.username, 'รอคู่แข่งขัน') AS team2_name,
                COALESCE(tr1.category, t1.team_category, 'open') AS team1_cat,
                COALESCE(tr2.category, t2.team_category, 'open') AS team2_cat,
+               tr1.participation_status AS team1_participation_status,
+               tr2.participation_status AS team2_participation_status,
                tg.name AS group_name,
                m.tournament_category_id AS match_category_id
         FROM matches m
@@ -340,11 +361,11 @@ if ($tournamentId) {
         LEFT JOIN teams t1 ON t1.team_id = m.team1_id
         LEFT JOIN players p1 ON p1.player_id = m.team1_id
         LEFT JOIN users u1 ON u1.user_id = p1.user_id
-        LEFT JOIN tournament_registrations tr1 ON tr1.tournament_id = m.tournament_id AND tr1.team_id = m.team1_id
+        LEFT JOIN tournament_registrations tr1 ON tr1.tournament_id = m.tournament_id AND tr1.tournament_category_id = m.tournament_category_id AND (tr1.team_id = m.team1_id OR tr1.player_id = m.team1_id)
         LEFT JOIN teams t2 ON t2.team_id = m.team2_id
         LEFT JOIN players p2 ON p2.player_id = m.team2_id
         LEFT JOIN users u2 ON u2.user_id = p2.user_id
-        LEFT JOIN tournament_registrations tr2 ON tr2.tournament_id = m.tournament_id AND tr2.team_id = m.team2_id
+        LEFT JOIN tournament_registrations tr2 ON tr2.tournament_id = m.tournament_id AND tr2.tournament_category_id = m.tournament_category_id AND (tr2.team_id = m.team2_id OR tr2.player_id = m.team2_id)
         LEFT JOIN tournament_groups tg ON tg.tournament_group_id = m.group_id
         WHERE m.tournament_id = :tid AND m.status != 'cancelled'
     ";
@@ -677,6 +698,7 @@ if ($flash) {
                                         </thead>
                                         <tbody class="divide-y divide-slate-100">
                                             <?php foreach ($roundMatches as $m): ?>
+                                            <?php $participantWithdrawn = in_array($m['team1_participation_status'] ?? '', ['withdrawn', 'disqualified'], true) || in_array($m['team2_participation_status'] ?? '', ['withdrawn', 'disqualified'], true); ?>
                                             <tr class="hover:bg-slate-50/80 transition-colors">
                                                 <td class="p-4 text-center font-mono text-xs font-bold text-slate-400">
                                                     #<?php echo $m['match_index'] + 1; ?>
@@ -715,7 +737,7 @@ if ($flash) {
                                                         <span class="font-display font-bold text-slate-900 bg-slate-100 border border-slate-200 px-4 py-1.5 rounded-lg inline-block text-sm">
                                                             <?php echo $m['team1_score']; ?> - <?php echo $m['team2_score']; ?>
                                                         </span>
-                                                    <?php elseif ($m['team1_id'] && $m['team2_id']): ?>
+                                                    <?php elseif ($m['team1_id'] && $m['team2_id'] && !$participantWithdrawn): ?>
                                                         <?php $mBestOf = max(1, (int) ($m['best_of'] ?? 1)); ?>
                                                         <?php if ($mBestOf <= 1): ?>
                                                             <form method="POST" class="hidden inline-flex items-center gap-2">
@@ -759,6 +781,8 @@ if ($flash) {
                                                                 </button>
                                                             </form>
                                                         <?php endif; ?>
+                                                    <?php elseif ($participantWithdrawn): ?>
+                                                        <span class="text-xs font-bold text-rose-600">ไม่สามารถกรอกคะแนนได้: ถอนตัว/ตัดสิทธิ์</span>
                                                     <?php else: ?>
                                                         <span class="text-xs text-slate-400 italic">รอยืนยันคู่แข่งขัน</span>
                                                     <?php endif; ?>
@@ -781,7 +805,7 @@ if ($flash) {
                                                     <button type="button" class="match-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white hover:bg-brand-glow" data-match-id="<?= (int) $m['match_id'] ?>" data-menu-id="match-action-menu-<?= (int) $m['match_id'] ?>" aria-haspopup="menu" aria-expanded="false"><i class="fa-solid fa-ellipsis"></i>จัดการ</button>
                                                     <div id="match-action-menu-<?= (int) $m['match_id'] ?>" class="match-action-menu fixed z-[70] rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
                                                         <button type="button" data-match-action="detail" class="match-action-item">รายละเอียด</button>
-                                                        <?php if (!in_array($m['status'], ['completed', 'walkover', 'cancelled'], true) && $m['team1_id'] && $m['team2_id']): ?><button type="button" data-match-action="score" class="match-action-item">บันทึกผลการแข่งขัน</button><?php endif; ?>
+                                                        <?php if (!in_array($m['status'], ['completed', 'walkover', 'cancelled'], true) && $m['team1_id'] && $m['team2_id'] && !$participantWithdrawn): ?><button type="button" data-match-action="score" class="match-action-item">บันทึกผลการแข่งขัน</button><?php endif; ?>
                                                         <button type="button" data-match-action="schedule" class="match-action-item">จัดตารางการแข่งขัน</button>
                                                         <?php if ($m['status'] === 'completed'): ?><button type="button" data-match-action="score" class="match-action-item">แก้ไขผลการแข่งขัน</button><?php endif; ?>
                                                     </div>

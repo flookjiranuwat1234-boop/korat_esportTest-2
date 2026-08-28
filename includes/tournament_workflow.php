@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/tournament_demo.php';
 // Shared tournament lifecycle decisions. This service does not mutate schema or data.
 
 function getTournamentWorkflowState(PDO $pdo, int $tournamentId, ?DateTimeImmutable $now = null): array
@@ -104,7 +105,7 @@ function canOpenRegistration(PDO $pdo, int $tournamentId, ?DateTimeImmutable $no
     $state = getTournamentWorkflowState($pdo, $tournamentId, $now);
     if (!$state['exists'] || $state['status'] !== 'draft') return false;
     $tournament = $state['tournament'];
-    return !$tournament['registration_start'] || new DateTimeImmutable($tournament['registration_start'], new DateTimeZone('Asia/Bangkok')) <= ($now ?: new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
+    return isDemoTournament($tournament) || !$tournament['registration_start'] || new DateTimeImmutable($tournament['registration_start'], new DateTimeZone('Asia/Bangkok')) <= ($now ?: new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
 }
 
 function canCloseRegistration(PDO $pdo, int $tournamentId, ?DateTimeImmutable $now = null): bool
@@ -112,19 +113,19 @@ function canCloseRegistration(PDO $pdo, int $tournamentId, ?DateTimeImmutable $n
     $state = getTournamentWorkflowState($pdo, $tournamentId, $now);
     if (!$state['exists'] || !in_array($state['status'], ['registration_open', 'registration_closed'], true)) return false;
     $end = $state['tournament']['registration_end'];
-    return !$end || new DateTimeImmutable($end, new DateTimeZone('Asia/Bangkok')) <= ($now ?: new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
+    return isDemoTournament($state['tournament']) || !$end || new DateTimeImmutable($end, new DateTimeZone('Asia/Bangkok')) <= ($now ?: new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
 }
 
 function canCheckin(PDO $pdo, int $tournamentId, ?DateTimeImmutable $now = null): bool
 {
     $state = getTournamentWorkflowState($pdo, $tournamentId, $now);
-    return $state['exists'] && $state['checkin_open'] && !in_array($state['status'], ['completed', 'cancelled'], true);
+    return $state['exists'] && (isDemoTournament($state['tournament']) || $state['checkin_open']) && !in_array($state['status'], ['completed', 'cancelled'], true);
 }
 
 function canCheckinRegistration(PDO $pdo, int $registrationId, ?DateTimeImmutable $now = null): bool
 {
     $now = $now ?: new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
-    $stmt = $pdo->prepare('SELECT tr.status, tr.participation_status,
+    $stmt = $pdo->prepare('SELECT tr.tournament_id, tr.status, tr.participation_status,
             COALESCE(tc.checkin_open_at, tour.checkin_open_at) AS checkin_open_at,
             COALESCE(tc.checkin_deadline, tour.checkin_close_at) AS checkin_close_at
         FROM tournament_registrations tr
@@ -136,7 +137,7 @@ function canCheckinRegistration(PDO $pdo, int $registrationId, ?DateTimeImmutabl
     return $registration
         && $registration['status'] === 'approved'
         && !in_array($registration['participation_status'], ['withdrawn', 'disqualified'], true)
-        && workflowTimeInWindow($now, $registration['checkin_open_at'], $registration['checkin_close_at']);
+        && (isDemoTournamentById($pdo, (int) $registration['tournament_id']) || workflowTimeInWindow($now, $registration['checkin_open_at'], $registration['checkin_close_at']));
 }
 
 function canGenerateBracket(PDO $pdo, int $tournamentId): bool
