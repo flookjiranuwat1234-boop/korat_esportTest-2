@@ -5,6 +5,11 @@
 
 date_default_timezone_set('Asia/Bangkok');
 
+// Demo mode is disabled unless explicitly enabled in the Local/Test environment.
+if (!defined('ENABLE_TOURNAMENT_DEMO_MODE')) {
+    define('ENABLE_TOURNAMENT_DEMO_MODE', filter_var(getenv('ENABLE_TOURNAMENT_DEMO_MODE') ?: 'false', FILTER_VALIDATE_BOOLEAN));
+}
+
 $host = 'localhost';
 $dbname = 'esport_korattest';
 $dbuser = 'root';

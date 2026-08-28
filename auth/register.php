@@ -26,6 +26,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $confirmPassword = $_POST['confirm_password'];
         $securityQuestion = $_POST['security_question'] ?? '';
         $securityAnswer = trim($_POST['security_answer'] ?? '');
+        $gender = strtolower(trim($_POST['gender'] ?? ''));
+        $birthDate = trim($_POST['birth_date'] ?? '');
+        $birthDateObject = DateTimeImmutable::createFromFormat('!Y-m-d', $birthDate);
 
         if (strlen($username) < 3) {
             $error = 'ชื่อผู้ใช้ต้องมีอย่างน้อย 3 ตัวอักษร';
@@ -35,13 +38,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $error = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
         } elseif ($password != $confirmPassword) {
             $error = 'รหัสผ่านไม่ตรงกัน';
+        } elseif (!in_array($gender, ['male', 'female'], true)) {
+            $error = 'กรุณาเลือกเพศ';
+        } elseif (!$birthDateObject || $birthDateObject->format('Y-m-d') !== $birthDate || $birthDateObject > new DateTimeImmutable('today')) {
+            $error = 'กรุณากรอกวันเกิดให้ถูกต้อง';
         } elseif (!in_array($securityQuestion, securityQuestionOptions())) {
             $error = 'กรุณาเลือกคำถามกันลืมรหัสผ่าน';
         } elseif ($securityAnswer == '') {
             $error = 'กรุณากรอกคำตอบของคำถามกันลืมรหัสผ่าน';
         } else {
             try {
-                registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer);
+                registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer, $gender, $birthDate);
                 setFlashMessage('success', 'สมัครสมาชิกเรียบร้อยแล้ว');
                 header('Location: login.php', true, 303);
                 exit;
@@ -356,7 +363,28 @@ $questions = securityQuestionOptions();
                         </div>
                     </div>
 
-                    <div class="field-stagger-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 field-stagger-4">
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">เพศ</label>
+                            <div class="relative glass-input-light rounded-xl overflow-hidden flex items-center">
+                                <span class="pl-3.5 text-slate-400 text-xs"><i class="fa-solid fa-venus-mars"></i></span>
+                                <select name="gender" required class="w-full bg-transparent px-3 py-3 text-slate-900 focus:outline-none text-xs font-medium cursor-pointer">
+                                    <option value="">-- เลือกเพศ --</option>
+                                    <option value="male" <?= ($_POST['gender'] ?? '') === 'male' ? 'selected' : '' ?>>ชาย</option>
+                                    <option value="female" <?= ($_POST['gender'] ?? '') === 'female' ? 'selected' : '' ?>>หญิง</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">วันเกิด</label>
+                            <div class="relative glass-input-light rounded-xl overflow-hidden flex items-center">
+                                <span class="pl-3.5 text-slate-400 text-xs"><i class="fa-solid fa-calendar-days"></i></span>
+                                <input type="date" name="birth_date" required value="<?= htmlspecialchars($_POST['birth_date'] ?? '') ?>" max="<?= date('Y-m-d') ?>" class="w-full bg-transparent px-3.5 py-3 text-slate-900 focus:outline-none text-xs font-medium">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="field-stagger-5">
                         <label class="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">คำถามกันลืมรหัสผ่าน</label>
                         <div class="relative glass-input-light rounded-xl overflow-hidden flex items-center">
                             <span class="pl-3.5 text-slate-400 text-xs input-icon transition-colors duration-200"><i class="fa-solid fa-circle-question"></i></span>
@@ -369,7 +397,7 @@ $questions = securityQuestionOptions();
                         </div>
                     </div>
 
-                    <div class="field-stagger-5">
+                    <div class="field-stagger-6">
                         <label class="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">คำตอบกันลืม</label>
                         <div class="relative glass-input-light rounded-xl overflow-hidden flex items-center">
                             <span class="pl-3.5 text-slate-400 text-xs input-icon transition-colors duration-200"><i class="fa-solid fa-key"></i></span>
@@ -378,7 +406,7 @@ $questions = securityQuestionOptions();
                         <p class="text-[10px] text-slate-500 mt-1 italic">* จำคำตอบนี้ไว้ให้ดี ใช้สำหรับรีเซ็ตรหัสผ่านหากลืมในอนาคต</p>
                     </div>
 
-                    <div class="field-stagger-6 pt-2">
+                    <div class="pt-2">
                         <button type="submit" class="shine-btn group w-full py-3.5 px-6 rounded-xl font-bold text-white uppercase tracking-wider bg-brand-orange hover:bg-brand-glow shadow-orange-glow hover:shadow-orange-glow-lg transition-all duration-300 transform active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer text-xs">
                             <span class="transition-transform duration-300 group-hover:-translate-x-1">สมัครสมาชิก</span>
                             <i class="fa-solid fa-arrow-right text-xs transition-transform duration-300 group-hover:translate-x-2"></i>

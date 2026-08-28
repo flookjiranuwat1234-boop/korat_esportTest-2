@@ -205,6 +205,12 @@ $checkinStatus = trim((string) ($_GET['checkin_status'] ?? 'all'));
 $drawStatus = trim((string) ($_GET['draw_status'] ?? 'all'));
 $addPlayerSearch = trim((string) ($_GET['add_player_search'] ?? ''));
 $isAddPlayerSearchAjax = ($_GET['ajax'] ?? '') === 'search_add_solo_players';
+
+if (!$tournamentId) {
+    $latestTournamentStmt = $pdo->query('SELECT tournament_id FROM tournaments ORDER BY created_at DESC LIMIT 1');
+    $tournamentId = (int) $latestTournamentStmt->fetchColumn();
+}
+
 $tournament = null;
 if ($tournamentId) {
     $tStmt = $pdo->prepare("
@@ -218,7 +224,7 @@ if ($tournamentId) {
     $tournament = $tStmt->fetch(PDO::FETCH_ASSOC);
 }
 $addPlayerSearchResults = [];
-if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo' && $addPlayerSearch !== '') {
+if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo') {
     $playerSearchSql = "
          SELECT p.player_id, p.display_name, p.real_name, p.avatar_path, p.eligibility_status,
              u.user_id, u.username, u.email, u.status AS account_status,
@@ -244,11 +250,11 @@ if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo' && $addPlayer
         ";
         $playerSearchParams['search'] = '%' . $addPlayerSearch . '%';
     }
-    $playerSearchSql .= ' ORDER BY p.display_name ASC, u.username ASC LIMIT 10';
+    $playerSearchSql .= ' ORDER BY p.display_name ASC, u.username ASC';
     $playerSearchStmt = $pdo->prepare($playerSearchSql);
     $playerSearchStmt->execute($playerSearchParams);
     $addPlayerSearchResults = $playerSearchStmt->fetchAll(PDO::FETCH_ASSOC);
-} elseif ($tournament && ($tournament['play_mode'] ?? 'team') === 'team' && $addPlayerSearch !== '') {
+} elseif ($tournament && ($tournament['play_mode'] ?? 'team') === 'team') {
     $teamSearchSql = "
         SELECT t.team_id, t.name, t.logo_path, t.status, t.game_id,
                COALESCE(cu.username, '-') AS captain_username,
@@ -261,12 +267,27 @@ if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo' && $addPlayer
                   AND tr.tournament_category_id = :category_id
                   AND tr.status IN ('pending', 'approved')) AS already_registered_count
         FROM teams t
-        JOIN tournament_categories tc ON tc.tournament_category_id = :category_id AND tc.tournament_id = :tournament_id AND tc.is_active = 1
+        LEFT JOIN tournament_categories tc ON tc.tournament_category_id = :category_id AND tc.tournament_id = :tournament_id AND tc.is_active = 1
         LEFT JOIN players cp ON cp.player_id = t.captain_player_id
         LEFT JOIN users cu ON cu.user_id = cp.user_id
         LEFT JOIN team_members tm ON tm.team_id = t.team_id
-        WHERE t.game_id = :game_id
+        WHERE (t.game_id = :game_id OR (t.game_id IS NULL AND t.tag LIKE 'F64%'))
           AND t.status = 'active'
+                    AND (
+                            tc.category_code NOT IN ('male', 'female')
+                            OR (tc.category_code = 'male' AND NOT EXISTS (
+                                    SELECT 1 FROM team_members gender_tm
+                                    JOIN players gender_p ON gender_p.player_id = gender_tm.player_id
+                                    WHERE gender_tm.team_id = t.team_id AND gender_tm.is_active = 1
+                                        AND LOWER(COALESCE(gender_p.gender, '')) <> 'male'
+                            ))
+                            OR (tc.category_code = 'female' AND NOT EXISTS (
+                                    SELECT 1 FROM team_members gender_tm
+                                    JOIN players gender_p ON gender_p.player_id = gender_tm.player_id
+                                    WHERE gender_tm.team_id = t.team_id AND gender_tm.is_active = 1
+                                        AND LOWER(COALESCE(gender_p.gender, '')) <> 'female'
+                            ))
+                    )
     ";
     $teamSearchParams = [
         'tournament_id' => $tournamentId,
@@ -279,7 +300,7 @@ if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo' && $addPlayer
         ";
         $teamSearchParams['search'] = '%' . $addPlayerSearch . '%';
     }
-    $teamSearchSql .= ' GROUP BY t.team_id, t.name, t.logo_path, t.status, t.game_id, cu.username, tc.starters_count ORDER BY t.name ASC LIMIT 10';
+    $teamSearchSql .= ' GROUP BY t.team_id, t.name, t.logo_path, t.status, t.game_id, cu.username, tc.starters_count ORDER BY t.name ASC';
     $teamSearchStmt = $pdo->prepare($teamSearchSql);
     $teamSearchStmt->execute($teamSearchParams);
     $addPlayerSearchResults = $teamSearchStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -407,7 +428,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
                 FROM tournament_categories WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1 LIMIT 1');
             $categoryStmt->execute(['category_id' => $targetCategoryId, 'tournament_id' => $targetTournamentId]);
             $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
-            $teamStmt = $pdo->prepare('SELECT team_id, name, game_id, status FROM teams WHERE team_id = :team_id LIMIT 1');
+            $teamStmt = $pdo->prepare('SELECT team_id, name, tag, game_id, status FROM teams WHERE team_id = :team_id LIMIT 1');
             $teamStmt->execute(['team_id' => $targetTeamId]);
             $team = $teamStmt->fetch(PDO::FETCH_ASSOC);
 
@@ -415,9 +436,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
                 $error = $windowState['message'];
             } elseif (!$category) {
                 $error = 'Category ที่เลือกไม่พร้อมใช้งาน';
-            } elseif (!$team || $team['status'] !== 'active' || (int) $team['game_id'] !== (int) $targetTournament['game_id']) {
+            } elseif (!$team || $team['status'] !== 'active' || ((int) $team['game_id'] !== (int) $targetTournament['game_id'] && !($team['game_id'] === null && str_starts_with((string) $team['tag'], 'F64')))) {
                 $error = 'ทีมนี้ไม่พร้อมใช้งานกับ Tournament นี้';
             } else {
+                $genderMismatchStmt = $pdo->prepare("SELECT COUNT(*) FROM team_members tm
+                    JOIN players p ON p.player_id = tm.player_id
+                    WHERE tm.team_id = :team_id AND tm.is_active = 1
+                      AND LOWER(COALESCE(p.gender, '')) <> LOWER(:gender)");
+                $genderMismatchStmt->execute(['team_id' => $targetTeamId, 'gender' => (string) ($category['category_code'] ?? '')]);
                 $memberStmt = $pdo->prepare('SELECT COUNT(*) FROM team_members WHERE team_id = :team_id AND is_active = 1');
                 $memberStmt->execute(['team_id' => $targetTeamId]);
                 $memberCount = (int) $memberStmt->fetchColumn();
@@ -430,6 +456,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
 
                 if ($duplicateStmt->fetchColumn()) {
                     $error = 'ทีมนี้สมัคร Category นี้แล้ว';
+                } elseif (in_array($category['category_code'], ['male', 'female'], true) && (int) $genderMismatchStmt->fetchColumn() > 0) {
+                    $error = 'เพศสมาชิกทีมไม่ตรงกับ Category ที่เลือก';
                 } elseif ((int) ($category['starters_count'] ?? 0) > $memberCount) {
                     $error = 'จำนวนสมาชิกทีมยังไม่ครบตามกติกา';
                 } elseif ((int) ($category['max_participants'] ?? 0) > 0 && (int) $registeredCountStmt->fetchColumn() >= (int) $category['max_participants']) {
@@ -566,14 +594,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, ['change_registra
                     $matchRow = $matchStmt->fetch(PDO::FETCH_ASSOC) ?: [];
                     $matchCount = (int) ($matchRow['total_matches'] ?? 0);
                     $startedMatchCount = (int) ($matchRow['started_matches'] ?? 0);
+                } elseif (!empty($registration['player_id'])) {
+                    $matchStmt = $pdo->prepare('SELECT COUNT(*) AS total_matches,
+                            SUM(CASE WHEN status NOT IN (\'scheduled\', \'cancelled\') THEN 1 ELSE 0 END) AS started_matches
+                        FROM matches
+                        WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id
+                          AND (team1_id = :player_id_1 OR team2_id = :player_id_2)');
+                    $matchStmt->execute([
+                        'tournament_id' => (int) $registration['tournament_id'],
+                        'category_id' => (int) $registration['tournament_category_id'],
+                        'player_id_1' => (int) $registration['player_id'],
+                        'player_id_2' => (int) $registration['player_id'],
+                    ]);
+                    $matchRow = $matchStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $matchCount = (int) ($matchRow['total_matches'] ?? 0);
+                    $startedMatchCount = (int) ($matchRow['started_matches'] ?? 0);
                 }
-                if ($action === 'withdraw_registration' && $matchCount > 0) {
-                    $error = 'ใบสมัครนี้ถูกจัดสายแล้ว จึงไม่สามารถถอนผ่าน Flow ปกติได้';
+                if ($action === 'withdraw_registration' && $startedMatchCount > 0) {
+                    $error = 'ใบสมัครนี้มี Match ที่เริ่มหรือจบแล้ว จึงไม่สามารถถอนผ่าน Flow ปกติได้';
                 } elseif ($action === 'disqualify_registration' && $startedMatchCount > 0) {
                     $error = 'มี Match ที่เริ่มหรือจบแล้ว จึงไม่สามารถตัดสิทธิ์ผ่าน Flow ปกติได้';
                 } else {
                     try {
                         $pdo->beginTransaction();
+                        if ($newParticipationStatus === 'withdrawn' && !empty($registration['player_id'])) {
+                            $withdrawnMatchStmt = $pdo->prepare("SELECT match_id, team1_id, team2_id FROM matches
+                                WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id
+                                  AND status NOT IN ('completed', 'walkover', 'cancelled')
+                                  AND (team1_id = :player_id_1 OR team2_id = :player_id_2)");
+                            $withdrawnMatchStmt->execute([
+                                'tournament_id' => (int) $registration['tournament_id'],
+                                'category_id' => (int) $registration['tournament_category_id'],
+                                'player_id_1' => (int) $registration['player_id'],
+                                'player_id_2' => (int) $registration['player_id'],
+                            ]);
+                            foreach ($withdrawnMatchStmt->fetchAll(PDO::FETCH_ASSOC) as $withdrawnMatch) {
+                                $winnerId = (int) $withdrawnMatch['team1_id'] === (int) $registration['player_id']
+                                    ? $withdrawnMatch['team2_id'] : $withdrawnMatch['team1_id'];
+                                if (!$winnerId) continue;
+                                $pdo->prepare("UPDATE matches SET winner_team_id = :winner, status = 'walkover', result_type = 'bye', wo_reason = 'คู่แข่งถอนตัว', completed_at = NOW() WHERE match_id = :match_id")
+                                    ->execute(['winner' => $winnerId, 'match_id' => (int) $withdrawnMatch['match_id']]);
+                                advanceMatchResult($pdo, (int) $withdrawnMatch['match_id'], (int) $winnerId, (int) $registration['player_id']);
+                            }
+                        }
                         if ($action === 'change_registration_status') {
                             $update = $pdo->prepare('UPDATE tournament_registrations
                                 SET status = :status, reviewed_by = :reviewed_by, reviewed_at = NOW(),
@@ -1211,8 +1274,8 @@ if ($flash) {
                         <input type="hidden" name="tournament_id" value="<?= (int) $tournamentId ?>">
                         <input type="hidden" name="category_id" value="<?= (int) $selectedCategoryId ?>">
                         <div class="relative">
-                            <label id="addPlayerSearchLabel" class="block text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-1">ค้นหาผู้เล่นที่มีบัญชีและโปรไฟล์แล้ว</label>
-                            <input id="addPlayerSearchInput" type="text" name="add_player_search" value="<?= htmlspecialchars($addPlayerSearch) ?>" placeholder="ชื่อ / Username / Email" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
+                            <label id="addPlayerSearchLabel" class="block text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-1"><?= ($tournament['play_mode'] ?? 'team') === 'solo' ? 'ค้นหาผู้เล่นที่มีบัญชีและโปรไฟล์แล้ว' : 'ค้นหาทีมที่พร้อมสมัคร' ?></label>
+                            <input id="addPlayerSearchInput" type="text" name="add_player_search" value="<?= htmlspecialchars($addPlayerSearch) ?>" placeholder="พิมพ์ชื่อเพื่อค้นหา..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="addPlayerSearchResultsList" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
                             <div id="addPlayerSearchResultsContainer" class="hidden absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
                                 <div id="addPlayerSearchEmptyState" class="hidden p-4 text-sm text-slate-600">ไม่พบผู้เล่นที่ตรงกับคำค้นหา</div>
                                 <div id="addPlayerSearchLoadingState" class="hidden p-4 text-sm text-sky-700">กำลังค้นหา...</div>
@@ -1490,6 +1553,7 @@ if ($flash) {
                 addSoloPlayerModal.classList.remove('hidden');
                 addSoloPlayerModal.classList.add('flex');
                 addPlayerSearchInput?.focus();
+                renderAddPlayerSearchResults(initialAddPlayerSearchResults);
             }
 
             function closeAddPlayerModal() {
@@ -1575,6 +1639,7 @@ if ($flash) {
             const addPlayerSearchEmptyState = document.getElementById('addPlayerSearchEmptyState');
             const addPlayerSearchLoadingState = document.getElementById('addPlayerSearchLoadingState');
             const addPlayerSearchErrorState = document.getElementById('addPlayerSearchErrorState');
+            const initialAddPlayerSearchResults = <?= json_encode($addPlayerSearchResults, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
             let addPlayerSearchRequestId = 0;
             let addPlayerSearchDebounce;
 
@@ -1614,11 +1679,12 @@ if ($flash) {
                     details.append(avatar, text);
                     row.append(details);
 
-                    const cannotAdd = Number(player.already_registered_count || 0) > 0 || (!isSolo && Number(player.active_member_count || 0) < Number(player.starters_count || 0));
+                    const categoryNotSelected = !isSolo && <?= $selectedCategoryId > 0 ? 'false' : 'true' ?>;
+                    const cannotAdd = categoryNotSelected || Number(player.already_registered_count || 0) > 0 || (!isSolo && Number(player.active_member_count || 0) < Number(player.starters_count || 0));
                     if (cannotAdd) {
                         const registered = document.createElement('span');
                         registered.className = 'inline-flex items-center rounded-lg bg-slate-200 px-3 py-2 text-xs font-bold text-slate-600';
-                        registered.textContent = Number(player.already_registered_count || 0) > 0 ? 'สมัครแล้ว' : 'สมาชิกไม่ครบ';
+                        registered.textContent = categoryNotSelected ? 'เลือก Category ก่อน' : (Number(player.already_registered_count || 0) > 0 ? 'สมัครแล้ว' : 'สมาชิกไม่ครบ');
                         row.append(registered);
                     } else {
                         const form = document.createElement('form');
@@ -1667,18 +1733,15 @@ if ($flash) {
                 if (!addPlayerSearchForm || !addPlayerSearchInput || !addPlayerSearchResultsList) return;
 
                 const query = (addPlayerSearchInput.value || '').trim().toLowerCase();
-                if (query.length < 2) {
-                    addPlayerSearchResultsList.replaceChildren();
-                    addPlayerSearchResultsContainer?.classList.add('hidden');
-                    addPlayerSearchEmptyState?.classList.add('hidden');
-                    addPlayerSearchLoadingState?.classList.add('hidden');
-                    addPlayerSearchErrorState?.classList.add('hidden');
+                if (!query) {
+                    renderAddPlayerSearchResults(initialAddPlayerSearchResults);
                     return;
                 }
                 const requestId = ++addPlayerSearchRequestId;
                 const url = new URL(window.location.href);
                 url.searchParams.set('ajax', 'search_add_solo_players');
-                url.searchParams.set('add_player_search', query);
+                if (query) url.searchParams.set('add_player_search', query);
+                else url.searchParams.delete('add_player_search');
                 addPlayerSearchLoadingState?.classList.remove('hidden');
                 addPlayerSearchErrorState?.classList.add('hidden');
                 addPlayerSearchEmptyState?.classList.add('hidden');
