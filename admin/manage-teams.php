@@ -259,39 +259,23 @@ if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo') {
         SELECT t.team_id, t.name, t.logo_path, t.status, t.game_id,
                COALESCE(cu.username, '-') AS captain_username,
                COUNT(DISTINCT CASE WHEN tm.is_active = 1 THEN tm.player_id END) AS active_member_count,
-             tc.starters_count,
+               COALESCE(tc.starters_count, 0) AS starters_count,
                (SELECT COUNT(*)
                 FROM tournament_registrations tr
                 WHERE tr.team_id = t.team_id
                   AND tr.tournament_id = :tournament_id
-                  AND tr.tournament_category_id = :category_id
                   AND tr.status IN ('pending', 'approved')) AS already_registered_count
         FROM teams t
         LEFT JOIN tournament_categories tc ON tc.tournament_category_id = :category_id AND tc.tournament_id = :tournament_id AND tc.is_active = 1
         LEFT JOIN players cp ON cp.player_id = t.captain_player_id
         LEFT JOIN users cu ON cu.user_id = cp.user_id
         LEFT JOIN team_members tm ON tm.team_id = t.team_id
-        WHERE (t.game_id = :game_id OR (t.game_id IS NULL AND t.tag LIKE 'F64%'))
+        WHERE (t.game_id = :game_id OR (t.game_id IS NULL AND t.tag LIKE 'A64%'))
           AND t.status = 'active'
-                    AND (
-                            tc.category_code NOT IN ('male', 'female')
-                            OR (tc.category_code = 'male' AND NOT EXISTS (
-                                    SELECT 1 FROM team_members gender_tm
-                                    JOIN players gender_p ON gender_p.player_id = gender_tm.player_id
-                                    WHERE gender_tm.team_id = t.team_id AND gender_tm.is_active = 1
-                                        AND LOWER(COALESCE(gender_p.gender, '')) <> 'male'
-                            ))
-                            OR (tc.category_code = 'female' AND NOT EXISTS (
-                                    SELECT 1 FROM team_members gender_tm
-                                    JOIN players gender_p ON gender_p.player_id = gender_tm.player_id
-                                    WHERE gender_tm.team_id = t.team_id AND gender_tm.is_active = 1
-                                        AND LOWER(COALESCE(gender_p.gender, '')) <> 'female'
-                            ))
-                    )
     ";
     $teamSearchParams = [
         'tournament_id' => $tournamentId,
-        'category_id' => $selectedCategoryId,
+        'category_id' => $selectedCategoryId > 0 ? $selectedCategoryId : 0,
         'game_id' => (int) $tournament['game_id'],
     ];
     if ($addPlayerSearch !== '') {
