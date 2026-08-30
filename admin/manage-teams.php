@@ -1276,11 +1276,11 @@ if ($flash) {
                         <div class="relative">
                             <label id="addPlayerSearchLabel" class="block text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-1"><?= ($tournament['play_mode'] ?? 'team') === 'solo' ? 'ค้นหาผู้เล่นที่มีบัญชีและโปรไฟล์แล้ว' : 'ค้นหาทีมที่พร้อมสมัคร' ?></label>
                             <input id="addPlayerSearchInput" type="text" name="add_player_search" value="<?= htmlspecialchars($addPlayerSearch) ?>" placeholder="พิมพ์ชื่อเพื่อค้นหา..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="addPlayerSearchResultsList" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
-                            <div id="addPlayerSearchResultsContainer" class="hidden absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                            <div id="addPlayerSearchResultsContainer" class="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
                                 <div id="addPlayerSearchEmptyState" class="hidden p-4 text-sm text-slate-600">ไม่พบผู้เล่นที่ตรงกับคำค้นหา</div>
                                 <div id="addPlayerSearchLoadingState" class="hidden p-4 text-sm text-sky-700">กำลังค้นหา...</div>
                                 <div id="addPlayerSearchErrorState" class="hidden p-4 text-sm text-red-700">ไม่สามารถค้นหาข้อมูลได้ กรุณาลองใหม่</div>
-                                <div id="addPlayerSearchResultsList" class="max-h-[320px] overflow-y-auto divide-y divide-slate-200"></div>
+                                <div id="addPlayerSearchResultsList" class="max-h-[400px] overflow-y-auto divide-y divide-slate-200"></div>
                             </div>
                         </div>
                         <div class="flex items-end">
@@ -1545,14 +1545,13 @@ if ($flash) {
             function openAddPlayerModal() {
                 if (!addSoloPlayerModal) return;
                 if (addPlayerSearchInput) addPlayerSearchInput.value = '';
-                addPlayerSearchResultsList?.replaceChildren();
-                addPlayerSearchResultsContainer?.classList.add('hidden');
-                addPlayerSearchEmptyState?.classList.add('hidden');
-                addPlayerSearchLoadingState?.classList.add('hidden');
-                addPlayerSearchErrorState?.classList.add('hidden');
                 addSoloPlayerModal.classList.remove('hidden');
                 addSoloPlayerModal.classList.add('flex');
                 addPlayerSearchInput?.focus();
+                // Show results container and render initial teams
+                addPlayerSearchResultsContainer?.classList.remove('hidden');
+                addPlayerSearchLoadingState?.classList.add('hidden');
+                addPlayerSearchErrorState?.classList.add('hidden');
                 renderAddPlayerSearchResults(initialAddPlayerSearchResults);
             }
 
