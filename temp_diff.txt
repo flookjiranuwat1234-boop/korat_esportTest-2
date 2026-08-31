@@ -1,0 +1,381 @@
+diff --git a/admin/manage-teams.php b/admin/manage-teams.php
+index 83f3fc1..e3d5cff 100644
+--- a/admin/manage-teams.php
++++ b/admin/manage-teams.php
+@@ -223,11 +223,84 @@ if ($tournamentId) {
+     $tStmt->execute(['id' => $tournamentId]);
+     $tournament = $tStmt->fetch(PDO::FETCH_ASSOC);
+ }
+-$addPlayerSearchResults = [];
++// ================= PRELOAD: Fetch all available participants (without search filter) =================
++$initialAddPlayerSearchResults = [];
++
++// Helper function to check team roster completeness and category match
++function validateTeamEligibility(array $team, ?array $category, PDO $pdo): array {
++    if (!$category) {
++        return ['eligible' => false, 'reason' => 'เลือก Category ก่อน'];
++    }
++
++    if ((int) ($team['already_registered_count'] ?? 0) > 0) {
++        return ['eligible' => false, 'reason' => 'สมัครแล้ว'];
++    }
++
++    $startersRequired = (int) ($category['starters_count'] ?? 5);
++    $substitutesRequired = (int) ($category['substitutes_count'] ?? 1);
++    $totalRequired = $startersRequired + $substitutesRequired;
++
++    if ((int) ($team['active_member_count'] ?? 0) < $totalRequired) {
++        return ['eligible' => false, 'reason' => "สมาชิกไม่ครบ ({$team['active_member_count']}/{$totalRequired})"];
++    }
++
++    $categoryCode = strtolower(trim((string) ($category['category_code'] ?? 'open')));
++    if (!in_array($categoryCode, ['male', 'female', 'open'], true)) {
++        return ['eligible' => false, 'reason' => 'Category ไม่ชัดเจน'];
++    }
++
++    if ($categoryCode !== 'open') {
++        // Gender validation: Check if team has mixed gender in restricted category
++        $genderCheckSql = "
++            SELECT LOWER(COALESCE(p.gender, 'unknown')) AS gender, COUNT(*) AS count
++            FROM team_members tm
++            JOIN players p ON p.player_id = tm.player_id
++            WHERE tm.team_id = :team_id AND tm.is_active = 1
++            GROUP BY LOWER(COALESCE(p.gender, 'unknown'))
++        ";
++        $genderStmt = $pdo->prepare($genderCheckSql);
++        $genderStmt->execute(['team_id' => (int) $team['team_id']]);
++        $genders = $genderStmt->fetchAll(PDO::FETCH_ASSOC);
++
++        // Check if team has only one gender (not mixed)
++        $hasMultipleGenders = count($genders) > 1;
++
++        if ($hasMultipleGenders && $categoryCode === 'male') {
++            return ['eligible' => false, 'reason' => 'ทีมมีสมาชิกหญิง (ไม่เข้ากับ Category ชาย)'];
++        }
++        if ($hasMultipleGenders && $categoryCode === 'female') {
++            return ['eligible' => false, 'reason' => 'ทีมมีสมาชิกชาย (ไม่เข้ากับ Category หญิง)'];
++        }
++        if (!$hasMultipleGenders && $categoryCode === 'open') {
++            $singleGender = $genders[0]['gender'] ?? 'unknown';
++            if ($singleGender === 'male') {
++                // Team is all-male, OK for open
++            } elseif ($singleGender === 'female') {
++                // Team is all-female, OK for open
++            }
++        }
++    }
++
++    return ['eligible' => true, 'reason' => ''];
++}
++
++// Get category info if selected
++$selectedCategory = null;
++if ($selectedCategoryId > 0) {
++    $catStmt = $pdo->prepare("
++        SELECT * FROM tournament_categories
++        WHERE tournament_category_id = :id AND tournament_id = :tournament_id AND is_active = 1
++        LIMIT 1
++    ");
++    $catStmt->execute(['id' => $selectedCategoryId, 'tournament_id' => $tournamentId]);
++    $selectedCategory = $catStmt->fetch(PDO::FETCH_ASSOC);
++}
++
++// PRELOAD: Fetch all without search filter for initial display
+ if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo') {
+     $playerSearchSql = "
+-         SELECT p.player_id, p.display_name, p.real_name, p.avatar_path, p.eligibility_status,
+-             u.user_id, u.username, u.email, u.status AS account_status,
++        SELECT p.player_id, p.display_name, p.real_name, p.avatar_path, p.eligibility_status,
++               u.user_id, u.username, u.email, u.status AS account_status,
+                (SELECT COUNT(*)
+                 FROM tournament_registrations tr
+                 WHERE tr.player_id = p.player_id
+@@ -235,31 +308,19 @@ if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo') {
+                   AND tr.status IN ('pending', 'approved')) AS already_registered_count
+         FROM players p
+         LEFT JOIN users u ON u.user_id = p.user_id
+-        WHERE u.status = 'active'
+-          AND p.user_id IS NOT NULL
++        WHERE u.status = 'active' AND p.user_id IS NOT NULL
++        ORDER BY p.display_name ASC, u.username ASC
+     ";
+     $playerSearchParams = ['tournament_id' => $tournamentId];
+-    if ($addPlayerSearch !== '') {
+-        $playerSearchSql .= "
+-          AND (
+-              p.display_name LIKE :search OR
+-              p.real_name LIKE :search OR
+-              u.username LIKE :search OR
+-              u.email LIKE :search
+-          )
+-        ";
+-        $playerSearchParams['search'] = '%' . $addPlayerSearch . '%';
+-    }
+-    $playerSearchSql .= ' ORDER BY p.display_name ASC, u.username ASC';
+     $playerSearchStmt = $pdo->prepare($playerSearchSql);
+     $playerSearchStmt->execute($playerSearchParams);
+-    $addPlayerSearchResults = $playerSearchStmt->fetchAll(PDO::FETCH_ASSOC);
++    $initialAddPlayerSearchResults = $playerSearchStmt->fetchAll(PDO::FETCH_ASSOC);
+ } elseif ($tournament && ($tournament['play_mode'] ?? 'team') === 'team') {
+     $teamSearchSql = "
+-        SELECT t.team_id, t.name, t.logo_path, t.status, t.game_id,
++        SELECT t.team_id, t.name, t.tag, t.logo_path, t.status, t.game_id, t.team_category,
+                COALESCE(cu.username, '-') AS captain_username,
+                COUNT(DISTINCT CASE WHEN tm.is_active = 1 THEN tm.player_id END) AS active_member_count,
+-             tc.starters_count,
++               (SELECT COUNT(*) FROM team_members WHERE team_id = t.team_id AND is_active = 1 AND (SELECT COUNT(DISTINCT team_member_id) FROM team_member_roles WHERE team_member_id = team_members.team_member_id AND role IN ('player', 'substitute')) > 0) AS player_count,
+                (SELECT COUNT(*)
+                 FROM tournament_registrations tr
+                 WHERE tr.team_id = t.team_id
+@@ -267,43 +328,71 @@ if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo') {
+                   AND tr.tournament_category_id = :category_id
+                   AND tr.status IN ('pending', 'approved')) AS already_registered_count
+         FROM teams t
+-        LEFT JOIN tournament_categories tc ON tc.tournament_category_id = :category_id AND tc.tournament_id = :tournament_id AND tc.is_active = 1
+         LEFT JOIN players cp ON cp.player_id = t.captain_player_id
+         LEFT JOIN users cu ON cu.user_id = cp.user_id
+-        LEFT JOIN team_members tm ON tm.team_id = t.team_id
+-        WHERE (t.game_id = :game_id OR (t.game_id IS NULL AND t.tag LIKE 'F64%'))
+-          AND t.status = 'active'
+-                    AND (
+-                            tc.category_code NOT IN ('male', 'female')
+-                            OR (tc.category_code = 'male' AND NOT EXISTS (
+-                                    SELECT 1 FROM team_members gender_tm
+-                                    JOIN players gender_p ON gender_p.player_id = gender_tm.player_id
+-                                    WHERE gender_tm.team_id = t.team_id AND gender_tm.is_active = 1
+-                                        AND LOWER(COALESCE(gender_p.gender, '')) <> 'male'
+-                            ))
+-                            OR (tc.category_code = 'female' AND NOT EXISTS (
+-                                    SELECT 1 FROM team_members gender_tm
+-                                    JOIN players gender_p ON gender_p.player_id = gender_tm.player_id
+-                                    WHERE gender_tm.team_id = t.team_id AND gender_tm.is_active = 1
+-                                        AND LOWER(COALESCE(gender_p.gender, '')) <> 'female'
+-                            ))
+-                    )
++        LEFT JOIN team_members tm ON tm.team_id = t.team_id AND tm.is_active = 1
++        WHERE t.status = 'active'
++        GROUP BY t.team_id, t.name, t.tag, t.logo_path, t.status, t.game_id, t.team_category, cu.username
++        ORDER BY t.name ASC
+     ";
+     $teamSearchParams = [
+         'tournament_id' => $tournamentId,
+-        'category_id' => $selectedCategoryId,
+-        'game_id' => (int) $tournament['game_id'],
++        'category_id' => $selectedCategoryId > 0 ? $selectedCategoryId : 0,
+     ];
+-    if ($addPlayerSearch !== '') {
+-        $teamSearchSql .= "
+-          AND (t.name LIKE :search OR cu.username LIKE :search)
+-        ";
+-        $teamSearchParams['search'] = '%' . $addPlayerSearch . '%';
+-    }
+-    $teamSearchSql .= ' GROUP BY t.team_id, t.name, t.logo_path, t.status, t.game_id, cu.username, tc.starters_count ORDER BY t.name ASC';
+     $teamSearchStmt = $pdo->prepare($teamSearchSql);
+     $teamSearchStmt->execute($teamSearchParams);
+-    $addPlayerSearchResults = $teamSearchStmt->fetchAll(PDO::FETCH_ASSOC);
++    $initialAddPlayerSearchResults = $teamSearchStmt->fetchAll(PDO::FETCH_ASSOC);
++
++    // Enrich team data with eligibility info
++    foreach ($initialAddPlayerSearchResults as &$team) {
++        $eligibility = validateTeamEligibility($team, $selectedCategory, $pdo);
++        $team['eligible'] = $eligibility['eligible'];
++        $team['ineligibility_reason'] = $eligibility['reason'];
++    }
++    unset($team);
++}
++
++// SEARCH: If user typed search, fetch filtered results
++$addPlayerSearchResults = $initialAddPlayerSearchResults;
++
++if ($addPlayerSearch !== '') {
++    $addPlayerSearchResults = [];
++
++    if ($tournament && ($tournament['play_mode'] ?? 'team') === 'solo') {
++        $searchLower = strtolower($addPlayerSearch);
++        foreach ($initialAddPlayerSearchResults as $player) {
++            if (
++                stripos($player['display_name'] ?? '', $addPlayerSearch) !== false ||
++                stripos($player['real_name'] ?? '', $addPlayerSearch) !== false ||
++                stripos($player['username'] ?? '', $addPlayerSearch) !== false ||
++                stripos($player['email'] ?? '', $addPlayerSearch) !== false
++            ) {
++                $addPlayerSearchResults[] = $player;
++            }
++        }
++    } elseif ($tournament && ($tournament['play_mode'] ?? 'team') === 'team') {
++        foreach ($initialAddPlayerSearchResults as $team) {
++            if (
++                stripos($team['name'] ?? '', $addPlayerSearch) !== false ||
++                stripos($team['tag'] ?? '', $addPlayerSearch) !== false ||
++                stripos($team['captain_username'] ?? '', $addPlayerSearch) !== false
++            ) {
++                $addPlayerSearchResults[] = $team;
++            }
++        }
++    }
++}
++
++// For AJAX responses, make sure team results have eligibility info
++if ($isAddPlayerSearchAjax && ($tournament['play_mode'] ?? 'team') === 'team') {
++    foreach ($addPlayerSearchResults as &$team) {
++        if (!isset($team['eligible'])) {
++            $eligibility = validateTeamEligibility($team, $selectedCategory, $pdo);
++            $team['eligible'] = $eligibility['eligible'];
++            $team['ineligibility_reason'] = $eligibility['reason'];
++        }
++    }
++    unset($team);
+ }
+ 
+ if ($isAddPlayerSearchAjax) {
+@@ -1639,7 +1728,7 @@ if ($flash) {
+             const addPlayerSearchEmptyState = document.getElementById('addPlayerSearchEmptyState');
+             const addPlayerSearchLoadingState = document.getElementById('addPlayerSearchLoadingState');
+             const addPlayerSearchErrorState = document.getElementById('addPlayerSearchErrorState');
+-            const initialAddPlayerSearchResults = <?= json_encode($addPlayerSearchResults, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
++            const initialAddPlayerSearchResults = <?= json_encode($initialAddPlayerSearchResults, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+             let addPlayerSearchRequestId = 0;
+             let addPlayerSearchDebounce;
+ 
+@@ -1671,21 +1760,48 @@ if ($flash) {
+                     name.textContent = isSolo ? (player.display_name || player.real_name || 'Player') : (player.name || 'Team');
+                     const account = document.createElement('div');
+                     account.className = 'text-[11px] text-slate-500';
+-                    account.textContent = isSolo
+-                        ? `${player.username || '-'} • ${player.email || '-'} • ${player.eligibility_status || 'ไม่ระบุสถานะ'}`
+-                        : `กัปตัน: ${player.captain_username || '-'} • สมาชิก ${player.active_member_count || 0}/${player.starters_count || 0} คน • ${player.status || 'ไม่ระบุสถานะ'}`;
++
++                    if (isSolo) {
++                        account.textContent = `${player.username || '-'} • ${player.email || '-'} • ${player.eligibility_status || 'ไม่ระบุสถานะ'}`;
++                    } else {
++                        const playerCount = player.player_count || player.active_member_count || 0;
++                        account.textContent = `Tag: ${player.tag || '-'} • กัปตัน: ${player.captain_username || '-'} • สมาชิก ${playerCount} คน • ${player.status || 'ไม่ระบุสถานะ'}`;
++                    }
++
+                     const text = document.createElement('div');
+                     text.append(name, account);
+                     details.append(avatar, text);
+                     row.append(details);
+ 
+-                    const categoryNotSelected = !isSolo && <?= $selectedCategoryId > 0 ? 'false' : 'true' ?>;
+-                    const cannotAdd = categoryNotSelected || Number(player.already_registered_count || 0) > 0 || (!isSolo && Number(player.active_member_count || 0) < Number(player.starters_count || 0));
++                    // Determine if player/team can be added
++                    let cannotAdd = false;
++                    let reason = '';
++
++                    if (isSolo) {
++                        // Solo mode: Check if already registered
++                        if (Number(player.already_registered_count || 0) > 0) {
++                            cannotAdd = true;
++                            reason = 'สมัครแล้ว';
++                        }
++                    } else {
++                        // Team mode
++                        if (Number(player.already_registered_count || 0) > 0) {
++                            cannotAdd = true;
++                            reason = 'สมัครแล้ว';
++                        } else if (player.eligible === false && player.ineligibility_reason) {
++                            cannotAdd = true;
++                            reason = player.ineligibility_reason;
++                        } else if (player.eligible === false) {
++                            cannotAdd = true;
++                            reason = 'ไม่ตรงเงื่อนไข';
++                        }
++                    }
++
+                     if (cannotAdd) {
+-                        const registered = document.createElement('span');
+-                        registered.className = 'inline-flex items-center rounded-lg bg-slate-200 px-3 py-2 text-xs font-bold text-slate-600';
+-                        registered.textContent = categoryNotSelected ? 'เลือก Category ก่อน' : (Number(player.already_registered_count || 0) > 0 ? 'สมัครแล้ว' : 'สมาชิกไม่ครบ');
+-                        row.append(registered);
++                        const statusBadge = document.createElement('span');
++                        statusBadge.className = 'inline-flex items-center rounded-lg bg-slate-200 px-3 py-2 text-xs font-bold text-slate-600';
++                        statusBadge.textContent = reason || 'ไม่สามารถเพิ่มได้';
++                        row.append(statusBadge);
+                     } else {
+                         const form = document.createElement('form');
+                         form.method = 'POST';
+@@ -1703,7 +1819,7 @@ if ($flash) {
+                         });
+                         const button = document.createElement('button');
+                         button.type = 'submit';
+-                        button.className = 'rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700';
++                        button.className = 'rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed';
+                         button.textContent = isSolo ? 'เพิ่มผู้แข่งขัน' : 'เพิ่มทีม';
+                         button.addEventListener('click', event => {
+                             if (!confirm(isSolo ? 'ยืนยันเพิ่มผู้เล่นรายนี้เข้าสู่ Tournament นี้หรือไม่?' : 'ยืนยันเพิ่มทีมนี้เข้าสู่ Tournament หรือไม่?')) event.preventDefault();
+@@ -1732,29 +1848,37 @@ if ($flash) {
+             async function updateAddPlayerSearchResults() {
+                 if (!addPlayerSearchForm || !addPlayerSearchInput || !addPlayerSearchResultsList) return;
+ 
+-                const query = (addPlayerSearchInput.value || '').trim().toLowerCase();
++                const query = (addPlayerSearchInput.value || '').trim();
++
++                // If empty, show initial results
+                 if (!query) {
+                     renderAddPlayerSearchResults(initialAddPlayerSearchResults);
+                     return;
+                 }
++
+                 const requestId = ++addPlayerSearchRequestId;
+                 const url = new URL(window.location.href);
+                 url.searchParams.set('ajax', 'search_add_solo_players');
+-                if (query) url.searchParams.set('add_player_search', query);
+-                else url.searchParams.delete('add_player_search');
++                url.searchParams.set('add_player_search', query);
++
+                 addPlayerSearchLoadingState?.classList.remove('hidden');
+                 addPlayerSearchErrorState?.classList.add('hidden');
+                 addPlayerSearchEmptyState?.classList.add('hidden');
+-                addPlayerSearchResultsContainer?.classList.add('hidden');
+                 addPlayerSearchResultsContainer?.classList.remove('hidden');
++
+                 try {
+                     const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                     if (!response.ok || requestId !== addPlayerSearchRequestId) throw new Error('Search request failed');
+-                    renderAddPlayerSearchResults(await response.json());
++                    const results = await response.json();
++                    if (requestId === addPlayerSearchRequestId) {
++                        renderAddPlayerSearchResults(results);
++                    }
+                 } catch (error) {
+                     if (requestId === addPlayerSearchRequestId) {
+                         addPlayerSearchLoadingState?.classList.add('hidden');
+                         addPlayerSearchErrorState?.classList.remove('hidden');
++                        // Fall back to initial results on error
++                        renderAddPlayerSearchResults(initialAddPlayerSearchResults);
+                     }
+                 }
+             }
+@@ -1769,20 +1893,21 @@ if ($flash) {
+                 addPlayerSearchInput.addEventListener('input', () => {
+                     clearTimeout(addPlayerSearchDebounce);
+                     const query = addPlayerSearchInput.value.trim();
+-                    if (query.length > 0 && query.length < 2) {
+-                        updateAddPlayerSearchResults();
++
++                    // Show initial results immediately when empty
++                    if (!query) {
++                        renderAddPlayerSearchResults(initialAddPlayerSearchResults);
+                         return;
+                     }
+-                    addPlayerSearchDebounce = setTimeout(updateAddPlayerSearchResults, 400);
+-                });
+-                addPlayerSearchInput.addEventListener('focus', () => {
+-                    if (addPlayerSearchInput.value.trim().length >= 2) updateAddPlayerSearchResults();
+-                });
+-                document.addEventListener('click', event => {
+-                    if (!addPlayerSearchForm.contains(event.target) && !addPlayerSearchResultsContainer.contains(event.target)) {
+-                        addPlayerSearchResultsContainer.classList.add('hidden');
++
++                    // Debounce search (300ms) - start from 1 character
++                    if (query.length >= 1) {
++                        addPlayerSearchDebounce = setTimeout(updateAddPlayerSearchResults, 300);
+                     }
+                 });
++
++                // Focus input automatically when modal opens
++                // This is handled in openAddPlayerModal()
+             }
+ 
+             if (adminMenuToggle) {

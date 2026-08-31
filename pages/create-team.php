@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if (empty($error)) {
                 // 1. สร้างทีมกลาง (Global Team) โดยไม่บังคับ game_id และ team_category
-                $insert = $pdo->prepare("INSERT INTO teams (name, logo_path, captain_player_id) VALUES (:name, :logo, :captain)");
+                $insert = $pdo->prepare("INSERT INTO teams (name, logo_path, captain_player_id, game_id) VALUES (:name, :logo, :captain, NULL)");
                 $insert->execute([
                     'name' => $teamName,
                     'logo' => $logoPath,

@@ -1,0 +1,178 @@
+{
+  "batch_id": "ATHLETE64_ROBLOX50_20260829",
+  "description": "64 Teams + 50 Roblox Solo Players Test Data",
+  "created_at": "2026-08-29T18:00:00+07:00",
+  "created_by": "athlete64-seeder.php",
+  "database": "esport_korattest",
+  "environment": "test",
+  "version": "1.0",
+  "statistics": {
+    "teams": {
+      "total": 64,
+      "male": 16,
+      "female": 16,
+      "mixed_open": 32
+    },
+    "team_members": {
+      "total": 512,
+      "starters": 320,
+      "substitutes": 64,
+      "coaches": 64,
+      "managers": 64,
+      "captains": 64
+    },
+    "roblox_players": {
+      "total": 50,
+      "male": 25,
+      "female": 25
+    },
+    "users": {
+      "team_members": 512,
+      "roblox_players": 50,
+      "total": 562
+    }
+  },
+  "team_mapping": {
+    "male_teams": {
+      "A64M01": "Crimson Nova",
+      "A64M02": "Lunar Wolves",
+      "A64M03": "Neon Falcons",
+      "A64M04": "Thunder Core",
+      "A64M05": "Mystic Raiders",
+      "A64M06": "Phoenix Byte",
+      "A64M07": "Silent Vortex",
+      "A64M08": "Quantum Foxes",
+      "A64M09": "Arctic Blaze",
+      "A64M10": "Cyber Hawks",
+      "A64M11": "Inferno Squad",
+      "A64M12": "Storm Riders",
+      "A64M13": "Eclipse Force",
+      "A64M14": "Vortex Kings",
+      "A64M15": "Steel Dragons",
+      "A64M16": "Shadow Titans"
+    },
+    "female_teams": {
+      "A64F17": "Radiant Stars",
+      "A64F18": "Luna Sirens",
+      "A64F19": "Blazing Phoenixes",
+      "A64F20": "Crystal Queens",
+      "A64F21": "Aurora Spirits",
+      "A64F22": "Nebula Warriors",
+      "A64F23": "Starlight Pixies",
+      "A64F24": "Diamond Angels",
+      "A64F25": "Mystic Maidens",
+      "A64F26": "Thunder Goddesses",
+      "A64F27": "Neon Nymphs",
+      "A64F28": "Twilight Valkyries",
+      "A64F29": "Quantum Goddesses",
+      "A64F30": "Celestial Beauties",
+      "A64F31": "Cosmic Princesses",
+      "A64F32": "Eternal Sorceresses"
+    },
+    "mixed_teams": {
+      "A64X33": "Void Sentinels",
+      "A64X34": "Apex Legends",
+      "A64X35": "Prism Riders",
+      "A64X36": "Xenon Pulse",
+      "A64X37": "Synapse Nexus",
+      "A64X38": "Velocity Strike",
+      "A64X39": "Omega Force",
+      "A64X40": "Stellar Blaze",
+      "A64X41": "Quantum Echo",
+      "A64X42": "Titan Surge",
+      "A64X43": "Eclipse Venom",
+      "A64X44": "Primal Fury",
+      "A64X45": "Nova Breach",
+      "A64X46": "Kinetic Storm",
+      "A64X47": "Sonic Paradox",
+      "A64X48": "Cyber Rebellion",
+      "A64X49": "Flux Dynasty",
+      "A64X50": "Helix Warriors",
+      "A64X51": "Phantom Ascent",
+      "A64X52": "Graviton Syndicate",
+      "A64X53": "Tempest Legion",
+      "A64X54": "Nebula Nexus",
+      "A64X55": "Vortex Uprising",
+      "A64X56": "Lumina Ascension",
+      "A64X57": "Resonance Faction",
+      "A64X58": "Drift Collective",
+      "A64X59": "Catalyst Alliance",
+      "A64X60": "Apex Nexus",
+      "A64X61": "Zenith Collective",
+      "A64X62": "Prism Dynasty",
+      "A64X63": "Velocity Legion",
+      "A64X64": "Omega Nexus"
+    }
+  },
+  "username_format": {
+    "team_members": "ath64_t{teamNumber}_{role_short}",
+    "examples": {
+      "starter": "ath64_t001_s1",
+      "substitute": "ath64_t001_sub",
+      "coach": "ath64_t001_coach",
+      "manager": "ath64_t001_manager"
+    },
+    "roblox_players": "ath64_roblox{001-050}",
+    "email_format": "{username}@ath64.local"
+  },
+  "test_password": {
+    "note": "รหัสผ่านทดสอบเดียวกันสำหรับทั้งบัญชี",
+    "plaintext": "KoratDemo@2569",
+    "hashing": "password_hash() with BCRYPT",
+    "warning": "สำหรับ Test Environment เท่านั้น"
+  },
+  "roles": {
+    "player": "ตัวจริง (Starter)",
+    "substitute": "ตัวสำรอง",
+    "coach": "โค้ช",
+    "manager": "ผู้จัดการทีม"
+  },
+  "team_category_mapping": {
+    "male": "A64M01-A64M16",
+    "female": "A64F17-A64F32",
+    "open": "A64X33-A64X64"
+  },
+  "roblox_players_gender": {
+    "male": "ath64_roblox001 - ath64_roblox025",
+    "female": "ath64_roblox026 - ath64_roblox050"
+  },
+  "age_requirements": {
+    "team_members": "16-25 years",
+    "roblox_players": "8-12 years"
+  },
+  "verification_checklist": {
+    "teams_created": 64,
+    "male_teams": 16,
+    "female_teams": 16,
+    "mixed_teams": 32,
+    "team_members": 512,
+    "starters": 320,
+    "substitutes": 64,
+    "coaches": 64,
+    "managers": 64,
+    "captains": 64,
+    "roblox_players": 50,
+    "roblox_male": 25,
+    "roblox_female": 25,
+    "duplicates": 0,
+    "orphans": 0,
+    "schema_changes": 0,
+    "existing_data_modified": 0
+  },
+  "files": {
+    "seeder": "database/athlete64-seeder.php",
+    "verify": "database/athlete64-verify.sql",
+    "cleanup": "database/athlete64-cleanup.php",
+    "manifest": "database/athlete64-ATHLETE64_ROBLOX50_20260829-manifest.json",
+    "backup": "backups/esport_korattest_before_athlete64_20260829.sql"
+  },
+  "security_notes": [
+    "ห้ามเก็บ Password หรือ Hash ใน Manifest",
+    "ห้ามพิมพ์ Hash ลง Terminal",
+    "ห้ามเปลี่ยนรหัสผ่าน Admin หรือบัญชีเดิม",
+    "สำหรับ Test Environment เท่านั้น",
+    "ใช้ Prepared Statements ทั้งหมด",
+    "Rollback เมื่อ Error",
+    "ไม่ปิด Foreign Key Checks"
+  ]
+}
