@@ -18,8 +18,9 @@ $stmt->execute(['user_id' => $_SESSION['user_id']]);
 $myPlayerId = $stmt->fetchColumn();
 
 $tStmt = $pdo->prepare("
-    SELECT t.*, g.name AS game_name, g.game_id AS game_id
-    FROM teams t JOIN games g ON g.game_id = t.game_id
+    SELECT t.*, COALESCE(g.name, 'ทีมกลาง / ทั่วไป') AS game_name, g.game_id AS game_id
+    FROM teams t
+    LEFT JOIN games g ON g.game_id = t.game_id
     WHERE t.team_id = :id
 ");
 $tStmt->execute(['id' => $teamId]);

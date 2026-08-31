@@ -16,12 +16,14 @@ if (!$playerId) {
 
 // ทีมทั้งหมดที่เป็นสมาชิกอยู่ (ทุกเกม)
 $teams = $pdo->prepare("
-    SELECT t.team_id, t.name, t.captain_player_id, g.name AS game_name, g.game_id AS game_id
+    SELECT t.team_id, t.name, t.captain_player_id,
+           COALESCE(g.name, 'ทีมกลาง / ทั่วไป') AS game_name,
+           g.game_id AS game_id
     FROM team_members tm
     JOIN teams t ON t.team_id = tm.team_id
-    JOIN games g ON g.game_id = t.game_id
+    LEFT JOIN games g ON g.game_id = t.game_id
     WHERE tm.player_id = :player_id AND tm.is_active = 1
-    ORDER BY g.name
+    ORDER BY COALESCE(g.name, 'ทีมกลาง / ทั่วไป')
 ");
 $teams->execute(['player_id' => $playerId]);
 $teams = $teams->fetchAll();

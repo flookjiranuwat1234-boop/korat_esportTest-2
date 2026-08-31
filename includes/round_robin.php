@@ -8,13 +8,30 @@ require_once __DIR__ . '/tournament_categories.php';
 require_once __DIR__ . '/bracket.php';
 
 // ฟังก์ชันหลัก เรียกตอน admin กด "ปิดรับสมัคร" ของทัวร์นาเมนต์ที่เป็น round_robin/group_playoff
+function resetTournamentGroupStage(PDO $pdo, int $tournamentId): void
+{
+    $pdo->prepare('DELETE FROM bracket_edges WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
+    $pdo->prepare('DELETE FROM match_participants WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
+    $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tid AND group_id IS NOT NULL')->execute(['tid' => $tournamentId]);
+    $pdo->prepare('DELETE FROM group_teams WHERE group_id IN (SELECT tournament_group_id FROM tournament_groups WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
+    $pdo->prepare('DELETE FROM tournament_groups WHERE tournament_id = :tid')->execute(['tid' => $tournamentId]);
+}
+
 function generateRoundRobin($pdo, $tournamentId)
 {
     ensureTournamentCategorySchema($pdo);
     $check = $pdo->prepare("SELECT COUNT(*) FROM tournament_groups WHERE tournament_id = :tid");
     $check->execute(['tid' => $tournamentId]);
     if ($check->fetchColumn() > 0) {
-        throw new Exception("ทัวร์นาเมนต์นี้สร้างตารางแข่งขันไปแล้ว");
+        resetTournamentGroupStage($pdo, (int) $tournamentId);
+    }
+
+    $legacyMatchCheck = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tid");
+    $legacyMatchCheck->execute(['tid' => $tournamentId]);
+    if ((int) $legacyMatchCheck->fetchColumn() > 0) {
+        $pdo->prepare('DELETE FROM bracket_edges WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
+        $pdo->prepare('DELETE FROM match_participants WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
+        $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tid')->execute(['tid' => $tournamentId]);
     }
 
     $tStmt = $pdo->prepare("SELECT format, group_count FROM tournaments WHERE tournament_id = :tid");
@@ -34,10 +51,20 @@ function generateRoundRobin($pdo, $tournamentId)
         throw new Exception("ต้องมีทีมที่ผ่าน Check-in และพร้อมจัดสายอย่างน้อย 2 ทีม");
     }
 
-    // แบ่งกลุ่ม ถ้าเป็น round_robin ธรรมดาถือเป็นกลุ่มเดียว
-    $groupCount = ($tournament['format'] == 'group_playoff' && $tournament['group_count'])
-        ? (int) $tournament['group_count']
-        : 1;
+    // แบ่งกลุ่มตามค่า “ทีมต่อกลุ่ม” ของ category จริง ๆ สำหรับ Group/Group Playoff
+    // ไม่ใช้ group_count ของ tournament เพราะมันเป็นจำนวนกลุ่มรวมทั้งหมด ไม่ใช่ทีมต่อกลุ่ม
+    $categoryStmt = $pdo->prepare("SELECT tournament_category_id, category_code, group_size
+        FROM tournament_categories
+        WHERE tournament_id = :tid AND is_active = 1");
+    $categoryStmt->execute(['tid' => $tournamentId]);
+    $categoryMaps = [];
+    foreach ($categoryStmt->fetchAll() as $cat) {
+        $categoryMaps[(string) ($cat['tournament_category_id'] ?: $cat['category_code'])] = [
+            'category_id' => (int) ($cat['tournament_category_id'] ?? 0),
+            'category_code' => (string) ($cat['category_code'] ?? 'open'),
+            'group_size' => (int) ($cat['group_size'] ?? 0),
+        ];
+    }
 
     $pdo->beginTransaction();
     try {
@@ -47,11 +74,16 @@ function generateRoundRobin($pdo, $tournamentId)
             $bucketKey = (string) ($teamRow['tournament_category_id'] ?: ($teamRow['category'] ?: 'open'));
             $categoryBuckets[$bucketKey]['category_id'] = $teamRow['tournament_category_id'] ?: null;
             $categoryBuckets[$bucketKey]['category_code'] = $teamRow['category'] ?: 'open';
+            $categoryBuckets[$bucketKey]['group_size'] = (int) (($categoryMaps[$bucketKey]['group_size'] ?? 0) ?: 0);
             $categoryBuckets[$bucketKey]['team_ids'][] = (int) $teamRow['team_id'];
         }
 
         $createdGroups = 0;
         foreach ($categoryBuckets as $categoryBucket) {
+            $groupSize = (int) ($categoryBucket['group_size'] ?? 0);
+            $groupCount = $groupSize > 1
+                ? max(1, (int) ceil(count($categoryBucket['team_ids']) / $groupSize))
+                : 1;
             $groups = splitIntoGroups($categoryBucket['team_ids'], $groupCount);
             foreach ($groups as $i => $groupTeamIds) {
                 $categoryLabel = strtoupper($categoryBucket['category_code']);
