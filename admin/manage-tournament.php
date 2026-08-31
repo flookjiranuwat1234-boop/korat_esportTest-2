@@ -111,7 +111,7 @@ function getTournamentStatusInfo(PDO $pdo, array $tournament): array
         'registration_closed' => ['key' => 'registration_closed', 'label' => 'ปิดรับสมัคร', 'class' => 'orange', 'icon' => 'fa-circle-xmark', 'description' => 'Tournament ปิดรับสมัครแล้ว', 'allowed_actions' => ['view', 'manage_registrations']],
         'checkin_open' => ['key' => 'checkin_open', 'label' => 'กำลัง Check-in', 'class' => 'blue', 'icon' => 'fa-user-check', 'description' => 'Tournament อยู่ในช่วง Check-in', 'allowed_actions' => ['view', 'manage_registrations']],
         'bracket_generated' => ['key' => 'bracket_generated', 'label' => 'กำลังแข่งขัน', 'class' => 'sky', 'icon' => 'fa-sitemap', 'description' => 'Tournament จัดสายการแข่งขันเรียบร้อยแล้วและอยู่ระหว่างการแข่งขัน', 'allowed_actions' => ['view', 'results', 'manage_matches']],
-        'ongoing' => ['key' => 'ongoing', 'label' => 'กำลังแข่งขัน', 'class' => 'violet', 'icon' => 'fa-gamepad', 'description' => 'Tournament กำลังแข่งขัน', 'allowed_actions' => ['view', 'results', 'manage_matches']],
+        'ongoing' => ['key' => 'ongoing', 'label' => 'กำลังแข่งขัน', 'class' => 'violet', 'icon' => 'fa-gamepad', 'description' => 'Tournament กำลังแข่งขัน', 'allowed_actions' => ['view', 'results', 'manage_matches', 'close_tournament']],
         'ready_to_close' => ['key' => 'ready_to_close', 'label' => 'พร้อมปิดการแข่งขัน', 'class' => 'blue', 'icon' => 'fa-circle-check', 'description' => 'Match ครบและพร้อมยืนยันจบการแข่งขัน', 'allowed_actions' => ['view', 'results', 'close_tournament']],
         'completed' => ['key' => 'completed', 'label' => 'แข่งขันจบแล้ว', 'class' => 'green', 'icon' => 'fa-flag-checkered', 'description' => 'Tournament ดำเนินการแข่งขันเสร็จสิ้น', 'allowed_actions' => ['view', 'results', 'export_csv']],
         'cancelled' => ['key' => 'cancelled', 'label' => 'ยกเลิกแล้ว', 'class' => 'red', 'icon' => 'fa-ban', 'description' => 'Tournament ถูกยกเลิก', 'allowed_actions' => ['view']],
@@ -237,6 +237,42 @@ function getTournamentRegistrationRowsForOverview(PDO $pdo, int $tournamentId, ?
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+function resolveTournamentEffectiveFormat(PDO $pdo, int $tournamentId): string
+{
+    $categoryStmt = $pdo->prepare('SELECT format FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
+    $categoryStmt->execute(['tournament_id' => $tournamentId]);
+    $categoryFormats = array_values(array_filter(array_map(static fn ($value): string => trim((string) $value), $categoryStmt->fetchAll(PDO::FETCH_COLUMN))));
+
+    foreach (['group_playoff', 'round_robin', 'double_elimination', 'single_elimination'] as $candidate) {
+        if (in_array($candidate, $categoryFormats, true)) {
+            return $candidate;
+        }
+    }
+
+    $formatStmt = $pdo->prepare('SELECT format FROM tournaments WHERE tournament_id = :tournament_id LIMIT 1');
+    $formatStmt->execute(['tournament_id' => $tournamentId]);
+    $currentFormat = trim((string) $formatStmt->fetchColumn());
+    if (in_array($currentFormat, ['single_elimination', 'double_elimination', 'round_robin', 'group_playoff'], true)) {
+        return $currentFormat;
+    }
+
+    return 'single_elimination';
+}
+
+function syncTournamentFormatFromCategories(PDO $pdo, int $tournamentId): string
+{
+    $effectiveFormat = resolveTournamentEffectiveFormat($pdo, $tournamentId);
+    $validFormats = ['single_elimination', 'double_elimination', 'round_robin', 'group_playoff'];
+    if (!in_array($effectiveFormat, $validFormats, true)) {
+        $effectiveFormat = 'single_elimination';
+    }
+
+    $pdo->prepare('UPDATE tournaments SET format = :format WHERE tournament_id = :tournament_id')
+        ->execute(['format' => $effectiveFormat, 'tournament_id' => $tournamentId]);
+
+    return $effectiveFormat;
+}
+
 function saveTournamentFormCategories(PDO $pdo, int $tournamentId, array $input): void
 {
     $codes = array_values(array_unique(array_filter(array_map('strtolower', $input['category_codes'] ?? []))));
@@ -264,6 +300,15 @@ function saveTournamentFormCategories(PDO $pdo, int $tournamentId, array $input)
             'tournament_id' => $tournamentId,
         ]);
     }
+
+    $preferredFormat = syncTournamentFormatFromCategories($pdo, $tournamentId);
+    if ($input['category_codes'] ?? []) {
+        $selectedFormat = trim((string) ($input['category_format'][array_values(array_filter(array_map('strtolower', array_values($input['category_codes'] ?? []))))[0]] ?? $input['format'] ?? $preferredFormat));
+        if ($selectedFormat !== '' && in_array($selectedFormat, ['single_elimination', 'double_elimination', 'round_robin', 'group_playoff'], true)) {
+            $pdo->prepare('UPDATE tournaments SET format = :format WHERE tournament_id = :tournament_id')
+                ->execute(['format' => $selectedFormat, 'tournament_id' => $tournamentId]);
+        }
+    }
 }
 
 function selectedCategoryFormData(array $input): array
@@ -273,9 +318,22 @@ function selectedCategoryFormData(array $input): array
     $formats = [];
     foreach ($codes as $code) {
         $maxTeams = max($maxTeams, (int) ($input['category_max_participants'][$code] ?? 0));
-        if (!empty($input['category_format'][$code])) $formats[] = $input['category_format'][$code];
+        $format = trim((string) ($input['category_format'][$code] ?? ''));
+        if ($format !== '') $formats[] = $format;
     }
-    return ['codes' => $codes, 'max_teams' => $maxTeams, 'format' => $formats[0] ?? 'single_elimination'];
+
+    $preferredFormat = 'single_elimination';
+    foreach (['group_playoff', 'round_robin', 'double_elimination', 'single_elimination'] as $candidate) {
+        if (in_array($candidate, $formats, true)) {
+            $preferredFormat = $candidate;
+            break;
+        }
+    }
+    if (!in_array($preferredFormat, ['single_elimination', 'double_elimination', 'round_robin', 'group_playoff'], true)) {
+        $preferredFormat = 'single_elimination';
+    }
+
+    return ['codes' => $codes, 'max_teams' => $maxTeams, 'format' => $preferredFormat];
 }
 
 function validateCategoryForm(array $input): ?string
@@ -471,23 +529,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
             $error = 'ไม่พบ Tournament ที่ต้องการปิดการแข่งขัน';
         } elseif ($tournament['status'] !== 'ongoing') {
             $error = 'Tournament ต้องอยู่ในสถานะกำลังแข่งขันเท่านั้นจึงจะจบการแข่งขันได้';
-        } elseif (!isTournamentReadyToClose($pdo, $tournamentId)) {
-            $error = 'ยังมี Match ค้างหรือ Match ที่ยังไม่มีผู้ชนะ จึงยังจบ Tournament ไม่ได้';
         } else {
-            try {
-                $pdo->beginTransaction();
-                $updated = $pdo->prepare("UPDATE tournaments SET status = 'completed', completed_at = NOW(), completed_by = :completed_by WHERE tournament_id = :tournament_id AND status = 'ongoing'")->execute([
-                    'completed_by' => (int) ($_SESSION['user_id'] ?? 0),
-                    'tournament_id' => $tournamentId,
-                ]);
-                if (!$updated || $pdo->query('SELECT ROW_COUNT()')->fetchColumn() !== '1') {
-                    throw new RuntimeException('สถานะ Tournament เปลี่ยนไปแล้ว');
+            $forceClose = filter_var($_POST['force'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if (!$forceClose && !isTournamentReadyToClose($pdo, $tournamentId)) {
+                $error = 'ยังมี Match ค้างหรือ Match ที่ยังไม่มีผู้ชนะ จึงยังจบ Tournament ไม่ได้';
+            } else {
+                try {
+                    $pdo->beginTransaction();
+                    $updated = $pdo->prepare("UPDATE tournaments SET status = 'completed', completed_at = NOW(), completed_by = :completed_by WHERE tournament_id = :tournament_id AND status = 'ongoing'")->execute([
+                        'completed_by' => (int) ($_SESSION['user_id'] ?? 0),
+                        'tournament_id' => $tournamentId,
+                    ]);
+                    if (!$updated || $pdo->query('SELECT ROW_COUNT()')->fetchColumn() !== '1') {
+                        throw new RuntimeException('สถานะ Tournament เปลี่ยนไปแล้ว');
+                    }
+                    $pdo->commit();
+                    $success = $forceClose ? 'ยืนยันจบการแข่งขันแบบบังคับเรียบร้อยแล้ว' : 'ยืนยันจบการแข่งขันเรียบร้อยแล้ว';
+                } catch (Throwable $exception) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    $error = 'ไม่สามารถจบการแข่งขันได้: ' . $exception->getMessage();
                 }
-                $pdo->commit();
-                $success = 'ยืนยันจบการแข่งขันเรียบร้อยแล้ว';
-            } catch (Throwable $exception) {
-                if ($pdo->inTransaction()) $pdo->rollBack();
-                $error = 'ไม่สามารถจบการแข่งขันได้: ' . $exception->getMessage();
             }
         }
     }
@@ -950,6 +1011,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
                 $createdTournamentId = (int) $pdo->lastInsertId();
                 ensureDefaultTournamentCategories($pdo, $createdTournamentId);
                 saveTournamentFormCategories($pdo, $createdTournamentId, $_POST);
+                syncTournamentFormatFromCategories($pdo, $createdTournamentId);
                 saveTournamentDays($pdo, $createdTournamentId, $_POST['tournament_days_json'] ?? '');
                 $success = 'สร้างทัวร์นาเมนต์ใหม่เรียบร้อยแล้ว';
             } catch (Exception $e) {
@@ -1124,6 +1186,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
                 ]);
             }
             saveTournamentFormCategories($pdo, $tid, $_POST);
+            syncTournamentFormatFromCategories($pdo, $tid);
             saveTournamentDays($pdo, $tid, $_POST['tournament_days_json'] ?? '');
             $success = 'อัปเดตข้อมูลทัวร์นาเมนต์เรียบร้อยแล้ว';
         }
@@ -1170,9 +1233,7 @@ if (isset($_GET['close_registration'])) {
     }
 
     if ($error === '') {
-        $tStmt = $pdo->prepare("SELECT format FROM tournaments WHERE tournament_id = :id");
-        $tStmt->execute(['id' => $tid]);
-        $format = $tStmt->fetchColumn();
+        $format = resolveTournamentEffectiveFormat($pdo, $tid);
 
         try {
             if ($format == 'double_elimination') {
@@ -2157,13 +2218,21 @@ $csrfToken = generateCsrfToken();
             const tournament = tournamentsList.find(item => item.tournament_id == tournamentId);
             if (!tournament) return;
             const summary = tournament.close_summary || {};
+            const problems = summary.problems || [];
             document.getElementById('closeTournamentId').value = tournamentId;
             document.getElementById('closeTournamentTitle').textContent = 'ตรวจสอบและจบการแข่งขัน: ' + tournament.name;
             document.getElementById('closeTournamentSummary').innerHTML = (summary.categories || []).map(category => `<article class="rounded-xl border border-slate-200 p-3"><div class="flex justify-between gap-3 font-bold text-slate-900"><span>${escapeHtml(category.label)}</span><span class="text-emerald-700">${category.completed_matches}/${category.total_matches} Match</span></div><p class="mt-1 text-xs text-slate-500">ค้าง ${category.pending_matches} Match · Winner: <b class="text-slate-700">${escapeHtml(category.winner)}</b></p></article>`).join('') || '<p class="text-sm text-slate-500">ไม่พบ Category</p>';
             document.getElementById('closeTournamentStats').innerHTML = `<span>Match ทั้งหมด <b>${summary.total_matches || 0}</b></span><span>จบแล้ว <b>${summary.completed_matches || 0}</b></span><span>ค้าง <b class="${summary.pending_matches ? 'text-rose-600' : 'text-emerald-600'}">${summary.pending_matches || 0}</b></span>`;
-            const problems = summary.problems || [];
             document.getElementById('closeTournamentProblems').innerHTML = problems.length ? '<ul class="list-disc pl-5 space-y-1">' + problems.map(problem => `<li>${escapeHtml(problem)}</li>`).join('') + '</ul>' : '<span class="text-emerald-700">ไม่พบปัญหา พร้อมยืนยันจบการแข่งขัน</span>';
-            document.getElementById('closeTournamentConfirm').disabled = !summary.ready;
+            const confirmButton = document.getElementById('closeTournamentConfirm');
+            if (confirmButton) {
+                confirmButton.disabled = false;
+                confirmButton.textContent = problems.length ? 'ยืนยันจบการแข่งขันแบบบังคับ' : 'ยืนยันจบการแข่งขัน';
+            }
+            const forceField = document.getElementById('closeTournamentForce');
+            if (forceField) {
+                forceField.value = problems.length ? '1' : '0';
+            }
             document.getElementById('closeTournamentModal').classList.remove('hidden');
             document.getElementById('closeTournamentModal').classList.add('flex');
         }
@@ -2543,7 +2612,7 @@ $csrfToken = generateCsrfToken();
                                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold transition-all cursor-pointer">
                                             <i class="fa-solid fa-ranking-star"></i> ดูผล
                                         </button>
-                                        <?php if ($tournamentStatusInfo['key'] === 'ready_to_close'): ?>
+                                        <?php if (in_array($tournamentStatusInfo['key'], ['ongoing', 'ready_to_close'], true)): ?>
                                             <button type="button" role="menuitem" onclick="openCloseTournamentModal(<?php echo (int) $t['tournament_id']; ?>)" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition-all"><i class="fa-solid fa-flag-checkered"></i> ตรวจสอบและจบการแข่งขัน</button>
                                         <?php endif; ?>
                                     <?php endif; ?>
@@ -2908,7 +2977,7 @@ $csrfToken = generateCsrfToken();
             <div id="closeTournamentStats" class="flex flex-wrap gap-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-700"></div>
             <div id="closeTournamentSummary" class="space-y-2"></div>
             <div class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"><b>ปัญหาที่ต้องแก้</b><div id="closeTournamentProblems" class="mt-1"></div></div>
-            <div class="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeCloseTournamentModal()" class="rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700">ยกเลิก</button><button type="button" onclick="closeCloseTournamentModal()" class="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-700">กลับไปตรวจผล</button><form method="POST"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="action" value="complete_tournament"><input type="hidden" name="tournament_id" id="closeTournamentId"><button type="submit" id="closeTournamentConfirm" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">ยืนยันจบการแข่งขัน</button></form></div>
+            <div class="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeCloseTournamentModal()" class="rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700">ยกเลิก</button><button type="button" onclick="closeCloseTournamentModal()" class="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-700">กลับไปตรวจผล</button><form method="POST"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="action" value="complete_tournament"><input type="hidden" name="tournament_id" id="closeTournamentId"><input type="hidden" name="force" id="closeTournamentForce" value="0"><button type="submit" id="closeTournamentConfirm" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">ยืนยันจบการแข่งขัน</button></form></div>
         </div>
     </div>
 

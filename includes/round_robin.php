@@ -154,8 +154,20 @@ function generateGroupPlayoff(PDO $pdo, int $tournamentId): int
             FROM tournament_categories tc WHERE tc.tournament_category_id = :category_id');
         $advanceStmt->execute(['category_id' => $group['tournament_category_id']]);
         $advanceCount = max(1, (int) ($advanceStmt->fetchColumn() ?: 1));
-        $standingStmt = $pdo->prepare('SELECT team_id FROM group_teams
-            WHERE group_id = :group_id ORDER BY points DESC, score_diff DESC, wins DESC, team_id ASC LIMIT ' . $advanceCount);
+        $standingStmt = $pdo->prepare('SELECT team_id
+            FROM (
+                SELECT gt.team_id,
+                       MAX(gt.points) AS points,
+                       MAX(gt.score_diff) AS score_diff,
+                       MAX(gt.wins) AS wins,
+                       MAX(gt.draws) AS draws,
+                       MIN(gt.losses) AS losses
+                FROM group_teams gt
+                WHERE gt.group_id = :group_id
+                GROUP BY gt.team_id
+            ) ranked
+            ORDER BY points DESC, score_diff DESC, wins DESC, draws DESC, losses ASC, team_id ASC
+            LIMIT ' . $advanceCount);
         $standingStmt->execute(['group_id' => $group['tournament_group_id']]);
         foreach ($standingStmt->fetchAll(PDO::FETCH_COLUMN) as $teamId) {
             $qualifiedByCategory[(string) $group['tournament_category_id']][] = (int) $teamId;

@@ -523,9 +523,32 @@ function upsertLoserEdge(PDO $pdo, int $matchId, int $nextMatchId, string $nextS
     $stmt->execute(['match_id' => $matchId, 'next_match_id' => $nextMatchId, 'next_slot' => $nextSlot]);
 }
 
+function maybeAutoGenerateGroupPlayoff(PDO $pdo, int $tournamentId): void
+{
+    $pendingStmt = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tournament_id AND group_id IS NOT NULL AND status NOT IN ('completed', 'walkover', 'cancelled')");
+    $pendingStmt->execute(['tournament_id' => $tournamentId]);
+    if ((int) $pendingStmt->fetchColumn() > 0) {
+        return;
+    }
+
+    $existingPlayoffStmt = $pdo->prepare('SELECT COUNT(*) FROM matches WHERE tournament_id = :tournament_id AND group_id IS NULL');
+    $existingPlayoffStmt->execute(['tournament_id' => $tournamentId]);
+    if ((int) $existingPlayoffStmt->fetchColumn() > 0) {
+        return;
+    }
+
+    $groupStmt = $pdo->prepare('SELECT COUNT(*) FROM tournament_groups WHERE tournament_id = :tournament_id');
+    $groupStmt->execute(['tournament_id' => $tournamentId]);
+    if ((int) $groupStmt->fetchColumn() === 0) {
+        return;
+    }
+
+    generateGroupPlayoff($pdo, $tournamentId);
+}
+
 function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
 {
-    $stmt = $pdo->prepare("SELECT tournament_id, tournament_category_id, bracket_type, round_number, match_index, team1_id, team2_id, reset_match_id FROM matches WHERE match_id = :id");
+    $stmt = $pdo->prepare("SELECT tournament_id, tournament_category_id, group_id, bracket_type, round_number, match_index, team1_id, team2_id, reset_match_id FROM matches WHERE match_id = :id");
     $stmt->execute(['id' => $matchId]);
     $match = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -617,5 +640,9 @@ function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
         $pdo->prepare("UPDATE matches SET {$col} = :loser WHERE match_id = :next_id")
             ->execute(['loser' => $loserId, 'next_id' => $loserNextMatchId]);
         resolveByeIfNeeded($pdo, $loserNextMatchId);
+    }
+
+    if (!empty($match['group_id'])) {
+        maybeAutoGenerateGroupPlayoff($pdo, (int) $match['tournament_id']);
     }
 }

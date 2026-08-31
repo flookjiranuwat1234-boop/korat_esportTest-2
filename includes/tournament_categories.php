@@ -79,6 +79,11 @@ function ensureTournamentCategorySchema(PDO $pdo): void
         $pdo->exec('ALTER TABLE tournaments ADD COLUMN roster_lock_at DATETIME NULL');
     }
 
+    $formatColumnType = $pdo->query("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tournaments' AND COLUMN_NAME = 'format'")->fetchColumn();
+    if ($formatColumnType !== false && stripos((string) $formatColumnType, 'group_playoff') === false && stripos((string) $formatColumnType, 'round_robin') === false) {
+        $pdo->exec("ALTER TABLE tournaments MODIFY COLUMN format ENUM('single_elimination','double_elimination','round_robin','group_playoff') NOT NULL DEFAULT 'single_elimination'");
+    }
+
     $rCols = $pdo->query('SHOW COLUMNS FROM tournament_registrations')->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('tournament_category_id', $rCols, true)) {
         $pdo->exec('ALTER TABLE tournament_registrations ADD COLUMN tournament_category_id INT UNSIGNED NULL');

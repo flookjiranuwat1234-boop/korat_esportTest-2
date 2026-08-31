@@ -196,7 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         'status' => 'approved',
                                         'participation_status' => 'registered',
                                     ]);
-
+ 
                                     $registrationId = (int) $pdo->lastInsertId();
                                     snapshotTournamentRoster($pdo, $registrationId, null, $myPlayerId);
                                     recordRegistrationStatus($pdo, $registrationId, 'approved', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament (Auto-approve)', null);
@@ -263,14 +263,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 try {
                                     $pdo->beginTransaction();
                                     $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status, participation_status)
-                                        VALUES (:tournament_id, :category_id, :team_id, NULL, :category, \'approved\', \'registered\')');
+                                        VALUES (:tournament_id, :category_id, :team_id, NULL, :category, :status, :participation_status)');
                                     $insert->execute([
                                         'tournament_id' => $tournamentId,
                                         'category_id' => $categoryId,
                                         'team_id' => $teamId,
                                         'category' => (string) ($selectedCategory['category_code'] ?? 'open'),
+                                        'status' => 'approved',
+                                        'participation_status' => 'registered',
                                     ]);
-
+ 
                                     $registrationId = (int) $pdo->lastInsertId();
                                     snapshotTournamentRoster($pdo, $registrationId, $teamId, null);
                                     recordRegistrationStatus($pdo, $registrationId, 'approved', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament ในนามทีม (Auto-approve)', null);
