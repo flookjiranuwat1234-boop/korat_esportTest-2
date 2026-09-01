@@ -524,7 +524,7 @@ if ($tournamentId) {
     if ($roundFilter > 0) { $sql .= ' AND m.round_number = :round_number'; $params['round_number'] = $roundFilter; }
     if ($statusFilter !== '') { $sql .= ' AND m.status = :match_status'; $params['match_status'] = $statusFilter; }
 
-    $sql .= " ORDER BY m.status ASC, m.round_number ASC, m.match_index ASC";
+    $sql .= " ORDER BY m.group_id IS NOT NULL DESC, m.group_id ASC, m.round_number ASC, COALESCE(m.scheduled_at, '1970-01-01 00:00:00') DESC, m.match_index ASC";
 
     $mStmt = $pdo->prepare($sql);
     $mStmt->execute($params);
@@ -582,6 +582,46 @@ if ($tournamentId) {
         }
 
         $groupedMatches[$groupKey][] = $m;
+    }
+
+    uksort($groupedMatches, function ($groupA, $groupB) {
+        preg_match('/รอบที่\s*(\d+)/u', $groupA, $matchA);
+        preg_match('/รอบที่\s*(\d+)/u', $groupB, $matchB);
+        $roundA = isset($matchA[1]) ? (int) $matchA[1] : PHP_INT_MAX;
+        $roundB = isset($matchB[1]) ? (int) $matchB[1] : PHP_INT_MAX;
+
+        $groupAIsGroupStage = stripos($groupA, 'group') !== false || stripos($groupA, 'กลุ่ม') !== false;
+        $groupBIsGroupStage = stripos($groupB, 'group') !== false || stripos($groupB, 'กลุ่ม') !== false;
+
+        if ($groupAIsGroupStage !== $groupBIsGroupStage) {
+            return $groupAIsGroupStage ? 1 : -1;
+        }
+
+        if ($roundA !== $roundB) {
+            return $groupAIsGroupStage ? $roundA <=> $roundB : $roundB <=> $roundA;
+        }
+
+        return strcmp($groupA, $groupB);
+    });
+
+    foreach ($groupedMatches as $groupKey => $roundMatches) {
+        usort($groupedMatches[$groupKey], function ($a, $b) {
+            $statusPriority = ['scheduled' => 0, 'ongoing' => 1, 'walkover' => 2, 'completed' => 3];
+            $priorityA = $statusPriority[$a['status']] ?? 4;
+            $priorityB = $statusPriority[$b['status']] ?? 4;
+
+            if ($priorityA !== $priorityB) {
+                return $priorityA <=> $priorityB;
+            }
+
+            $timeA = trim((string) ($a['scheduled_at'] ?? '')) ?: trim((string) ($a['completed_at'] ?? '')) ?: '1970-01-01 00:00:00';
+            $timeB = trim((string) ($b['scheduled_at'] ?? '')) ?: trim((string) ($b['completed_at'] ?? '')) ?: '1970-01-01 00:00:00';
+            $cmp = strcmp($timeB, $timeA);
+            if ($cmp !== 0) {
+                return $cmp;
+            }
+            return ((int) ($a['match_index'] ?? 0)) <=> ((int) ($b['match_index'] ?? 0));
+        });
     }
 }
 

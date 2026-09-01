@@ -14,11 +14,11 @@ $currentUser = [
 
 $error = '';
 $success = '';
-$q = trim($_GET['q'] ?? '');
-$roleFilter = $_GET['role'] ?? '';
-$profileFilter = $_GET['profile'] ?? ''; // '' = ทั้งหมด, 'none' = สมัครแล้วแต่ยังไม่มีโปรไฟล์, 'has' = มีโปรไฟล์แล้ว
-$statusFilter = $_GET['status'] ?? '';
-$gameFilter = trim((string) ($_GET['game'] ?? ''));
+$q = trim((string) ($_GET['q'] ?? ''));
+$roleFilter = trim((string) ($_GET['role'] ?? ''));
+$profileFilter = trim((string) ($_GET['profile'] ?? ''));
+$statusFilter = trim((string) ($_GET['status'] ?? ''));
+$gameFilter = 0;
 $genderFilter = trim((string) ($_GET['gender'] ?? ''));
 $page = max(1, (int) ($_GET['page'] ?? 1));
 $perPage = 25;
@@ -331,8 +331,9 @@ $sql = "
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN g.name END ORDER BY g.name SEPARATOR ', ') AS game_names,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN COALESCE(NULLIF(tm.member_roles, ''), tm.in_game_role) END ORDER BY t.name SEPARATOR ', ') AS team_roles,
         (CASE WHEN p.player_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM player_checkin_history ch
-            WHERE ch.player_id = p.player_id
+            SELECT 1 FROM tournament_registration_members trm
+            WHERE trm.player_id = p.player_id
+              AND trm.checkin_status IN ('checked_in', 'waived')
         ) THEN 1 ELSE 0 END) AS has_played
     FROM users u
     LEFT JOIN players p ON p.user_id = u.user_id
@@ -347,14 +348,11 @@ if ($q !== '') {
     $sql .= " AND (u.username LIKE :q OR u.email LIKE :q OR p.display_name LIKE :q OR p.real_name LIKE :q
         OR g.name LIKE :q
         OR EXISTS (SELECT 1 FROM team_members tm2 JOIN teams t2 ON t2.team_id = tm2.team_id
-            WHERE tm2.player_id = p.player_id AND tm2.is_active = 1 AND t2.name LIKE :q))";
+            WHERE tm2.player_id = p.player_id AND tm2.is_active = 1
+              AND (t2.name LIKE :q OR t2.tag LIKE :q OR COALESCE(t2.team_tag, '') LIKE :q)))";
     $params['q'] = "%{$q}%";
 }
 $allowedGenders = ['male', 'female', 'other'];
-if ($gameFilter !== '') {
-    $sql .= " AND EXISTS (SELECT 1 FROM team_members game_tm JOIN teams game_t ON game_t.team_id = game_tm.team_id JOIN games game_g ON game_g.game_id = game_t.game_id WHERE game_tm.player_id = p.player_id AND game_tm.is_active = 1 AND game_g.name = :game)";
-    $params['game'] = $gameFilter;
-}
 if (in_array($genderFilter, $allowedGenders, true)) {
     $sql .= " AND p.gender = :gender";
     $params['gender'] = $genderFilter;
@@ -367,17 +365,21 @@ if (in_array($statusFilter, $allowedStatuses, true)) {
 if ($roleFilter === 'admin') {
     $sql .= " AND u.role = 'admin'";
 } elseif ($roleFilter === 'athlete') {
-    // "นักกีฬา" คือผู้ที่มีประวัติเช็คอินถาวรแล้ว
+    // "นักกีฬา" คือผู้ที่เคยเข้าเช็คอิน / อนุโลมในรายการแข่งขันจริง
     $sql .= " AND u.role != 'admin' AND p.player_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM player_checkin_history ch
-        WHERE ch.player_id = p.player_id
+        SELECT 1 FROM tournament_registration_members trm
+        WHERE trm.player_id = p.player_id
+          AND trm.checkin_status IN ('checked_in', 'waived')
     )";
 } elseif ($roleFilter === 'guest') {
-    // "ทั่วไป" = สมัครแล้วแต่ยังไม่เคยเช็คอินแข่งจริง
-    $sql .= " AND u.role != 'admin' AND NOT EXISTS (
-        SELECT 1 FROM players p2
-        JOIN player_checkin_history ch ON ch.player_id = p2.player_id
-        WHERE p2.user_id = u.user_id
+    // "ผู้ใช้ทั่วไป" = ไม่ใช่แอดมิน และยังไม่เคยเช็คอิน/อนุโลมลงแข่งขันจริง
+    $sql .= " AND u.role != 'admin' AND (
+        p.player_id IS NULL
+        OR NOT EXISTS (
+            SELECT 1 FROM tournament_registration_members trm
+            WHERE trm.player_id = p.player_id
+              AND trm.checkin_status IN ('checked_in', 'waived')
+        )
     )";
 }
 if ($profileFilter === 'none') {
@@ -386,16 +388,18 @@ if ($profileFilter === 'none') {
 } elseif ($profileFilter === 'has') {
     $sql .= " AND p.player_id IS NOT NULL";
 } elseif ($profileFilter === 'confirmed') {
-    // นักกีฬาตัวจริง: มีโปรไฟล์ + เคยเช็คอินเข้าแข่งจริงในตารางประวัติถาวร
+    // นักกีฬาตัวจริง: มีโปรไฟล์ + เคยเช็คอินเข้าแข่งจริงใน tournament_registration_members
     $sql .= " AND p.player_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM player_checkin_history ch
-        WHERE ch.player_id = p.player_id
+        SELECT 1 FROM tournament_registration_members trm
+        WHERE trm.player_id = p.player_id
+          AND trm.checkin_status IN ('checked_in', 'waived')
     )";
 } elseif ($profileFilter === 'profile_only') {
     // มีโปรไฟล์แล้ว แต่ยังไม่เคยเช็คอินเข้าแข่งเลยสักครั้ง
     $sql .= " AND p.player_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM player_checkin_history ch
-        WHERE ch.player_id = p.player_id
+        SELECT 1 FROM tournament_registration_members trm
+        WHERE trm.player_id = p.player_id
+          AND trm.checkin_status IN ('checked_in', 'waived')
     )";
 }
 $sql .= " GROUP BY u.user_id, u.username, u.email, u.role, u.status, u.created_at{$lastLoginGroup}, suspended_admin.username,
@@ -765,16 +769,7 @@ if ($flash) {
                     </div>
 
                     <div>
-                        <select name="game" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
-                            <option value="">ทุกเกม</option>
-                            <?php foreach ($games as $game): ?>
-                                <option value="<?= htmlspecialchars($game['name']) ?>" <?= $gameFilter === $game['name'] ? 'selected' : '' ?>><?= htmlspecialchars($game['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <select name="gender" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
+                        <select name="gender" onchange="this.form.submit()" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange transition-all font-medium">
                             <option value="">ทุกเพศ</option>
                             <option value="male" <?= $genderFilter === 'male' ? 'selected' : '' ?>>ชาย</option>
                             <option value="female" <?= $genderFilter === 'female' ? 'selected' : '' ?>>หญิง</option>
@@ -788,7 +783,7 @@ if ($flash) {
                         <span>ค้นหา</span>
                     </button>
                     
-                    <?php if ($q !== '' || $roleFilter !== '' || $profileFilter !== '' || $statusFilter !== '' || $gameFilter !== '' || $genderFilter !== ''): ?>
+                    <?php if ($q !== '' || $roleFilter !== '' || $profileFilter !== '' || $statusFilter !== '' || $genderFilter !== ''): ?>
                         <a href="manage-members.php" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-sm flex items-center justify-center transition-all">
                             ล้างตัวกรอง
                         </a>

@@ -193,15 +193,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         'category_id' => $categoryId,
                                         'player_id' => $myPlayerId,
                                         'category' => $categoryCode,
-                                        'status' => 'approved',
-                                        'participation_status' => 'registered',
+                                        'status' => 'pending',
+                                        'participation_status' => 'pending_admin_review',
                                     ]);
- 
+  
                                     $registrationId = (int) $pdo->lastInsertId();
                                     snapshotTournamentRoster($pdo, $registrationId, null, $myPlayerId);
-                                    recordRegistrationStatus($pdo, $registrationId, 'approved', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament (Auto-approve)', null);
+                                    recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament รอ Admin ตรวจสอบ', null);
                                     $pdo->commit();
-                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว กรุณารอ Admin ตรวจสอบ';
                                 } catch (Throwable $exception) {
                                     if ($pdo->inTransaction()) $pdo->rollBack();
                                     $error = 'ส่งใบสมัครไม่สำเร็จ';
@@ -269,15 +269,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         'category_id' => $categoryId,
                                         'team_id' => $teamId,
                                         'category' => (string) ($selectedCategory['category_code'] ?? 'open'),
-                                        'status' => 'approved',
-                                        'participation_status' => 'registered',
+                                       'status' => 'pending',
+                                       'participation_status' => 'pending_admin_review',
                                     ]);
- 
+  
                                     $registrationId = (int) $pdo->lastInsertId();
                                     snapshotTournamentRoster($pdo, $registrationId, $teamId, null);
-                                    recordRegistrationStatus($pdo, $registrationId, 'approved', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament ในนามทีม (Auto-approve)', null);
+                                    recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament ในนามทีม รอ Admin ตรวจสอบ', null);
                                     $pdo->commit();
-                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว';
+                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว กรุณารอ Admin ตรวจสอบ';
                                 } catch (Throwable $exception) {
                                     if ($pdo->inTransaction()) $pdo->rollBack();
                                     $error = 'ส่งใบสมัครไม่สำเร็จ';

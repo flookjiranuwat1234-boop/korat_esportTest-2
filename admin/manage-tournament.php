@@ -2463,9 +2463,52 @@ $csrfToken = generateCsrfToken();
                             <?php endif; ?>
                             <?php foreach ($tournaments as $t): 
                                 $tournamentStatusInfo = getTournamentStatusInfo($pdo, $t);
-                                $activeCategoryStmt = $pdo->prepare('SELECT category_code, label, max_participants FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
+                                $activeCategoryStmt = $pdo->prepare("SELECT tournament_category_id, category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY CASE category_code WHEN 'male' THEN 1 WHEN 'female' THEN 2 WHEN 'open' THEN 3 ELSE 4 END, tournament_category_id");
                                 $activeCategoryStmt->execute(['tournament_id' => (int) $t['tournament_id']]);
                                 $activeCategories = $activeCategoryStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                                $registrationCount = (int) ($t['total_registrations'] ?? 0);
+                                $approvedCount = (int) ($t['team_count'] ?? 0);
+                                $pendingCount = (int) ($t['pending_count'] ?? 0);
+                                $capacityCount = (int) ($t['max_teams'] ?? 0);
+                                $unit = strtolower((string) ($t['play_mode'] ?? 'team')) === 'solo' ? 'คน' : 'ทีม';
+
+                                $categorySummaryItems = [];
+                                foreach ($activeCategories as $activeCategory) {
+                                    $categoryId = (int) $activeCategory['tournament_category_id'];
+                                    $categoryCode = strtolower((string) ($activeCategory['category_code'] ?? ''));
+                                    $categoryLabel = trim((string) ($activeCategory['label'] ?: $activeCategory['category_code'] ?: 'Category'));
+                                    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = :tournament_id AND tournament_category_id = :tournament_category_id');
+                                    $countStmt->execute([
+                                        'tournament_id' => (int) $t['tournament_id'],
+                                        'tournament_category_id' => $categoryId,
+                                    ]);
+                                    $categoryCount = (int) $countStmt->fetchColumn();
+
+                                    $displayName = match ($categoryCode) {
+                                        'male' => 'ชาย',
+                                        'female' => 'หญิง',
+                                        'open' => 'Open',
+                                        default => $categoryLabel,
+                                    };
+
+                                    $categorySummaryItems[] = [
+                                        'icon' => match ($categoryCode) {
+                                            'male' => '🔵',
+                                            'female' => '🩷',
+                                            'open' => '🟠',
+                                            default => '🏷️',
+                                        },
+                                        'label' => $displayName,
+                                        'count' => $categoryCount,
+                                        'class' => match ($categoryCode) {
+                                            'male' => 'bg-blue-50 text-blue-700 border-blue-100',
+                                            'female' => 'bg-pink-50 text-pink-700 border-pink-100',
+                                            'open' => 'bg-orange-50 text-orange-700 border-orange-100',
+                                            default => 'bg-violet-50 text-violet-700 border-violet-100',
+                                        },
+                                    ];
+                                }
                                 $canDraw = isDemoTournament($t) || ($t['status'] === 'registration_open' && (empty($t['checkin_close_at']) || strtotime($t['checkin_close_at']) <= time()));
                                 $canEditTournament = $t['status'] !== 'completed';
                             ?>
@@ -2493,29 +2536,39 @@ $csrfToken = generateCsrfToken();
                                     </span>
                                 </td>
                                 <td class="p-4 text-center text-xs">
-                                    <div class="flex flex-wrap items-center justify-center gap-1.5">
-                                        <?php foreach ($activeCategories as $activeCategory):
-                                            $categoryCode = strtolower((string) $activeCategory['category_code']);
-                                            $categoryCount = (int) ($t['count_' . $categoryCode] ?? 0);
-                                            $categoryClass = $categoryCode === 'female' ? 'bg-pink-50 text-pink-700 border-pink-100' : ($categoryCode === 'male' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-purple-50 text-purple-700 border-purple-100');
-                                        ?>
-                                            <span class="px-2 py-0.5 rounded <?php echo $categoryClass; ?> font-bold border" title="<?php echo htmlspecialchars($activeCategory['label']); ?>"><?php echo htmlspecialchars($activeCategory['label']); ?>: <?php echo $categoryCount; ?> / <?php echo (int) ($activeCategory['max_participants'] ?: $t['max_teams']); ?></span>
-                                        <?php endforeach; ?>
+                                    <div class="space-y-2 text-[11px] leading-relaxed text-slate-700">
+                                    <div class="font-bold text-slate-800">
+                                        รับสมัคร <?php echo $registrationCount; ?> / <?php echo $capacityCount ?: 0; ?> <?php echo $unit; ?>
                                     </div>
-                                    <div class="text-[10px] text-slate-400 mt-1">สมัครทั้งหมด <b class="text-slate-700"><?php echo (int) $t['team_count']; ?></b></div>
-                                    <div class="text-[10px] text-slate-400 mt-1">
-                                        สมัครทั้งหมด <?php echo (int) $t['total_registrations']; ?> / รออนุมัติ <?php echo (int) $t['pending_count']; ?> / อนุมัติ <?php echo (int) $t['team_count']; ?>
+                                    <div class="flex flex-wrap items-center justify-center gap-2">
+                                        <?php if (empty($categorySummaryItems)): ?>
+                                            <span class="px-2 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700 font-bold">ไม่มี Category</span>
+                                        <?php else: ?>
+                                            <?php foreach ($categorySummaryItems as $categorySummaryItem): ?>
+                                                <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-bold <?php echo $categorySummaryItem['class']; ?>" title="<?php echo htmlspecialchars((string) $categorySummaryItem['label']); ?>">
+                                                    <?php echo htmlspecialchars((string) $categorySummaryItem['label']); ?> <?php echo (int) $categorySummaryItem['count']; ?>
+                                                </span>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="font-semibold">
+                                        <span class="text-emerald-700">อนุมัติ <?php echo $approvedCount; ?></span>
+                                        <span class="mx-3 text-slate-300">　</span>
+                                        <span class="text-amber-700">รอตรวจ <?php echo $pendingCount; ?></span>
+                                    </div>
                                     </div>
                                 </td>
                                 <td class="p-4 text-center text-xs">
-                                    <?php $checkinComplete = (int) $t['checkin_complete_count']; $approvedCount = (int) $t['team_count']; $checkinClass = $checkinComplete === 0 ? 'bg-slate-100 text-slate-600 border-slate-200' : ($checkinComplete >= $approvedCount && $approvedCount > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'); ?>
-                                    <span class="px-2.5 py-1 rounded border font-bold <?php echo $checkinClass; ?>"><?php echo $checkinComplete === 0 ? 'ยังไม่มีทีม Check-in ครบ' : 'Check-in ครบ ' . $checkinComplete . '/' . $approvedCount . ' ทีม'; ?></span>
-                                    <?php if ((int) $t['checkin_male_count'] > 0 || (int) $t['checkin_female_count'] > 0): ?>
-                                        <div class="mt-1 space-x-1 text-[10px]"><span class="text-blue-700">ชาย <?php echo (int) $t['checkin_male_count']; ?></span><span class="text-pink-700">หญิง <?php echo (int) $t['checkin_female_count']; ?></span></div>
-                                    <?php endif; ?>
-                                    <?php if ((int) $t['disqualified_count'] > 0): ?>
-                                        <div class="text-[10px] text-rose-600 font-semibold mt-1">ตัดสิทธิ์ <?php echo (int) $t['disqualified_count']; ?> ทีม</div>
-                                    <?php endif; ?>
+                                    <div class="flex flex-col items-center justify-center gap-2">
+                                        <?php $checkinComplete = (int) $t['checkin_complete_count']; $approvedCount = (int) $t['team_count']; $checkinClass = $checkinComplete === 0 ? 'bg-slate-100 text-slate-600 border-slate-200' : ($checkinComplete >= $approvedCount && $approvedCount > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'); ?>
+                                        <span class="inline-flex items-center justify-center px-2.5 py-1 rounded border font-bold <?php echo $checkinClass; ?>"><?php echo $checkinComplete === 0 ? 'ยังไม่มีทีม Check-in ครบ' : 'Check-in ครบ ' . $checkinComplete . '/' . $approvedCount . ' ทีม'; ?></span>
+                                        <?php if ((int) $t['checkin_male_count'] > 0 || (int) $t['checkin_female_count'] > 0): ?>
+                                            <div class="flex flex-wrap items-center justify-center gap-2 text-[10px]"><span class="text-blue-700">ชาย <?php echo (int) $t['checkin_male_count']; ?></span><span class="text-pink-700">หญิง <?php echo (int) $t['checkin_female_count']; ?></span></div>
+                                        <?php endif; ?>
+                                        <?php if ((int) $t['disqualified_count'] > 0): ?>
+                                            <div class="text-[10px] text-rose-600 font-semibold">ตัดสิทธิ์ <?php echo (int) $t['disqualified_count']; ?> ทีม</div>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                                 <td class="p-4 text-center font-bold font-display text-slate-900 text-xs">
                                     <?php if ((int) $t['total_matches_count'] === 0): ?>

@@ -450,30 +450,36 @@ function roundName($roundNum, $totalRounds)
             border: 2px solid rgba(255, 85, 0, 0.5);
             box-shadow: inset 0 0 50px rgba(255, 85, 0, 0.2), 0 20px 50px rgba(0, 0, 0, 0.9);
             overflow: hidden;
+        }
+
+        .bracket-scroll-area {
+            position: relative;
             overflow-x: auto;
             overflow-y: hidden;
         }
-        
-        .holo-arena-box::-webkit-scrollbar {
+        .bracket-scroll-area::-webkit-scrollbar {
             display: block; height: 10px;
         }
-        .holo-arena-box::-webkit-scrollbar-track {
+        .bracket-scroll-area::-webkit-scrollbar-track {
             background: rgba(0, 0, 0, 0.3); border-radius: 10px;
         }
-        .holo-arena-box::-webkit-scrollbar-thumb {
+        .bracket-scroll-area::-webkit-scrollbar-thumb {
             background: rgba(255, 85, 0, 0.6); border-radius: 10px;
         }
-        .holo-arena-box::-webkit-scrollbar-thumb:hover {
+        .bracket-scroll-area::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 85, 0, 0.9);
         }
 
+        .corner-overlay {
+            position: absolute; inset: 0; pointer-events: none; z-index: 20;
+        }
         .cyber-corner-tr {
-            position: absolute; top: 0; right: 0; width: 60px; height: 60px;
-            border-top: 3px solid #00F0FF; border-right: 3px solid #00F0FF; pointer-events: none; z-index: 4;
+            position: absolute; top: 8px; right: 8px; width: 32px; height: 32px;
+            border-top: 2px solid #00F0FF; border-right: 2px solid #00F0FF; pointer-events: none;
         }
         .cyber-corner-bl {
-            position: absolute; bottom: 0; left: 0; width: 60px; height: 60px;
-            border-bottom: 3px solid #FF5500; border-left: 3px solid #FF5500; pointer-events: none; z-index: 4;
+            position: absolute; bottom: 8px; left: 8px; width: 32px; height: 32px;
+            border-bottom: 2px solid #FF5500; border-left: 2px solid #FF5500; pointer-events: none;
         }
     </style>
 </head>
@@ -767,13 +773,16 @@ function roundName($roundNum, $totalRounds)
                                 ทั้งหมด <?php echo $totalRounds; ?> รอบ
                             </span>
                         </div>
-                        <div class="cyber-corner-tr"></div>
-                        <div class="cyber-corner-bl"></div>
+                        <div class="corner-overlay">
+                            <div class="cyber-corner-tr"></div>
+                            <div class="cyber-corner-bl"></div>
+                        </div>
 
-                        <div class="bracket-container relative z-10" id="bracketContainer">
-                            <svg class="bracket-svg-lines" id="bracketSvg"></svg>
-                            <?php foreach ($roundsGrouped as $roundNum => $roundMatches): ?>
-                                <div class="bracket-round">
+                        <div class="bracket-scroll-area">
+                            <div class="bracket-container relative z-10" id="bracketContainer">
+                                <svg class="bracket-svg-lines" id="bracketSvg"></svg>
+                                <?php foreach ($roundsGrouped as $roundNum => $roundMatches): ?>
+                                    <div class="bracket-round">
                                     <div class="text-center font-display font-bold text-xs text-brand-orange uppercase tracking-wider mb-2">
                                         <?php echo roundName($roundNum, $totalRounds); ?>
                                     </div>
