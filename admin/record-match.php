@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             WHERE match_id = :id
                         ")->execute(['s1' => $score1, 's2' => $score2, 'winner' => $winnerId, 'id' => $matchId]);
                         if (function_exists('updateRankingsAfterMatch')) {
-                                    try { updateRankingsAfterMatch($pdo, $matchId); } catch (Exception $ex) { throw new RuntimeException('บันทึก Ranking ไม่สำเร็จ: ' . $ex->getMessage(), 0, $ex); }
+                                    try { updateRankingsAfterMatch($pdo, $matchId, false); } catch (Exception $ex) { throw new RuntimeException('บันทึก Ranking ไม่สำเร็จ: ' . $ex->getMessage(), 0, $ex); }
                         }
                         $advanceAlreadySaved = false;
                         try {
@@ -241,6 +241,101 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
             }
         }
     }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_player_performance') {
+   if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+       $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+   } else {
+       $matchId = (int) ($_POST['match_id'] ?? 0);
+       $matchStmt = $pdo->prepare('SELECT m.*, t.game_id FROM matches m JOIN tournaments t ON t.tournament_id = m.tournament_id
+           WHERE m.match_id = :match_id AND m.tournament_id = :tournament_id');
+       $matchStmt->execute(['match_id' => $matchId, 'tournament_id' => $tournamentId]);
+       $performanceMatch = $matchStmt->fetch(PDO::FETCH_ASSOC);
+       $ratings = $_POST['performance'] ?? [];
+       $played = array_map('intval', $_POST['played_player_ids'] ?? []);
+       $mvpId = (int) ($_POST['mvp_player_id'] ?? 0);
+       $winnerTeamId = 0;
+       $levels = ['outstanding' => 5, 'normal' => 3, 'participation' => 1, 'absent' => 0];
+       if (!$performanceMatch || $performanceMatch['status'] !== 'completed') {
+           $error = 'ต้องบันทึกผล Match ให้เสร็จก่อนบันทึกผลงานผู้เล่น';
+       } elseif (!$played || !$mvpId || !in_array($mvpId, $played, true)) {
+           $error = 'กรุณาเลือกผู้เล่นที่ลงแข่งและ MVP 1 คน';
+       } else {
+           $winnerTeamId = (int) $performanceMatch['winner_team_id'];
+           $rosterStmt = $pdo->prepare('SELECT DISTINCT trm.player_id, tr.team_id, COALESCE(tr.category, \'open\') AS category
+               FROM tournament_registration_members trm
+               JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+               WHERE tr.tournament_id = :tournament_id AND tr.tournament_category_id = :category_id
+                 AND tr.team_id IN (:team1_id, :team2_id) AND tr.status = \'approved\' AND trm.roster_status = \'active\'
+                 AND FIND_IN_SET(\'player\', REPLACE(trm.member_roles, \' \', \'\')) > 0');
+           $rosterStmt->execute([
+               'tournament_id' => $tournamentId,
+               'category_id' => (int) $performanceMatch['tournament_category_id'],
+               'team1_id' => (int) $performanceMatch['team1_id'],
+               'team2_id' => (int) $performanceMatch['team2_id'],
+           ]);
+           $roster = $rosterStmt->fetchAll(PDO::FETCH_ASSOC);
+           $rosterMap = [];
+           foreach ($roster as $member) $rosterMap[(int) $member['player_id']] = $member;
+           $historyColumns = $pdo->query('SHOW COLUMNS FROM ranking_history')->fetchAll(PDO::FETCH_COLUMN);
+           $hasMatchId = in_array('match_id', $historyColumns, true);
+           $alreadyScored = false;
+           if ($hasMatchId) {
+               $duplicateStmt = $pdo->prepare('SELECT COUNT(*) FROM ranking_history WHERE match_id = :match_id AND player_id IS NOT NULL');
+               $duplicateStmt->execute(['match_id' => $matchId]);
+               $alreadyScored = (int) $duplicateStmt->fetchColumn() > 0;
+           }
+           if (!$roster || array_diff($played, array_keys($rosterMap)) || !isset($rosterMap[$mvpId])) {
+               $error = 'รายชื่อผู้เล่นไม่ตรงกับ Tournament Roster';
+           } elseif ($alreadyScored) {
+               $error = 'Match นี้ประเมินคะแนนผู้เล่นไปแล้ว';
+           } else {
+               try {
+                   $pdo->beginTransaction();
+                   $rankingStmt = $pdo->prepare('INSERT INTO player_rankings (game_id, player_id, category, points, matches_played, wins, losses)
+                       VALUES (:game_id, :player_id, :category, :points, 1, :wins, :losses)
+                       ON DUPLICATE KEY UPDATE points = points + VALUES(points), matches_played = matches_played + 1,
+                       wins = wins + VALUES(wins), losses = losses + VALUES(losses)');
+                   $historyFields = ['game_id', 'tournament_id', 'tournament_category_id', 'player_id', 'team_id', 'points'];
+                   $historyValues = [':game_id', ':tournament_id', ':category_id', ':player_id', ':team_id', ':points'];
+                   if ($hasMatchId) { $historyFields[] = 'match_id'; $historyValues[] = ':match_id'; }
+                   if (in_array('result_code', $historyColumns, true)) { $historyFields[] = 'result_code'; $historyValues[] = ':reason'; }
+                   elseif (in_array('reason', $historyColumns, true)) { $historyFields[] = 'reason'; $historyValues[] = ':reason'; }
+                   if (in_array('created_by', $historyColumns, true)) { $historyFields[] = 'created_by'; $historyValues[] = ':created_by'; }
+                   $historyStmt = $pdo->prepare('INSERT INTO ranking_history (' . implode(', ', $historyFields) . ') VALUES (' . implode(', ', $historyValues) . ')');
+                   $winnerTeamId = (int) $performanceMatch['winner_team_id'];
+                   foreach ($played as $playerId) {
+                       $member = $rosterMap[$playerId];
+                       $basePoints = $levels[$ratings[$playerId] ?? 'participation'] ?? 1;
+                       $points = $basePoints + ($playerId === $mvpId ? 5 : 0);
+                       $isWinner = (int) $member['team_id'] === $winnerTeamId;
+                       $rankingStmt->execute([
+                           'game_id' => (int) $performanceMatch['game_id'], 'player_id' => $playerId,
+                           'category' => strtolower(trim($member['category'] ?: 'open')), 'points' => $points,
+                           'wins' => $isWinner ? 1 : 0, 'losses' => $isWinner ? 0 : 1,
+                       ]);
+                       $historyParams = [
+                           'game_id' => (int) $performanceMatch['game_id'], 'tournament_id' => $tournamentId,
+                           'category_id' => (int) $performanceMatch['tournament_category_id'], 'player_id' => $playerId,
+                           'team_id' => (int) $member['team_id'], 'points' => $points,
+                       ];
+                       if ($hasMatchId) $historyParams['match_id'] = $matchId;
+                       if (in_array('result_code', $historyColumns, true) || in_array('reason', $historyColumns, true)) {
+                           $historyParams['reason'] = $playerId === $mvpId ? 'mvp' : ($ratings[$playerId] ?? 'participation');
+                       }
+                       if (in_array('created_by', $historyColumns, true)) $historyParams['created_by'] = (int) ($_SESSION['user_id'] ?? 1);
+                       $historyStmt->execute($historyParams);
+                   }
+                   $pdo->commit();
+                   $success = 'บันทึกคะแนนผู้เล่นและ MVP เรียบร้อยแล้ว';
+               } catch (Throwable $ex) {
+                   if ($pdo->inTransaction()) $pdo->rollBack();
+                   $error = 'บันทึกคะแนนผู้เล่นไม่สำเร็จ: ' . $ex->getMessage();
+               }
+           }
+       }
+   }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_schedule') {
@@ -549,6 +644,27 @@ if ($tournamentId) {
         // หากตรงกับหมวดที่เลือก (หรือถ้าเลือก all ให้แสดงทั้งหมด)
         if ($filterCategory === 'all' || $matchCat === $filterCategory || ($filterCategory === 'open' && $matchCat === 'open')) {
             $matches[] = $m;
+        }
+    }
+
+    foreach ($matches as $matchIndex => $match) {
+        $matches[$matchIndex]['roster'] = [];
+        $teamIds = array_values(array_filter([(int) ($match['team1_id'] ?? 0), (int) ($match['team2_id'] ?? 0)]));
+        if ($teamIds) {
+            $rosterStmt = $pdo->prepare('SELECT DISTINCT trm.player_id, p.display_name, tr.team_id, COALESCE(tr.category, \'open\') AS category,
+                    COALESCE(trm.member_roles, \'player\') AS member_roles, trm.is_starter, trm.roster_status
+                FROM tournament_registration_members trm
+                JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+                JOIN players p ON p.player_id = trm.player_id
+                WHERE tr.tournament_id = :tournament_id AND tr.tournament_category_id = :category_id
+                  AND tr.team_id IN (' . implode(',', $teamIds) . ') AND tr.status = \'approved\' AND trm.roster_status = \'active\'
+                  AND FIND_IN_SET(\'player\', REPLACE(trm.member_roles, \' \', \'\')) > 0
+                ORDER BY tr.team_id, trm.is_starter DESC, trm.member_roles, p.display_name');
+            $rosterStmt->execute([
+                'tournament_id' => $tournamentId,
+                'category_id' => (int) ($match['match_category_id'] ?? 0),
+            ]);
+            $matches[$matchIndex]['roster'] = $rosterStmt->fetchAll(PDO::FETCH_ASSOC);
         }
     }
 
@@ -1048,7 +1164,7 @@ if ($flash) {
                                                     <div id="match-action-menu-<?= (int) $m['match_id'] ?>" class="match-action-menu fixed z-[70] rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
                                                         <button type="button" data-match-action="detail" class="match-action-item">รายละเอียด</button>
                                                         <?php if (!in_array($m['status'], ['completed', 'walkover', 'cancelled'], true) && $m['team1_id'] && $m['team2_id'] && !$participantWithdrawn): ?><button type="button" data-match-action="score" class="match-action-item">บันทึกผลการแข่งขัน</button><?php endif; ?>
-                                                        <button type="button" data-match-action="schedule" class="match-action-item">จัดตารางการแข่งขัน</button>
+                                                        <?php if ($m['status'] === 'completed' && $m['team1_id'] && $m['team2_id'] && !empty($m['roster'])): ?><button type="button" data-match-action="performance" class="match-action-item">บันทึกผลงานผู้เล่น</button><?php endif; ?>
                                                         <?php if ($m['status'] === 'completed'): ?><button type="button" data-match-action="score" class="match-action-item">แก้ไขผลการแข่งขัน</button><?php endif; ?>
                                                     </div>
                                                 </td>
@@ -1068,6 +1184,7 @@ if ($flash) {
     <div id="matchDetailModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="matchDetailTitle" class="font-bold text-slate-900">รายละเอียด Match</h3><button type="button" onclick="closeMatchModal('matchDetailModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div id="matchDetailContent" class="space-y-3 p-6 text-sm"></div><div class="flex justify-end border-t border-slate-100 bg-slate-50 px-6 py-4"><button type="button" onclick="closeMatchModal('matchDetailModal')" class="rounded-lg bg-slate-200 px-4 py-2 text-xs font-bold">ปิด</button></div></div></div>
     <div id="matchScheduleModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">จัดตารางการแข่งขัน</h3><button type="button" onclick="closeMatchModal('matchScheduleModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_schedule"><input type="hidden" name="match_id" id="scheduleMatchId"><div id="scheduleMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><label class="block text-xs font-bold">วันและเวลาแข่งขัน<input type="datetime-local" name="scheduled_at" id="scheduleDate" required class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><label class="block text-xs font-bold">สนาม/สถานที่<input name="venue_name" id="scheduleVenue" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><label class="block text-xs font-bold">พื้นที่/เครื่อง/โต๊ะ<input name="venue_area" id="scheduleArea" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('matchScheduleModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึกกำหนดการ</button></div></form></div></div>
     <div id="matchScoreModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">บันทึกผลการแข่งขัน</h3><button type="button" onclick="closeMatchModal('matchScoreModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" id="matchScoreForm" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_score"><input type="hidden" name="match_id" id="scoreMatchId"><div id="scoreMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><div id="scoreFields"></div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('matchScoreModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">ยืนยันผลการแข่งขัน</button></div></form></div></div>
+    <div id="playerPerformanceModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">บันทึกผลงานผู้เล่น</h3><button type="button" onclick="closeMatchModal('playerPerformanceModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" id="playerPerformanceForm" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_player_performance"><input type="hidden" name="match_id" id="performanceMatchId"><div id="performanceMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><p class="text-xs text-slate-500">เลือกผู้เล่นที่ลงแข่ง, MVP 1 คน และระดับผลงาน ระบบจะบวก MVP เพิ่มอีก 5 คะแนน</p><div id="performanceFields" class="space-y-2"></div><div class="rounded-xl bg-orange-50 p-3 text-sm font-bold text-orange-800">คะแนนรวมตัวอย่าง: <span id="performanceTotal">0</span> คะแนน</div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('playerPerformanceModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึกคะแนนผู้เล่น</button></div></form></div></div>
     <script>
         const matchData = <?= json_encode(array_column($matches, null, 'match_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
         function openMatchModal(id) { const element = document.getElementById(id); element.classList.remove('hidden'); element.classList.add('flex'); }
@@ -1076,6 +1193,46 @@ if ($flash) {
         function openMatchDetail(match) { document.getElementById('matchDetailTitle').textContent = 'รายละเอียด Match ' + match.match_id; document.getElementById('matchDetailContent').innerHTML = `<div><b>คู่แข่งขัน</b><div>${matchLabel(match)}</div></div><div><b>Category</b><div>${match.match_category_id || 'ไม่ระบุ'}</div></div><div><b>รอบ/Group</b><div>${match.bracket_type || '-'} / ${match.group_name || '-'} / รอบที่ ${match.round_number || '-'}</div></div><div><b>คะแนน</b><div>${match.team1_score ?? '-'} - ${match.team2_score ?? '-'}</div></div><div><b>สถานะ</b><div>${match.status}</div></div><div><b>กำหนดการ</b><div>${match.scheduled_at || 'ยังไม่กำหนด'} | ${match.venue_name || '-'} ${match.venue_area || ''}</div></div>`; openMatchModal('matchDetailModal'); }
         function openMatchSchedule(match) { document.getElementById('scheduleMatchId').value = match.match_id; document.getElementById('scheduleMatchLabel').textContent = matchLabel(match); document.getElementById('scheduleDate').value = match.scheduled_at ? match.scheduled_at.replace(' ', 'T').slice(0, 16) : ''; document.getElementById('scheduleVenue').value = match.venue_name || ''; document.getElementById('scheduleArea').value = match.venue_area || ''; openMatchModal('matchScheduleModal'); }
         function openMatchScore(match) { document.getElementById('scoreMatchId').value = match.match_id; document.getElementById('scoreMatchLabel').textContent = matchLabel(match) + ' | Best of ' + (match.best_of || 1); const bestOf = Math.max(1, Number(match.best_of || 1)); const fields = document.getElementById('scoreFields'); fields.innerHTML = bestOf === 1 ? '<div class="grid grid-cols-2 gap-3"><label class="text-xs font-bold">ฝั่ง A<input type="number" name="score1" min="0" required class="mt-1 w-full rounded-xl border px-3 py-2.5"></label><label class="text-xs font-bold">ฝั่ง B<input type="number" name="score2" min="0" required class="mt-1 w-full rounded-xl border px-3 py-2.5"></label></div>' : Array.from({length: bestOf}, (_, index) => `<div class="grid grid-cols-[auto_1fr_auto_1fr] items-center gap-2"><span class="text-xs">เกม ${index + 1}</span><input type="number" name="game_s1[]" min="0" class="w-full rounded-xl border px-3 py-2.5"><span>-</span><input type="number" name="game_s2[]" min="0" class="w-full rounded-xl border px-3 py-2.5"></div>`).join(''); openMatchModal('matchScoreModal'); }
+        function openPlayerPerformance(match) {
+            document.getElementById('performanceMatchId').value = match.match_id;
+            document.getElementById('performanceMatchLabel').textContent = matchLabel(match) + ' | ผู้ชนะ: ' + (Number(match.winner_team_id) === Number(match.team1_id) ? match.team1_name : match.team2_name);
+            const fields = document.getElementById('performanceFields');
+            const teamNames = {[match.team1_id]: match.team1_name, [match.team2_id]: match.team2_name};
+            const rosterByTeam = (match.roster || []).reduce((groups, player) => {
+                const teamId = String(player.team_id);
+                if (!groups[teamId]) groups[teamId] = [];
+                groups[teamId].push(player);
+                return groups;
+            }, {});
+            const teamTabs = Object.entries(rosterByTeam).map(([teamId, players], index) => `<button type="button" class="performance-team-tab rounded-lg px-3 py-2 text-xs font-bold ${index === 0 ? 'bg-brand-orange text-white' : 'bg-slate-100 text-slate-600'}" data-team-id="${teamId}">${escapePerformanceText(teamNames[teamId] || 'ทีมแข่งขัน')}</button>`).join('');
+            const teamPanels = Object.entries(rosterByTeam).map(([teamId, players], index) => `<section class="performance-team-panel space-y-2 ${index === 0 ? '' : 'hidden'}" data-team-id="${teamId}"><h4 class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">${escapePerformanceText(teamNames[teamId] || 'ทีมแข่งขัน')}</h4>${players.map(player => {
+                const roles = String(player.member_roles || 'player').split(',').map(role => ({coach: 'Coach', manager: 'Manager', player: player.is_starter == 1 ? 'Starter' : 'Player', substitute: 'Substitute'}[role.trim()] || role.trim())).join(', ');
+                return `<label class="grid grid-cols-[auto_1fr_10rem] items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm"><input type="checkbox" name="played_player_ids[]" value="${player.player_id}" data-performance-played class="h-4 w-4"><span><span class="font-semibold">${escapePerformanceText(player.display_name)}</span><span class="ml-2 text-[10px] text-slate-500">${escapePerformanceText(roles)}</span><select name="performance[${player.player_id}]" data-performance-level class="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"><option value="outstanding">โดดเด่น +5</option><option value="normal" selected>ปกติ +3</option><option value="participation">มีส่วนร่วม +1</option><option value="absent">ไม่ได้ลงแข่ง 0</option></select></span><label class="text-xs text-slate-600"><input type="radio" name="mvp_player_id" value="${player.player_id}" data-performance-mvp> MVP</label></label>`;
+            }).join('')}</section>`).join('');
+            fields.innerHTML = `<div class="flex gap-2 border-b border-slate-200 pb-2">${teamTabs}</div>${teamPanels}`;
+            fields.querySelectorAll('.performance-team-tab').forEach(tab => tab.addEventListener('click', () => {
+                fields.querySelectorAll('.performance-team-tab').forEach(item => item.classList.remove('bg-brand-orange', 'text-white'));
+                fields.querySelectorAll('.performance-team-tab').forEach(item => item.classList.add('bg-slate-100', 'text-slate-600'));
+                tab.classList.remove('bg-slate-100', 'text-slate-600');
+                tab.classList.add('bg-brand-orange', 'text-white');
+                fields.querySelectorAll('.performance-team-panel').forEach(panel => panel.classList.toggle('hidden', panel.dataset.teamId !== tab.dataset.teamId));
+            }));
+            fields.querySelectorAll('[data-performance-played]').forEach(input => input.addEventListener('change', updatePerformancePreview));
+            fields.querySelectorAll('[data-performance-level]').forEach(input => input.addEventListener('change', updatePerformancePreview));
+            fields.querySelectorAll('[data-performance-mvp]').forEach(input => input.addEventListener('change', updatePerformancePreview));
+            updatePerformancePreview();
+            openMatchModal('playerPerformanceModal');
+        }
+        function escapePerformanceText(value) { return String(value || '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[character])); }
+        function updatePerformancePreview() {
+            const points = {outstanding: 5, normal: 3, participation: 1, absent: 0};
+            let total = 0;
+            document.querySelectorAll('#performanceFields [data-performance-played]:checked').forEach(input => {
+                const level = document.querySelector(`#performanceFields select[name="performance[${input.value}]"]`);
+                total += (points[level ? level.value : 'participation'] || 0) + (document.querySelector(`#performanceFields input[data-performance-mvp][value="${input.value}"]:checked`) ? 5 : 0);
+            });
+            document.getElementById('performanceTotal').textContent = total;
+        }
         document.addEventListener('DOMContentLoaded', () => {
             const toggles = document.querySelectorAll('.match-action-toggle');
             const menus = document.querySelectorAll('.match-action-menu');
@@ -1111,6 +1268,7 @@ if ($flash) {
                             if (item.dataset.matchAction === 'detail') openMatchDetail(match);
                             if (item.dataset.matchAction === 'schedule') openMatchSchedule(match);
                             if (item.dataset.matchAction === 'score') openMatchScore(match);
+                            if (item.dataset.matchAction === 'performance') openPlayerPerformance(match);
                         };
                     });
                 });

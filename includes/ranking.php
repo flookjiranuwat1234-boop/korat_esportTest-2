@@ -32,7 +32,7 @@ function ensureRankingHistoryTable(PDO $pdo): void
 }
 
 // ฟังก์ชันหลัก เรียกหลังจากบันทึกผลแมตช์เสร็จ (รองรับทีมสโมสรและผู้เล่นเดี่ยว Solo พร้อมแยก category)
-function updateRankingsAfterMatch($pdo, $matchId)
+function updateRankingsAfterMatch($pdo, $matchId, bool $includePlayerRankings = true)
 {
     ensureRankingHistoryTable($pdo);
     $stmt = $pdo->prepare("
@@ -123,8 +123,8 @@ function updateRankingsAfterMatch($pdo, $matchId)
             if ($t2IsTeam) bumpTeamRanking($pdo, $gameId, $match['team2_id'], $cat2, 'draw');
             else bumpSinglePlayerRanking($pdo, $gameId, $match['team2_id'], $cat2, 'draw');
 
-            if ($t1IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team1_id'], $cat1, 'draw', $tournamentId);
-            if ($t2IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team2_id'], $cat2, 'draw', $tournamentId);
+            if ($includePlayerRankings && $t1IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team1_id'], $cat1, 'draw', $tournamentId);
+            if ($includePlayerRankings && $t2IsTeam) bumpPlayerRankings($pdo, $gameId, $match['team2_id'], $cat2, 'draw', $tournamentId);
         }
     } else {
         $winnerId = $match['winner_team_id'];
@@ -147,7 +147,7 @@ function updateRankingsAfterMatch($pdo, $matchId)
 
             if ($winnerIsTeam) {
                 bumpTeamRanking($pdo, $gameId, $winnerId, $winnerCat, 'win');
-                bumpPlayerRankings($pdo, $gameId, $winnerId, $winnerCat, 'win', $tournamentId);
+                if ($includePlayerRankings) bumpPlayerRankings($pdo, $gameId, $winnerId, $winnerCat, 'win', $tournamentId);
             } else {
                 bumpSinglePlayerRanking($pdo, $gameId, $winnerId, $winnerCat, 'win');
             }
@@ -155,7 +155,7 @@ function updateRankingsAfterMatch($pdo, $matchId)
             if (!empty($loserId)) {
                 if ($loserIsTeam) {
                     bumpTeamRanking($pdo, $gameId, $loserId, $loserCat, 'loss');
-                    bumpPlayerRankings($pdo, $gameId, $loserId, $loserCat, 'loss', $tournamentId);
+                    if ($includePlayerRankings) bumpPlayerRankings($pdo, $gameId, $loserId, $loserCat, 'loss', $tournamentId);
                 } else {
                     bumpSinglePlayerRanking($pdo, $gameId, $loserId, $loserCat, 'loss');
                 }
@@ -165,7 +165,7 @@ function updateRankingsAfterMatch($pdo, $matchId)
 
     // อัปเดตตารางคะแนนกลุ่ม (ถ้ามี)
     updateGroupStandingsAfterMatch($pdo, $matchId);
-    recordRankingHistoryForMatch($pdo, $match, $gameId, $match['tournament_category_id']);
+    recordRankingHistoryForMatch($pdo, $match, $gameId, $match['tournament_category_id'], $includePlayerRankings);
 }
 
 // เพิ่มคะแนนให้ทีมสโมสร (แยกตาม category)
@@ -243,7 +243,7 @@ function bumpPlayerRankings($pdo, $gameId, $teamId, $category, $result, $tournam
     }
 }
 
-function recordRankingHistoryForMatch(PDO $pdo, array $match, int $gameId, ?int $categoryId): void
+function recordRankingHistoryForMatch(PDO $pdo, array $match, int $gameId, ?int $categoryId, bool $includePlayerRankings = true): void
 {
     $historyColumns = $pdo->query('SHOW COLUMNS FROM ranking_history')->fetchAll(PDO::FETCH_COLUMN);
     $historyFields = ['game_id', 'tournament_id', 'tournament_category_id', 'player_id', 'team_id', 'points'];
@@ -302,7 +302,7 @@ function recordRankingHistoryForMatch(PDO $pdo, array $match, int $gameId, ?int 
             $userId = isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : 0;
             $historyParams['created_by'] = $userId > 0 ? $userId : 1;
         }
-        if ($isTeam) {
+        if ($isTeam && $includePlayerRankings) {
             $members = $pdo->prepare('SELECT DISTINCT trm.player_id FROM tournament_registration_members trm
                 JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
                 WHERE tr.tournament_id = :tournament_id AND tr.team_id = :team_id AND tr.status = \'approved\'');

@@ -2626,10 +2626,6 @@ $csrfToken = generateCsrfToken();
                                         class="admin-action-item text-slate-700 hover:bg-slate-50 cursor-pointer">
                                         <i class="fa-solid fa-pen-to-square text-slate-400"></i> แก้ไข Tournament
                                     </button>
-                                    <button type="button" role="menuitem" onclick="openCategoryModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')"
-                                        class="admin-action-item text-slate-700 hover:bg-slate-50">
-                                        <i class="fa-solid fa-sliders text-slate-400"></i> จัดการประเภท
-                                    </button>
                                     <?php endif; ?>
                                         <form method="POST" onsubmit="return confirm('ยืนยันลบ Tournament นี้? การลบจะไม่สามารถย้อนกลับได้')">
                                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>">

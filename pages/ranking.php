@@ -557,7 +557,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                         <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400 text-xs">
                             <i class="fa-solid fa-magnifying-glass"></i>
                         </span>
-                        <input type="text" id="rankingSearchInput" onkeyup="filterRankingTable()"
+                        <input type="text" id="rankingSearchInput"
                             placeholder="ค้นหาชื่อทีม หรือผู้เล่น..."
                             value="<?php echo htmlspecialchars($search); ?>"
                             class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-white placeholder-gray-500 text-xs focus:outline-none focus:border-brand-orange transition-all shadow-inner">
@@ -893,6 +893,12 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                     bar.style.width = bar.getAttribute('data-width') + '%';
                 });
             }, 300);
+
+            const searchInput = document.getElementById('rankingSearchInput');
+            if (searchInput) {
+                searchInput.addEventListener('input', filterRankingTable);
+                filterRankingTable();
+            }
         });
 
         function filterRankingTable() {

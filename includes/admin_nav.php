@@ -10,9 +10,9 @@
     <a href="manage-members.php">จัดการสมาชิก</a>
     <a href="manage-news.php">จัดการข่าวสาร</a>
     <a href="manage-gallery.php">จัดการแกลลอรี่</a>
-    <a href="manage-accommodations.php">ที่พักแนะนำ</a>
+    <a href="recommended-lodging.php">ที่พักแนะนำ</a>
     <a href="manage-score.php">บันทึกผลแมตช์</a>
-    <a href="checkin.php">เช็คอินทีม</a>
+    <a href="checkin-teams.php">เช็คอินทีม</a>
     <a href="../auth/logout.php">ออกจากระบบ</a>
 </nav>
-<script src="/koratesport/assets/js/main.js" defer></script>
+<script src="/korat_esportTest-2/assets/js/main.js" defer></script>
