@@ -209,7 +209,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             's1' => $team1GamesWon, 's2' => $team2GamesWon,
                             'winner' => $winnerId, 'id' => $matchId,
                         ]);
-                        if (function_exists('updateRankingsAfterMatch')) updateRankingsAfterMatch($pdo, $matchId);
+                        if (function_exists('updateRankingsAfterMatch')) updateRankingsAfterMatch($pdo, $matchId, false);
                         $advanceAlreadySaved = false;
                         try {
                             advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
@@ -257,7 +257,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
        $mvpId = (int) ($_POST['mvp_player_id'] ?? 0);
        $winnerTeamId = 0;
        $levels = ['outstanding' => 5, 'normal' => 3, 'participation' => 1, 'absent' => 0];
-       if (!$performanceMatch || $performanceMatch['status'] !== 'completed') {
+       if (!$performanceMatch || !in_array($performanceMatch['status'], ['completed', 'walkover'], true)) {
            $error = 'ต้องบันทึกผล Match ให้เสร็จก่อนบันทึกผลงานผู้เล่น';
        } elseif (!$played || !$mvpId || !in_array($mvpId, $played, true)) {
            $error = 'กรุณาเลือกผู้เล่นที่ลงแข่งและ MVP 1 คน';
@@ -1164,7 +1164,7 @@ if ($flash) {
                                                     <div id="match-action-menu-<?= (int) $m['match_id'] ?>" class="match-action-menu fixed z-[70] rounded-xl border border-slate-200 bg-white text-left shadow-xl" role="menu">
                                                         <button type="button" data-match-action="detail" class="match-action-item">รายละเอียด</button>
                                                         <?php if (!in_array($m['status'], ['completed', 'walkover', 'cancelled'], true) && $m['team1_id'] && $m['team2_id'] && !$participantWithdrawn): ?><button type="button" data-match-action="score" class="match-action-item">บันทึกผลการแข่งขัน</button><?php endif; ?>
-                                                        <?php if ($m['status'] === 'completed' && $m['team1_id'] && $m['team2_id'] && !empty($m['roster'])): ?><button type="button" data-match-action="performance" class="match-action-item">บันทึกผลงานผู้เล่น</button><?php endif; ?>
+                                                        <?php if (in_array($m['status'], ['completed', 'walkover'], true) && ($m['team1_id'] || $m['team2_id']) && !empty($m['roster'])): ?><button type="button" data-match-action="performance" class="match-action-item">บันทึกผลงานผู้เล่น</button><?php endif; ?>
                                                         <?php if ($m['status'] === 'completed'): ?><button type="button" data-match-action="score" class="match-action-item">แก้ไขผลการแข่งขัน</button><?php endif; ?>
                                                     </div>
                                                 </td>

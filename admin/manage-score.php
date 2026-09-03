@@ -73,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
 
             try {
                 // คำนวณคะแนนสะสมของทีม/ผู้เล่น
-                updateRankingsAfterMatch($pdo, $matchId);
+                updateRankingsAfterMatch($pdo, $matchId, false);
 
                 // เลื่อนทีมชนะไปรอบถัดไป
                 if ($winnerId) {
