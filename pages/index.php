@@ -10,38 +10,66 @@ $currentUser = [
     'role' => $_SESSION['role'] ?? null,
 ];
 
-// ทัวร์นาเมนต์ที่กำลังแข่งหรือเปิดรับสมัคร เอามาโชว์หน้าแรก
-$tournaments = $pdo->query("
-    SELECT t.*, g.name AS game_name
+// แสดงเฉพาะรายการที่ยังสมัครได้จริง ณ เวลาปัจจุบัน
+$nowSql = (new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')))->format('Y-m-d H:i:s');
+$tournamentStmt = $pdo->prepare("
+    SELECT t.*, g.name AS game_name, g.play_mode
     FROM tournaments t
     JOIN games g ON g.game_id = t.game_id
-    WHERE t.status IN ('registration_open', 'ongoing')
+    WHERE t.status = 'registration_open'
+      AND t.registration_start <= :now
+      AND t.registration_end >= :now
+      AND EXISTS (
+          SELECT 1
+          FROM tournament_categories tc
+          WHERE tc.tournament_id = t.tournament_id
+            AND tc.is_active = 1
+            AND (
+                tc.max_participants IS NULL OR tc.max_participants = 0
+                OR (
+                    SELECT COUNT(*)
+                    FROM tournament_registrations tr
+                    WHERE tr.tournament_id = t.tournament_id
+                      AND tr.tournament_category_id = tc.tournament_category_id
+                      AND tr.status IN ('pending', 'approved')
+                ) < tc.max_participants
+            )
+      )
     ORDER BY t.created_at DESC
     LIMIT 6
-")->fetchAll();
-
-// อันดับทีมสูงสุด 5 อันดับแรก (รวมทุกเกม) - ดึง team_id มาด้วยเพื่อให้คลิกดูโปรไฟล์ทีมได้
-$topTeams = $pdo->query("
-    SELECT tr.points, tr.wins, tr.losses, t.team_id, t.name AS team_name, g.name AS game_name
-    FROM team_rankings tr
-    JOIN teams t ON t.team_id = tr.team_id
-    JOIN games g ON g.game_id = tr.game_id
-    ORDER BY tr.points DESC
-    LIMIT 5
-")->fetchAll();
-
-// อันดับผู้เล่นสูงสุด 5 อันดับแรก (รวมทุกเกม) - ดึง player_id มาด้วยเพื่อให้คลิกดูโปรไฟล์ผู้เล่นได้
-$topPlayers = $pdo->query("
-    SELECT pr.points, pr.matches_played, pr.wins, pr.losses, p.player_id, p.display_name, g.name AS game_name
-    FROM player_rankings pr
-    JOIN players p ON p.player_id = pr.player_id
-    JOIN games g ON g.game_id = pr.game_id
-    ORDER BY pr.points DESC
-    LIMIT 5
-")->fetchAll();
-
-$defaultRankingGame = $pdo->query("SELECT game_id, play_mode FROM games WHERE is_active = 1 ORDER BY game_id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: ['game_id' => 0, 'play_mode' => 'team'];
-$defaultRankingType = in_array(strtolower((string) ($defaultRankingGame['play_mode'] ?? '')), ['solo'], true) ? 'player' : 'team';
+");
+$tournamentStmt->execute(['now' => $nowSql]);
+$tournaments = $tournamentStmt->fetchAll(PDO::FETCH_ASSOC);
+$tournamentCategoryStmt = $pdo->prepare("
+    SELECT tc.tournament_category_id, tc.category_code, tc.label, tc.max_participants,
+           (
+               SELECT COUNT(*)
+               FROM tournament_registrations tr
+               WHERE tr.tournament_id = tc.tournament_id
+                 AND tr.tournament_category_id = tc.tournament_category_id
+                 AND tr.status IN ('pending', 'approved')
+           ) AS registered_count
+    FROM tournament_categories tc
+    WHERE tc.tournament_id = :tournament_id
+      AND tc.is_active = 1
+      AND (
+          tc.max_participants IS NULL OR tc.max_participants = 0
+          OR (
+              SELECT COUNT(*)
+              FROM tournament_registrations tr
+              WHERE tr.tournament_id = tc.tournament_id
+                AND tr.tournament_category_id = tc.tournament_category_id
+                AND tr.status IN ('pending', 'approved')
+          ) < tc.max_participants
+      )
+    ORDER BY tc.tournament_category_id
+");
+$myPlayerId = 0;
+if ($isLoggedIn) {
+    $playerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user_id LIMIT 1');
+    $playerStmt->execute(['user_id' => $_SESSION['user_id'] ?? 0]);
+    $myPlayerId = (int) $playerStmt->fetchColumn();
+}
 
 // สถิติรวมของทั้งเว็บ (ปรับ Query ให้ตรงกันกับฝั่ง Admin Dashboard)
 $totalTeams = $pdo->query("
@@ -637,7 +665,7 @@ try {
                         EVENTS</span>
                     <h2
                         class="text-3xl font-black font-display text-white uppercase tracking-wide flex items-center gap-3 drop-shadow">
-                        <i class="fa-solid fa-fire text-brand-orange"></i> ทัวร์นาเมนต์ล่าสุด
+                        <i class="fa-solid fa-fire text-brand-orange"></i>                         เปิดรับสมัครตอนนี้
                     </h2>
                 </div>
             </div>
@@ -646,14 +674,49 @@ try {
                 <?php if (count($tournaments) == 0): ?>
                     <div class="col-span-full glass-panel p-12 text-center text-gray-200 rounded-2xl" data-aos="fade-up">
                         <i class="fa-solid fa-calendar-xmark text-4xl mb-3 block opacity-60"></i>
-                        ยังไม่มีทัวร์นาเมนต์ที่เปิดรับสมัครหรือกำลังแข่งขันในขณะนี้
+                        ขณะนี้ยังไม่มีทัวร์นาเมนต์เปิดรับสมัคร
                     </div>
                 <?php endif; ?>
 
                 <?php foreach ($tournaments as $index => $t): ?>
-                    <div class="glass-card p-6 rounded-2xl flex flex-col justify-between space-y-6 group shadow-lg esports-corner-card <?php echo ($t['status'] == 'ongoing') ? 'live-card-glow' : ''; ?>"
+                    <?php
+                    $tournamentCategoryStmt->execute(['tournament_id' => (int) $t['tournament_id']]);
+                    $openCategories = $tournamentCategoryStmt->fetchAll(PDO::FETCH_ASSOC);
+                    $registeredByCategory = [];
+                    if ($myPlayerId > 0) {
+                        $registeredStmt = $pdo->prepare("
+                            SELECT DISTINCT tr.tournament_category_id
+                            FROM tournament_registrations tr
+                            JOIN tournament_registration_members trm
+                              ON trm.tournament_registration_id = tr.tournament_registration_id
+                             AND trm.player_id = :player_id
+                             AND trm.roster_status = 'active'
+                            WHERE tr.tournament_id = :tournament_id
+                              AND tr.status IN ('pending', 'approved')
+                        ");
+                        $registeredStmt->execute([
+                            'player_id' => $myPlayerId,
+                            'tournament_id' => (int) $t['tournament_id'],
+                        ]);
+                        $registeredByCategory = array_fill_keys(array_map('intval', $registeredStmt->fetchAll(PDO::FETCH_COLUMN)), true);
+                    }
+                    $totalRegistered = array_sum(array_map(static fn(array $category): int => (int) $category['registered_count'], $openCategories));
+                    $totalCapacity = array_sum(array_map(static fn(array $category): int => (int) ($category['max_participants'] ?? 0), $openCategories));
+                    $remainingCapacity = $totalCapacity > 0 ? max(0, $totalCapacity - $totalRegistered) : null;
+                    $registrationUrl = 'register-tournament.php?id=' . (int) $t['tournament_id'];
+                    if (count($openCategories) === 1) {
+                        $registrationUrl .= '&category_id=' . (int) $openCategories[0]['tournament_category_id'];
+                    }
+                    $loginUrl = '../auth/login.php?next=' . urlencode('../pages/' . $registrationUrl);
+                    $hasRegistration = !empty($registeredByCategory);
+                    ?>
+                    <div class="glass-card p-6 rounded-2xl flex flex-col justify-between space-y-6 group shadow-lg esports-corner-card"
                         data-aos="fade-up" data-aos-delay="<?php echo $index * 100; ?>" data-tilt data-tilt-scale="1.02">
                         <div class="space-y-3">
+                            <div class="aspect-video rounded-xl overflow-hidden bg-black/50">
+                                <img src="<?php echo !empty($t['image_path']) ? '../assets/' . htmlspecialchars($t['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>"
+                                    alt="<?php echo htmlspecialchars($t['name']); ?>" class="w-full h-full object-cover">
+                            </div>
                             <div class="flex items-center justify-between">
                                 <span
                                     class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-white/20 border border-white/30 text-white shadow-sm">
@@ -661,30 +724,35 @@ try {
                                     <?php echo htmlspecialchars($t['game_name']); ?>
                                 </span>
 
-                                <?php if ($t['status'] == 'ongoing'): ?>
-                                    <span
-                                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/30 border border-rose-400 text-rose-300 text-xs font-bold shadow-sm animate-pulse">
-                                        <span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span> LIVE NOW
-                                    </span>
-                                <?php else: ?>
-                                    <span
-                                        class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-500/30 border border-emerald-400 text-emerald-300 text-xs font-bold shadow-sm">
-                                        <i class="fa-solid fa-door-open text-[10px]"></i> เปิดรับสมัคร
-                                    </span>
-                                <?php endif; ?>
+                                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-500/30 border border-emerald-400 text-emerald-300 text-xs font-bold shadow-sm">
+                                    <i class="fa-solid fa-door-open text-[10px]"></i> เปิดรับสมัคร
+                                </span>
                             </div>
 
                             <h3
                                 class="text-xl font-black text-white group-hover:text-brand-orange transition-colors font-display line-clamp-2 drop-shadow-sm">
                                 <?php echo htmlspecialchars($t['name']); ?>
                             </h3>
+                            <div class="flex flex-wrap gap-1.5">
+                                <?php foreach ($openCategories as $category): ?>
+                                    <span class="px-2.5 py-1 rounded-full bg-brand-orange/15 border border-brand-orange/40 text-brand-orange text-[10px] font-bold">
+                                        <?php echo htmlspecialchars($category['label'] ?: $category['category_code']); ?>
+                                    </span>
+                                <?php endforeach; ?>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-xs text-gray-300">
+                                <span><i class="fa-solid fa-users text-brand-orange mr-1"></i><?php echo $t['play_mode'] === 'solo' ? 'Solo / คน' : 'Team / ทีม'; ?></span>
+                                <span class="text-right"><i class="fa-regular fa-clock text-amber-400 mr-1"></i>ปิด <?php echo date('d/m/Y H:i', strtotime($t['registration_end'])); ?></span>
+                                <span><i class="fa-solid fa-user-plus text-emerald-400 mr-1"></i>สมัคร <?php echo $totalRegistered; ?> / <?php echo $totalCapacity > 0 ? $totalCapacity : 'ไม่จำกัด'; ?></span>
+                                <span class="text-right text-emerald-300"><?php echo $remainingCapacity === null ? 'ว่างไม่จำกัด' : 'ว่าง ' . $remainingCapacity; ?></span>
+                            </div>
                         </div>
 
                         <div
                             class="pt-4 border-t border-white/15 flex items-center justify-between text-xs font-bold text-gray-200 uppercase tracking-wider">
-                            <a href="tournament-detail.php?id=<?php echo $t['tournament_id']; ?>"
+                            <a href="<?php echo $isLoggedIn ? htmlspecialchars($registrationUrl) : htmlspecialchars($loginUrl); ?>"
                                 class="w-full flex items-center justify-between text-brand-orange hover:text-white transition-colors">
-                                <span>เข้าชมรายละเอียด</span>
+                                <span><?php echo $hasRegistration ? 'ดูใบสมัครของฉัน' : 'สมัครแข่งขัน'; ?></span>
                                 <i class="fa-solid fa-arrow-right group-hover:translate-x-2 transition-transform"></i>
                             </a>
                         </div>
@@ -795,178 +863,7 @@ try {
             </div>
         </section>
 
-        <!-- Cyber HUD Badge Divider -->
-        <div class="hud-divider">
-            <div class="hud-divider-badge">
-                <span></span> HALL OF FAME <span></span>
-            </div>
-        </div>
-
-        <!-- ================= 6. DUAL LEADERBOARD (TOP TEAMS & TOP PLAYERS) ================= -->
-        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8 w-full" data-aos="fade-up"
-            data-aos-duration="1000">
-            <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b border-white/20 pb-4 gap-4">
-                <div>
-                    <span class="text-amber-400 font-bold text-xs uppercase tracking-widest block mb-1">HALL OF
-                        FAME</span>
-                    <h2
-                        class="text-3xl font-black font-display text-white uppercase tracking-wide flex items-center gap-3 drop-shadow">
-                        <i class="fa-solid fa-crown text-amber-400"></i> ทำเนียบเกียรติยศ (อันดับสูงสุด)
-                    </h2>
-                </div>
-                <a href="ranking.php?game_id=<?php echo (int) ($defaultRankingGame['game_id'] ?? 0); ?>&type=<?php echo htmlspecialchars($defaultRankingType); ?>&category=all"
-                    class="text-xs font-bold text-brand-orange hover:underline uppercase tracking-wider flex items-center gap-1">
-                    <span>ดูตารางคะแนนทั้งหมด</span>
-                    <i class="fa-solid fa-chevron-right"></i>
-                </a>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-                <!-- 🛡️ อันดับทีมสูงสุด (Top Teams) -->
-                <div class="space-y-4">
-                    <div class="flex items-center justify-between px-2">
-                        <h3
-                            class="text-base font-bold font-display text-brand-orange uppercase tracking-wider flex items-center gap-2">
-                            <i class="fa-solid fa-shield-halved"></i> สโมสร / ทีมยอดเยี่ยม
-                        </h3>
-                        <a href="ranking.php?game_id=<?php echo (int) ($defaultRankingGame['game_id'] ?? 0); ?>&type=team&category=all"
-                            class="text-[11px] text-gray-400 hover:text-white uppercase font-bold tracking-wider">ดูทั้งหมด
-                            &rarr;</a>
-                    </div>
-                    <div class="glass-panel rounded-2xl overflow-hidden shadow-2xl">
-                        <div class="overflow-x-auto custom-scrollbar">
-                            <table class="w-full text-left text-sm text-gray-200">
-                                <thead
-                                    class="bg-black/40 text-xs uppercase font-bold text-gray-300 border-b border-white/15 font-display">
-                                    <tr>
-                                        <th class="p-4 text-center w-16">อันดับ</th>
-                                        <th class="p-4">ทีม</th>
-                                        <th class="p-4 text-center">W - L</th>
-                                        <th class="p-4 text-right">คะแนน</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-white/10 font-medium">
-                                    <?php if (empty($topTeams)): ?>
-                                        <tr>
-                                            <td colspan="4" class="p-6 text-center text-gray-400 text-xs">
-                                                ยังไม่มีข้อมูลอันดับทีม</td>
-                                        </tr>
-                                    <?php endif; ?>
-                                    <?php foreach ($topTeams as $i => $team): ?>
-                                        <tr onclick="window.location.href='team-profile.php?id=<?php echo $team['team_id']; ?>'"
-                                            class="cursor-pointer hover:bg-white/10 transition-all duration-300 <?= ($i == 0) ? 'shimmer-gold-row' : ''; ?>">
-                                            <td class="p-4 text-center font-display font-black text-sm">
-                                                <?php if ($i == 0): ?>
-                                                    <span
-                                                        class="w-7 h-7 rounded-full bg-amber-400/30 text-amber-300 inline-flex items-center justify-center border border-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.4)] text-xs"><i
-                                                            class="fa-solid fa-trophy"></i></span>
-                                                <?php elseif ($i == 1): ?>
-                                                    <span
-                                                        class="w-7 h-7 rounded-full bg-slate-200/30 text-white inline-flex items-center justify-center border border-slate-300/60 text-xs">2</span>
-                                                <?php elseif ($i == 2): ?>
-                                                    <span
-                                                        class="w-7 h-7 rounded-full bg-amber-700/40 text-amber-400 inline-flex items-center justify-center border border-amber-600/60 text-xs">3</span>
-                                                <?php else: ?>
-                                                    <span class="text-gray-300 text-xs"><?php echo $i + 1; ?></span>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td class="p-4 font-bold text-white text-sm truncate max-w-[180px]">
-                                                <?php echo htmlspecialchars($team['team_name']); ?>
-                                                <span
-                                                    class="block text-[10px] text-gray-400 font-normal"><?php echo htmlspecialchars($team['game_name']); ?></span>
-                                            </td>
-                                            <td class="p-4 text-center font-mono text-xs">
-                                                <span
-                                                    class="text-emerald-400 font-bold"><?php echo $team['wins']; ?>W</span>-<span
-                                                    class="text-rose-400 font-bold"><?php echo $team['losses']; ?>L</span>
-                                            </td>
-                                            <td class="p-4 text-right font-display font-black text-brand-orange text-base">
-                                                <?php echo number_format($team['points']); ?> <span
-                                                    class="text-[10px] text-gray-300 font-normal">PTS</span>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 👤 อันดับผู้เล่นสูงสุด (Top Players) -->
-                <div class="space-y-4">
-                    <div class="flex items-center justify-between px-2">
-                        <h3
-                            class="text-base font-bold font-display text-amber-400 uppercase tracking-wider flex items-center gap-2">
-                            <i class="fa-solid fa-user-ninja"></i> นักกีฬา / ผู้เล่นยอดเยี่ยม
-                        </h3>
-                        <a href="ranking.php?game_id=<?php echo (int) ($defaultRankingGame['game_id'] ?? 0); ?>&type=player&category=all"
-                            class="text-[11px] text-gray-400 hover:text-white uppercase font-bold tracking-wider">ดูทั้งหมด
-                            &rarr;</a>
-                    </div>
-                    <div class="glass-panel rounded-2xl overflow-hidden shadow-2xl">
-                        <div class="overflow-x-auto custom-scrollbar">
-                            <table class="w-full text-left text-sm text-gray-200">
-                                <thead
-                                    class="bg-black/40 text-xs uppercase font-bold text-gray-300 border-b border-white/15 font-display">
-                                    <tr>
-                                        <th class="p-4 text-center w-16">อันดับ</th>
-                                        <th class="p-4">ผู้เล่น</th>
-                                        <th class="p-4 text-center">W - L</th>
-                                        <th class="p-4 text-right">คะแนน</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-white/10 font-medium">
-                                    <?php if (empty($topPlayers)): ?>
-                                        <tr>
-                                            <td colspan="4" class="p-6 text-center text-gray-400 text-xs">
-                                                ยังไม่มีข้อมูลอันดับผู้เล่น</td>
-                                        </tr>
-                                    <?php endif; ?>
-                                    <?php foreach ($topPlayers as $j => $player): ?>
-                                        <tr onclick="window.location.href='player-profile.php?id=<?php echo $player['player_id']; ?>'"
-                                            class="cursor-pointer hover:bg-white/10 transition-all duration-300 <?= ($j == 0) ? 'shimmer-gold-row' : ''; ?>">
-                                            <td class="p-4 text-center font-display font-black text-sm">
-                                                <?php if ($j == 0): ?>
-                                                    <span
-                                                        class="w-7 h-7 rounded-full bg-amber-400/30 text-amber-300 inline-flex items-center justify-center border border-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.4)] text-xs"><i
-                                                            class="fa-solid fa-trophy"></i></span>
-                                                <?php elseif ($j == 1): ?>
-                                                    <span
-                                                        class="w-7 h-7 rounded-full bg-slate-200/30 text-white inline-flex items-center justify-center border border-slate-300/60 text-xs">2</span>
-                                                <?php elseif ($j == 2): ?>
-                                                    <span
-                                                        class="w-7 h-7 rounded-full bg-amber-700/40 text-amber-400 inline-flex items-center justify-center border border-amber-600/60 text-xs">3</span>
-                                                <?php else: ?>
-                                                    <span class="text-gray-300 text-xs"><?php echo $j + 1; ?></span>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td class="p-4 font-bold text-white text-sm truncate max-w-[180px]">
-                                                <?php echo htmlspecialchars($player['display_name']); ?>
-                                                <span
-                                                    class="block text-[10px] text-gray-400 font-normal"><?php echo htmlspecialchars($player['game_name']); ?></span>
-                                            </td>
-                                            <td class="p-4 text-center font-mono text-xs">
-                                                <span
-                                                    class="text-emerald-400 font-bold"><?php echo $player['wins']; ?>W</span>-<span
-                                                    class="text-rose-400 font-bold"><?php echo $player['losses']; ?>L</span>
-                                            </td>
-                                            <td class="p-4 text-right font-display font-black text-amber-400 text-base">
-                                                <?php echo number_format($player['points']); ?> <span
-                                                    class="text-[10px] text-gray-300 font-normal">PTS</span>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-        </section>
-
-        <!-- ================= 7. FOOTER ================= -->
+        <!-- ================= 6. FOOTER ================= -->
         <footer class="border-t border-white/15 bg-slate-950/80 backdrop-blur-md mt-auto py-8 text-xs text-gray-400">
             <div
                 class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">

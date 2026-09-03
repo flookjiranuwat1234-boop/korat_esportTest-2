@@ -9,6 +9,10 @@ $error = $accountStatus === 'suspended'
     : ($accountStatus === 'disabled' ? 'บัญชีของคุณถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ' : '');
 $justRegistered = isset($_GET['registered']);
 $resetSuccess = isset($_GET['reset_success']);
+$nextUrl = trim((string) ($_POST['next'] ?? $_GET['next'] ?? ''));
+if ($nextUrl === '' || !str_starts_with($nextUrl, '../pages/')) {
+    $nextUrl = '';
+}
 $flash = consumeFlashMessage();
 $flashSuccess = $flash && $flash['type'] !== 'error' ? $flash['message'] : '';
 $flashError = $flash && $flash['type'] === 'error' ? $flash['message'] : '';
@@ -37,6 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // ส่งแต่ละ role ไปหน้าที่เหมาะกับตัวเอง
             if ($user['role'] == 'admin') {
                 header('Location: ../admin/dashboard.php', true, 303);
+            } elseif ($nextUrl !== '') {
+                header('Location: ' . $nextUrl, true, 303);
             } else {
                 header('Location: ../pages/index.php', true, 303);
             }
@@ -248,6 +254,9 @@ $csrfToken = generateCsrfToken();
 
                 <form method="POST" class="space-y-5">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                    <?php if ($nextUrl !== ''): ?>
+                        <input type="hidden" name="next" value="<?php echo htmlspecialchars($nextUrl, ENT_QUOTES); ?>">
+                    <?php endif; ?>
                     
                     <div>
                         <label class="block text-xs font-bold text-slate-700 uppercase mb-2">Username</label>

@@ -12,6 +12,37 @@ $currentUser = [
     'role' => $_SESSION['role'] ?? null,
 ];
 
+function displayDashboardCategoryLabels(?string $categoryLabels): string
+{
+    $labels = array_map(static function (string $category): string {
+        return match (strtolower(trim($category))) {
+            'male' => 'ชาย',
+            'female' => 'หญิง',
+            'open' => 'ทั่วไป',
+            default => trim($category),
+        };
+    }, explode(',', (string) $categoryLabels));
+
+    return implode(', ', array_filter($labels));
+}
+
+function renderDashboardCategoryBadges(?string $categoryLabels): string
+{
+    $badges = [];
+    foreach (array_filter(array_map('trim', explode(',', (string) $categoryLabels))) as $category) {
+        $categoryCode = strtolower($category);
+        $categoryConfig = match ($categoryCode) {
+            'male' => ['ชาย', 'bg-blue-50 text-blue-700 border-blue-100'],
+            'female' => ['หญิง', 'bg-pink-50 text-pink-700 border-pink-100'],
+            'open' => ['ทั่วไป', 'bg-orange-50 text-orange-700 border-orange-100'],
+            default => [$category, 'bg-violet-50 text-violet-700 border-violet-100'],
+        };
+        $badges[] = '<span class="inline-flex items-center rounded-full border px-2 py-0.5 font-bold ' . $categoryConfig[1] . '">' . htmlspecialchars($categoryConfig[0]) . '</span>';
+    }
+
+    return implode(' ', $badges);
+}
+
 // ================= แยกประเภทข้อมูล "นักกีฬา" ให้ตรงกับความเป็นจริง =================
 $importedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn();
 $claimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NOT NULL")->fetchColumn();
@@ -155,6 +186,11 @@ $tournamentsByYear = $pdo->prepare("
 ");
 $tournamentsByYear->execute(['y' => $selectedYear, 'search' => $dashboardSearch, 'search_like' => '%' . $dashboardSearch . '%', 'game_id' => $dashboardGame, 'status' => $dashboardStatus, 'month' => $dashboardMonth, 'category' => $dashboardCategory]);
 $tournamentsByYear = $tournamentsByYear->fetchAll();
+foreach ($tournamentsByYear as &$tournament) {
+    $tournament['category_badges'] = renderDashboardCategoryBadges($tournament['category_labels'] ?? '');
+    $tournament['category_labels'] = displayDashboardCategoryLabels($tournament['category_labels'] ?? '');
+}
+unset($tournament);
 
 $pendingRegs = $pdo->query("
     SELECT tr.tournament_registration_id AS reg_id, COALESCE(t.name, u.username, 'ผู้สมัครเดี่ยว') AS team_name, tour.tournament_id AS tournament_id, tour.name AS tournament_name, tr.registered_at
@@ -523,9 +559,9 @@ $openTournaments = $pdo->query("
                             <table class="w-full text-left text-sm text-slate-600">
                                 <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                                     <tr>
-                                        <th class="p-4">Tournament</th>
+                                        <th class="p-4">ทัวร์นาเมนต์</th>
                                         <th class="p-4">เกม</th>
-                                        <th class="p-4">Category</th>
+                                        <th class="p-4">ประเภท</th>
                                         <th class="p-4 text-center">สมัคร / อนุมัติ</th>
                                         <th class="p-4 text-center">Check-in</th>
                                         <th class="p-4 text-center">Match</th>
@@ -541,7 +577,7 @@ $openTournaments = $pdo->query("
                                         <td class="p-4 text-xs text-slate-500">
                                             <span class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
                                         </td>
-                                        <td class="p-4 text-xs"><span class="px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-100"><?php echo htmlspecialchars($t['category_labels'] ?: 'ยังไม่กำหนด'); ?></span></td>
+                                        <td class="p-4 text-xs"><div class="flex flex-wrap gap-1.5"><?php echo $t['category_badges'] ?: '<span class="px-2 py-1 rounded bg-slate-50 text-slate-500 border border-slate-200">ยังไม่กำหนด</span>'; ?></div></td>
                                         <td class="p-4 text-center text-xs font-bold"><?php echo (int) $t['registered_count']; ?> / <?php echo (int) $t['approved_count']; ?></td>
                                         <td class="p-4 text-center text-xs font-bold text-emerald-700"><?php echo (int) $t['checkin_complete_count']; ?></td>
                                         <td class="p-4 text-center text-xs font-bold"><span class="text-emerald-600"><?php echo (int) $t['completed_match_count']; ?></span> / <?php echo (int) $t['total_match_count']; ?></td>

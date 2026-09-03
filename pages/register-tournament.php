@@ -292,6 +292,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $selectedTournamentId = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+$requestedCategoryId = filter_input(INPUT_GET, 'category_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
 if ($selectedTournamentId) {
     $tStmt = $pdo->prepare("
@@ -317,12 +318,22 @@ if ($selectedTournamentId) {
 $existingTeamMap = [];
 $existingSoloMap = [];
 $tournamentCategories = [];
+$tournamentDays = [];
 if (!empty($tournaments)) {
     $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label, starters_count, substitutes_count, checkin_required_roles
         FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
+    $daysStmt = $pdo->prepare('SELECT day_number, event_date, start_time, end_time, venue_name
+        FROM tournament_days WHERE tournament_id = :tournament_id ORDER BY day_number');
     foreach ($tournaments as $availableTournament) {
-        $categoryStmt->execute(['tournament_id' => $availableTournament['tournament_id']]);
-        $tournamentCategories[(int) $availableTournament['tournament_id']] = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+        $availableTournamentId = (int) $availableTournament['tournament_id'];
+        $categoryStmt->execute(['tournament_id' => $availableTournamentId]);
+        $tournamentCategories[$availableTournamentId] = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+        try {
+            $daysStmt->execute(['tournament_id' => $availableTournamentId]);
+            $tournamentDays[$availableTournamentId] = $daysStmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $exception) {
+            $tournamentDays[$availableTournamentId] = [];
+        }
     }
 }
 function registrationStatusLabel($registration): array
@@ -547,6 +558,49 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                             </div>
                         </div>
 
+                        <details class="rounded-2xl bg-black/30 border border-white/10" open>
+                            <summary class="cursor-pointer px-4 py-3 text-sm font-bold text-amber-300 flex items-center gap-2">
+                                <i class="fa-solid fa-circle-info"></i> ข้อมูลสำคัญก่อนสมัคร
+                            </summary>
+                            <div class="px-4 pb-4 space-y-4 text-xs">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+                                        <span class="block text-gray-400">สถานะ</span>
+                                        <strong class="text-emerald-300">เปิดรับสมัคร</strong>
+                                    </div>
+                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+                                        <span class="block text-gray-400">รับสมัครถึง</span>
+                                        <strong class="text-white"><?= !empty($t['registration_end']) ? date('d/m/Y H:i', strtotime($t['registration_end'])) : '-'; ?></strong>
+                                    </div>
+                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+                                        <span class="block text-gray-400">เริ่มแข่งขัน</span>
+                                        <strong class="text-white"><?= !empty($t['start_date']) ? date('d/m/Y H:i', strtotime($t['start_date'])) : '-'; ?></strong>
+                                    </div>
+                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
+                                        <span class="block text-gray-400">Check-in</span>
+                                        <strong class="text-white"><?= !empty($t['checkin_open_at']) ? date('d/m/Y H:i', strtotime($t['checkin_open_at'])) : 'ตามประกาศ'; ?></strong>
+                                    </div>
+                                </div>
+                                <?php if (!empty($tournamentDays[(int) $t['tournament_id']])): ?>
+                                    <div class="space-y-2">
+                                        <h4 class="font-bold text-cyan-300">กำหนดการและสถานที่</h4>
+                                        <?php foreach ($tournamentDays[(int) $t['tournament_id']] as $day): ?>
+                                            <div class="flex flex-wrap justify-between gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
+                                                <span class="text-gray-300">วันที่ <?= (int) $day['day_number']; ?>: <?= date('d/m/Y', strtotime($day['event_date'])); ?></span>
+                                                <span class="text-gray-400"><?= $day['start_time'] ? date('H:i', strtotime($day['start_time'])) : ''; ?><?= $day['end_time'] ? ' - ' . date('H:i', strtotime($day['end_time'])) : ''; ?><?= $day['venue_name'] ? ' · ' . htmlspecialchars($day['venue_name']) : ''; ?></span>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
+                                <?php if (!empty($t['rules'])): ?>
+                                    <div class="p-4 rounded-xl bg-white/5 border border-white/10">
+                                        <h4 class="font-bold text-brand-orange mb-2"><i class="fa-solid fa-scroll mr-1"></i> กฎกติกาการแข่งขัน</h4>
+                                        <div class="text-gray-200 leading-relaxed whitespace-pre-line"><?= htmlspecialchars($t['rules']); ?></div>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        </details>
+
                         <div class="space-y-3">
                             <?php if ($t['play_mode'] === 'solo'): ?>
                                 <div class="bg-black/40 p-4 rounded-2xl border border-white/10 flex items-center justify-between">
@@ -566,7 +620,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                                 <select name="tournament_category_id" required class="bg-black/60 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange">
                                                     <option value="">เลือก Category</option>
                                                     <?php foreach (($tournamentCategories[(int) $t['tournament_id']] ?? []) as $category): ?>
-                                                        <option value="<?= (int) $category['tournament_category_id']; ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']); ?></option>
+                                                        <option value="<?= (int) $category['tournament_category_id']; ?>" <?= $requestedCategoryId === (int) $category['tournament_category_id'] ? 'selected' : ''; ?>><?= htmlspecialchars($category['label'] ?: $category['category_code']); ?></option>
                                                     <?php endforeach; ?>
                                                 </select>
                                                 <button type="submit" class="px-6 py-2.5 rounded-xl bg-brand-orange text-white font-bold text-xs uppercase">สมัครแข่งเดี่ยว</button>
