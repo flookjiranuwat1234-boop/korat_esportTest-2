@@ -1,128 +1,32 @@
 <?php
-// pages/register-tournament.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/tournament_roster.php';
 require_once '../includes/tournament_categories.php';
 require_once '../includes/registration_status.php';
+require_once '../includes/tournament_registration.php';
 requireLogin();
-ensureTournamentRosterTables($pdo);
-ensureTournamentCategorySchema($pdo);
-ensureRegistrationStatusHistoryTable($pdo);
 
 date_default_timezone_set('Asia/Bangkok');
-
-function getTournamentRegistrationState(array $tournament, DateTimeImmutable $now): array
-{
-    $status = strtolower((string) ($tournament['status'] ?? 'draft'));
-    $start = !empty($tournament['registration_start'])
-        ? new DateTimeImmutable((string) $tournament['registration_start'], new DateTimeZone('Asia/Bangkok'))
-        : null;
-    $end = !empty($tournament['registration_end'])
-        ? new DateTimeImmutable((string) $tournament['registration_end'], new DateTimeZone('Asia/Bangkok'))
-        : null;
-
-    if ($status === 'draft') {
-        return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ยังไม่เปิดรับสมัคร'];
-    }
-    if ($status === 'registration_closed') {
-        return ['allowed' => false, 'message' => 'ปิดรับสมัครแล้ว'];
-    }
-    if ($status === 'ongoing') {
-        return ['allowed' => false, 'message' => 'การแข่งขันเริ่มแล้ว ไม่สามารถสมัครได้'];
-    }
-    if ($status === 'completed') {
-        return ['allowed' => false, 'message' => 'การแข่งขันสิ้นสุดแล้ว'];
-    }
-    if ($status === 'cancelled') {
-        return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ถูกยกเลิก'];
-    }
-    if ($start && $now < $start) {
-        return ['allowed' => false, 'message' => 'ยังไม่ถึงวันเปิดรับสมัคร'];
-    }
-    if ($end && $now > $end) {
-        return ['allowed' => false, 'message' => 'ปิดรับสมัครแล้ว'];
-    }
-    if ($status === 'registration_open' && (!$start || $now >= $start) && (!$end || $now <= $end)) {
-        return ['allowed' => true, 'message' => ''];
-    }
-
-    return ['allowed' => false, 'message' => 'ทัวร์นาเมนต์นี้ยังไม่เปิดรับสมัคร'];
-}
-
-function getEligibleCategories(PDO $pdo, int $tournamentId): array
-{
-    $sql = "
-        SELECT tc.tournament_category_id, tc.category_code, tc.label, tc.max_participants, tc.starters_count,
-               (SELECT COUNT(*)
-                FROM tournament_registrations tr
-                WHERE tr.tournament_category_id = tc.tournament_category_id
-                  AND tr.status IN ('pending', 'approved')) AS registered_count
-        FROM tournament_categories tc
-        WHERE tc.tournament_id = :tournament_id
-          AND tc.is_active = 1
-        ORDER BY tc.tournament_category_id ASC
-    ";
-
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute(['tournament_id' => $tournamentId]);
-    $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $eligible = [];
-    foreach ($categories as $category) {
-        $registered = (int) ($category['registered_count'] ?? 0);
-        $max = (int) ($category['max_participants'] ?? 0);
-        if ($max > 0 && $registered >= $max) {
-            continue;
-        }
-        $eligible[] = $category;
-    }
-
-    return $eligible;
-}
-
-function getTeamRegistrationContext(PDO $pdo, int $teamId, int $playerId): array
-{
-    $teamStmt = $pdo->prepare('SELECT t.team_id, t.name, t.game_id, t.captain_player_id
-        FROM teams t
-        WHERE t.team_id = :team_id LIMIT 1');
-    $teamStmt->execute(['team_id' => $teamId]);
-    $team = $teamStmt->fetch(PDO::FETCH_ASSOC);
-    if (!$team) {
-        return ['allowed' => false, 'message' => 'คุณยังไม่มีทีมสำหรับเกมนี้'];
-    }
-
-    $roleStmt = $pdo->prepare('SELECT COUNT(*) FROM team_members WHERE team_id = :team_id AND player_id = :player_id AND is_active = 1 AND (
-        LOWER(TRIM(in_game_role)) IN (\'captain\', \'manager\', \'leader\') OR :captain_player_id = :player_id
-    )');
-    $roleStmt->execute([
-        'team_id' => $teamId,
-        'player_id' => $playerId,
-        'captain_player_id' => (int) ($team['captain_player_id'] ?? 0),
-    ]);
-    if ((int) $roleStmt->fetchColumn() === 0) {
-        return ['allowed' => false, 'message' => 'เฉพาะกัปตันหรือผู้จัดการทีมเท่านั้นที่สมัครได้'];
-    }
-
-    return ['allowed' => true, 'team' => $team];
-}
-
-$isLoggedIn = isLoggedIn();
 $currentUser = [
-    'username' => $_SESSION['username'] ?? null,
-    'role' => $_SESSION['role'] ?? null,
+    'username' => $_SESSION['username'] ?? 'ผู้ใช้งาน',
+    'role' => $_SESSION['role'] ?? 'Player',
 ];
-$stmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user_id LIMIT 1');
-$stmt->execute(['user_id' => $_SESSION['user_id'] ?? 0]);
-$myPlayerId = (int) $stmt->fetchColumn();
-
-if (!$myPlayerId) {
-    header('Location: claim-profile.php');
-    exit;
-}
-
 $error = '';
 $success = '';
+$csrfToken = generateCsrfToken();
+
+if (($_GET['action'] ?? '') === 'search_players') {
+    header('Content-Type: application/json; charset=utf-8');
+    $tournamentId = filter_input(INPUT_GET, 'tournament_id', FILTER_VALIDATE_INT);
+    $categoryId = filter_input(INPUT_GET, 'category_id', FILTER_VALIDATE_INT);
+    $term = trim((string) ($_GET['q'] ?? ''));
+    echo json_encode(
+        $tournamentId && $categoryId ? searchTournamentPlayers($pdo, $tournamentId, $categoryId, $term) : [],
+        JSON_UNESCAPED_UNICODE
+    );
+    exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
@@ -130,578 +34,220 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $tournamentId = (int) ($_POST['tournament_id'] ?? 0);
         $mode = strtolower((string) ($_POST['mode'] ?? 'team'));
-        $mode = in_array($mode, ['solo', 'team'], true) ? $mode : 'team';
-
-        $tournamentStmt = $pdo->prepare("
-            SELECT t.tournament_id, t.name, t.game_id, t.max_teams, t.status, t.registration_start, t.registration_end,
-                   g.play_mode, g.name AS game_name,
-                   (SELECT COUNT(*)
-                    FROM tournament_registrations tr
-                    WHERE tr.tournament_id = t.tournament_id
-                      AND tr.status IN ('pending', 'approved')) AS registered_count
-            FROM tournaments t
-            JOIN games g ON g.game_id = t.game_id
-            WHERE t.tournament_id = :tournament_id
-            LIMIT 1
-        ");
-        $tournamentStmt->execute(['tournament_id' => $tournamentId]);
+        $categoryId = (int) ($_POST['tournament_category_id'] ?? 0);
+        $tournamentStmt = $pdo->prepare('SELECT t.*, g.play_mode FROM tournaments t INNER JOIN games g ON g.game_id = t.game_id WHERE t.tournament_id = :id LIMIT 1');
+        $tournamentStmt->execute(['id' => $tournamentId]);
         $tournament = $tournamentStmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$tournament) {
-            $error = 'ไม่พบทัวร์นาเมนต์นี้';
-        } else {
-            $windowState = getTournamentRegistrationState($tournament, new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
-            if (!$windowState['allowed']) {
-                $error = $windowState['message'];
-            } elseif ($mode === 'solo') {
-                if (($tournament['play_mode'] ?? '') !== 'solo') {
-                    $error = 'ทัวร์นาเมนต์นี้ไม่ได้เปิดให้แข่งขันแบบเดี่ยว';
-                } else {
-                    $categoryId = (int) ($_POST['tournament_category_id'] ?? 0);
-                    $eligibleCategories = getEligibleCategories($pdo, $tournamentId);
-                    $selectedCategory = null;
-                    foreach ($eligibleCategories as $category) {
-                        if ((int) $category['tournament_category_id'] === $categoryId) {
-                            $selectedCategory = $category;
-                            break;
-                        }
-                    }
-                    if (!$selectedCategory) {
-                        $error = 'กรุณาเลือก Category ที่เปิดรับสมัคร';
-                    } else {
-                        $categoryCountStmt = $pdo->prepare('SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND status IN (\'pending\', \'approved\')');
-                        $categoryCountStmt->execute(['tournament_id' => $tournamentId, 'category_id' => $categoryId]);
-                        $categoryCount = (int) $categoryCountStmt->fetchColumn();
-                        $categoryLimit = (int) ($selectedCategory['max_participants'] ?? 0);
-                        if ($categoryLimit > 0 && $categoryCount >= $categoryLimit) {
-                            $error = 'ประเภทการแข่งขันนี้มีผู้สมัครครบแล้ว';
-                        }
-
-                        if (empty($error)) {
-                            $existingSolo = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND player_id = :player_id AND status IN (\'pending\', \'approved\') LIMIT 1');
-                            $existingSolo->execute(['tournament_id' => $tournamentId, 'category_id' => $categoryId, 'player_id' => $myPlayerId]);
-                            if ($existingSolo->fetchColumn()) {
-                                $error = 'ผู้เล่นนี้สมัคร Category นี้แล้ว';
-                            } else {
-                                $categoryCode = (string) $selectedCategory['category_code'];
-                                try {
-                                    $pdo->beginTransaction();
-                                    $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, player_id, team_id, category, status, participation_status)
-                                        VALUES (:tournament_id, :category_id, :player_id, NULL, :category, :status, :participation_status)');
-                                    $insert->execute([
-                                        'tournament_id' => $tournamentId,
-                                        'category_id' => $categoryId,
-                                        'player_id' => $myPlayerId,
-                                        'category' => $categoryCode,
-                                        'status' => 'pending',
-                                        'participation_status' => 'pending_admin_review',
-                                    ]);
-  
-                                    $registrationId = (int) $pdo->lastInsertId();
-                                    snapshotTournamentRoster($pdo, $registrationId, null, $myPlayerId);
-                                    recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament รอ Admin ตรวจสอบ', null);
-                                    $pdo->commit();
-                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว กรุณารอ Admin ตรวจสอบ';
-                                } catch (Throwable $exception) {
-                                    if ($pdo->inTransaction()) $pdo->rollBack();
-                                    $error = 'ส่งใบสมัครไม่สำเร็จ';
-                                }
-                            }
-                        }
-                    }
-                }
+        $window = $tournament ? getTournamentRegistrationState($tournament, new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'))) : ['allowed' => false, 'message' => 'ไม่พบ Tournament'];
+        if (!$tournament || !$window['allowed']) {
+            $error = $window['message'];
+        } elseif ($mode === 'solo') {
+            if ($tournament['play_mode'] !== 'solo') {
+                $error = 'รายการนี้ไม่ใช่ประเภทเดี่ยว';
             } else {
-                $teamId = (int) ($_POST['team_id'] ?? 0);
-                $categoryId = (int) ($_POST['tournament_category_id'] ?? 0);
-
-                if ($teamId <= 0) {
-                    $error = 'คุณยังไม่มีทีมสำหรับเกมนี้';
+                $duplicate = $pdo->prepare('SELECT 1 FROM tournament_registrations WHERE tournament_id = :tournament AND tournament_category_id = :category AND player_id = :player AND status IN ("pending","approved") LIMIT 1');
+                $duplicate->execute(['tournament' => $tournamentId, 'category' => $categoryId, 'player' => (int) ($_SESSION['player_id'] ?? 0)]);
+                if ($duplicate->fetchColumn()) {
+                    $error = 'ผู้เล่นนี้สมัคร Category นี้แล้ว';
                 } else {
-                    $teamContext = getTeamRegistrationContext($pdo, $teamId, $myPlayerId);
-                    if (!$teamContext['allowed']) {
-                        $error = $teamContext['message'];
+                    $playerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user LIMIT 1');
+                    $playerStmt->execute(['user' => (int) $_SESSION['user_id']]);
+                    $playerId = (int) $playerStmt->fetchColumn();
+                    $categoryCodeStmt = $pdo->prepare('SELECT category_code FROM tournament_categories WHERE tournament_category_id = :category LIMIT 1');
+                    $categoryCodeStmt->execute(['category' => $categoryId]);
+                    $categoryCode = (string) ($categoryCodeStmt->fetchColumn() ?: 'open');
+                    if (!$playerId) {
+                        $error = 'ไม่พบ Player Profile ของบัญชีนี้';
                     } else {
-                        $eligibleCategories = getEligibleCategories($pdo, $tournamentId);
-                        $selectedCategory = null;
-                        foreach ($eligibleCategories as $category) {
-                            if ((int) $category['tournament_category_id'] === $categoryId) {
-                                $selectedCategory = $category;
-                                break;
-                            }
-                        }
-
-                        if (!$selectedCategory) {
-                            $error = 'ยังไม่มีประเภทการแข่งขันที่เปิดรับสมัคร';
-                        } else {
-                            $categoryCountStmt = $pdo->prepare('SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND status IN (\'pending\', \'approved\')');
-                            $categoryCountStmt->execute(['tournament_id' => $tournamentId, 'category_id' => $categoryId]);
-                            $categoryCount = (int) $categoryCountStmt->fetchColumn();
-                            $categoryLimit = (int) ($selectedCategory['max_participants'] ?? 0);
-                            if ($categoryLimit > 0 && $categoryCount >= $categoryLimit) {
-                                $error = 'ประเภทการแข่งขันนี้มีผู้สมัครครบแล้ว';
-                            }
-
-                            if (empty($error)) {
-                                $requiredRoster = (int) ($selectedCategory['starters_count'] ?? 0);
-                                $memberCountStmt = $pdo->prepare('SELECT COUNT(*) FROM team_members WHERE team_id = :team_id AND is_active = 1');
-                                $memberCountStmt->execute(['team_id' => $teamId]);
-                                $memberCount = (int) $memberCountStmt->fetchColumn();
-                                if ($requiredRoster > 0 && $memberCount < $requiredRoster) {
-                                    $error = 'จำนวนสมาชิกยังไม่ครบตามกติกา';
-                                }
-                            }
-
-                            if (empty($error)) {
-                                $duplicateStmt = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id AND team_id = :team_id AND status IN (\'pending\', \'approved\') LIMIT 1');
-                                $duplicateStmt->execute(['tournament_id' => $tournamentId, 'team_id' => $teamId]);
-                                if ($duplicateStmt->fetchColumn()) {
-                                    $error = 'ทีม/ผู้เล่นนี้สมัครประเภทการแข่งขันนี้แล้ว';
-                                }
-                            }
-
-                            if (empty($error)) {
-                                try {
-                                    $pdo->beginTransaction();
-                                    $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id, tournament_category_id, team_id, player_id, category, status, participation_status)
-                                        VALUES (:tournament_id, :category_id, :team_id, NULL, :category, :status, :participation_status)');
-                                    $insert->execute([
-                                        'tournament_id' => $tournamentId,
-                                        'category_id' => $categoryId,
-                                        'team_id' => $teamId,
-                                        'category' => (string) ($selectedCategory['category_code'] ?? 'open'),
-                                       'status' => 'pending',
-                                       'participation_status' => 'pending_admin_review',
-                                    ]);
-  
-                                    $registrationId = (int) $pdo->lastInsertId();
-                                    snapshotTournamentRoster($pdo, $registrationId, $teamId, null);
-                                    recordRegistrationStatus($pdo, $registrationId, 'pending', (int) ($_SESSION['user_id'] ?? 0), 'สมัคร Tournament ในนามทีม รอ Admin ตรวจสอบ', null);
-                                    $pdo->commit();
-                                    $success = 'ส่งใบสมัครเข้าร่วมการแข่งขันเรียบร้อยแล้ว กรุณารอ Admin ตรวจสอบ';
-                                } catch (Throwable $exception) {
-                                    if ($pdo->inTransaction()) $pdo->rollBack();
-                                    $error = 'ส่งใบสมัครไม่สำเร็จ';
-                                }
-                            }
+                        try {
+                            ensureRegistrationStatusHistoryTable($pdo);
+                            $pdo->beginTransaction();
+                            $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id,tournament_category_id,player_id,team_id,category,status,participation_status) VALUES (:tournament,:category,:player,NULL,:code,"pending","pending_admin_review")');
+                            $insert->execute(['tournament' => $tournamentId, 'category' => $categoryId, 'player' => $playerId, 'code' => $categoryCode]);
+                            $registrationId = (int) $pdo->lastInsertId();
+                            snapshotTournamentRoster($pdo, $registrationId, null, $playerId);
+                            recordRegistrationStatus($pdo, $registrationId, 'pending', (int) $_SESSION['user_id'], 'สมัครแข่งขันแบบเดี่ยว');
+                            $pdo->commit();
+                            $success = 'สมัครเข้าร่วมรายการเรียบร้อยแล้ว';
+                        } catch (Throwable $exception) {
+                            if ($pdo->inTransaction()) $pdo->rollBack();
+                            $error = 'สมัครแข่งขันไม่สำเร็จ';
                         }
                     }
                 }
             }
-        }
-    }
-}
-
-$selectedTournamentId = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-$requestedCategoryId = filter_input(INPUT_GET, 'category_id', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-
-if ($selectedTournamentId) {
-    $tStmt = $pdo->prepare("
-        SELECT t.*, g.name AS game_name, g.play_mode
-        FROM tournaments t
-        JOIN games g ON g.game_id = t.game_id
-        WHERE t.tournament_id = :tournament_id
-    ");
-    $tStmt->execute(['tournament_id' => $selectedTournamentId]);
-    $tournaments = $tStmt->fetchAll();
-} else {
-    $tStmt = $pdo->prepare("
-        SELECT t.*, g.name AS game_name, g.play_mode
-        FROM tournaments t
-        JOIN games g ON g.game_id = t.game_id
-        WHERE t.status = 'registration_open'
-        ORDER BY t.start_date ASC
-    ");
-    $tStmt->execute();
-    $tournaments = $tStmt->fetchAll();
-}
-
-$existingTeamMap = [];
-$existingSoloMap = [];
-$tournamentCategories = [];
-$tournamentDays = [];
-if (!empty($tournaments)) {
-    $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label, starters_count, substitutes_count, checkin_required_roles
-        FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
-    $daysStmt = $pdo->prepare('SELECT day_number, event_date, start_time, end_time, venue_name
-        FROM tournament_days WHERE tournament_id = :tournament_id ORDER BY day_number');
-    foreach ($tournaments as $availableTournament) {
-        $availableTournamentId = (int) $availableTournament['tournament_id'];
-        $categoryStmt->execute(['tournament_id' => $availableTournamentId]);
-        $tournamentCategories[$availableTournamentId] = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
-        try {
-            $daysStmt->execute(['tournament_id' => $availableTournamentId]);
-            $tournamentDays[$availableTournamentId] = $daysStmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (PDOException $exception) {
-            $tournamentDays[$availableTournamentId] = [];
-        }
-    }
-}
-function registrationStatusLabel($registration): array
-{
-    if (is_string($registration)) {
-        $registration = ['status' => $registration];
-    }
-    if (($registration['status'] ?? '') === 'rejected') {
-        return ['ไม่ผ่านการอนุมัติ', 'bg-rose-500/20 border-rose-500/40 text-rose-200', 'fa-circle-xmark'];
-    }
-    if (($registration['status'] ?? '') === 'pending') {
-        return ['รออนุมัติ', 'bg-amber-500/20 border-amber-500/40 text-amber-200', 'fa-clock'];
-    }
-    if (($registration['checkin_status'] ?? '') === 'checked_in') {
-        return ['อนุมัติและเช็กอินแล้ว', 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300', 'fa-user-check'];
-    }
-    return ['อนุมัติ รอเช็กอิน', 'bg-sky-500/20 border-sky-500/40 text-sky-200', 'fa-circle-check'];
-}
-if (!empty($tournaments)) {
-    $tIds = array_column($tournaments, 'tournament_id');
-    if (!empty($tIds)) {
-        $inT = implode(',', $tIds);
-
-        $regTeams = $pdo->query("
-            SELECT tr.tournament_id, tr.team_id, tr.status, tr.checkin_status
-            FROM tournament_registrations tr
-            JOIN teams tm ON tm.team_id = tr.team_id
-            WHERE tr.tournament_id IN ($inT) AND tm.captain_player_id = $myPlayerId
-        ")->fetchAll();
-        foreach ($regTeams as $rt) {
-            $existingTeamMap[$rt['tournament_id'] . '-' . $rt['team_id']] = [
-                'status' => $rt['status'],
-                'checkin_status' => $rt['checkin_status'],
-            ];
-        }
-
-        $regSolos = $pdo->query("
-            SELECT tournament_id, status, checkin_status
-            FROM tournament_registrations
-            WHERE tournament_id IN ($inT) AND player_id = $myPlayerId
-        ")->fetchAll();
-        foreach ($regSolos as $rs) {
-            $existingSoloMap[$rs['tournament_id']] = [
-                'status' => $rs['status'],
-                'checkin_status' => $rs['checkin_status'],
-            ];
-        }
-    }
-}
-
-$csrfToken = generateCsrfToken();
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    setFlashMessage($error ? 'error' : 'success', $error ?: ($success ?? 'ส่งใบสมัครเรียบร้อยแล้ว'));
-    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'register-tournament.php'), true, 303);
-    exit;
-}
-$flash = consumeFlashMessage();
-if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
-?>
-<!DOCTYPE html>
-<html lang="th" class="h-full scroll-smooth">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>สมัครเข้าร่วมทัวร์นาเมนต์ - Korat Esport</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        brand: { orange: '#FF5500', glow: '#FF7700', dark: '#0A0A0C', panel: '#121318' }
-                    },
-                    fontFamily: { sans: ['Kanit', 'sans-serif'], display: ['Orbitron', 'sans-serif'] },
-                    boxShadow: { 'orange-glow': '0 0 25px rgba(255, 85, 0, 0.45)' }
+        } elseif ($mode === 'team') {
+            $roster = [];
+            foreach ((array) ($_POST['roster'] ?? []) as $member) {
+                $roster[] = ['player_id' => (int) ($member['player_id'] ?? 0), 'roles' => (array) ($member['roles'] ?? [])];
+            }
+            $logoPath = null;
+            $uploadedLogo = null;
+            try {
+                if (!empty($_FILES['team_logo']['tmp_name'])) {
+                    if ($_FILES['team_logo']['error'] !== UPLOAD_ERR_OK || (int) $_FILES['team_logo']['size'] > 2 * 1024 * 1024) {
+                        throw new InvalidArgumentException('ไฟล์โลโก้ไม่ถูกต้องหรือมีขนาดเกิน 2MB');
+                    }
+                    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($_FILES['team_logo']['tmp_name']);
+                    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+                    if (!isset($extensions[$mime]) || @getimagesize($_FILES['team_logo']['tmp_name']) === false) {
+                        throw new InvalidArgumentException('รองรับโลโก้เฉพาะ JPG, PNG หรือ WebP');
+                    }
+                    $uploadDir = dirname(__DIR__) . '/assets/uploads';
+                    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0755, true)) throw new RuntimeException('ไม่สามารถเตรียมพื้นที่เก็บโลโก้');
+                    $filename = 'team_' . bin2hex(random_bytes(12)) . '.' . $extensions[$mime];
+                    $uploadedLogo = $uploadDir . '/' . $filename;
+                    if (!move_uploaded_file($_FILES['team_logo']['tmp_name'], $uploadedLogo)) throw new RuntimeException('ไม่สามารถบันทึกโลโก้');
+                    $logoPath = 'assets/uploads/' . $filename;
+                }
+                saveTeamTournamentRegistration($pdo, (int) $_SESSION['user_id'], $tournamentId, $categoryId, (string) ($_POST['team_name'] ?? ''), $roster, (string) ($_POST['team_tag'] ?? ''), $logoPath);
+                $success = 'สมัครเข้าร่วมรายการเรียบร้อยแล้ว';
+            } catch (Throwable $exception) {
+                if ($uploadedLogo && is_file($uploadedLogo)) unlink($uploadedLogo);
+                error_log(sprintf(
+                    'Team tournament registration failed: user_id=%d tournament_id=%d category_id=%d error=%s',
+                    (int) ($_SESSION['user_id'] ?? 0),
+                    $tournamentId,
+                    $categoryId,
+                    $exception->getMessage()
+                ));
+                if ($exception instanceof InvalidArgumentException && $exception->getMessage() === 'หัวหน้าทีมนี้สมัคร Category นี้แล้ว') {
+                    $success = 'สมัครเข้าร่วมรายการเรียบร้อยแล้ว';
+                } else {
+                    $error = $exception instanceof InvalidArgumentException
+                        ? $exception->getMessage()
+                        : 'ส่งใบสมัครไม่สำเร็จ กรุณาตรวจสอบข้อมูลทีมและรายชื่ออีกครั้ง';
                 }
             }
+        } else {
+            $error = 'รูปแบบรายการแข่งขันไม่ถูกต้อง';
         }
-    </script>
+    }
+}
 
+function getTournamentRegistrationState(array $tournament, DateTimeImmutable $now): array
+{
+    if (($tournament['status'] ?? '') !== 'registration_open') return ['allowed' => false, 'message' => 'รายการนี้ยังไม่เปิดรับสมัคร'];
+    if (!empty($tournament['registration_start']) && $now < new DateTimeImmutable($tournament['registration_start'])) return ['allowed' => false, 'message' => 'ยังไม่ถึงเวลาเปิดรับสมัคร'];
+    if (!empty($tournament['registration_end']) && $now > new DateTimeImmutable($tournament['registration_end'])) return ['allowed' => false, 'message' => 'ปิดรับสมัครแล้ว'];
+    return ['allowed' => true, 'message' => ''];
+}
+
+$requestedTournamentId = (int) ($_GET['id'] ?? $_POST['tournament_id'] ?? 0);
+$requestedCategoryId = (int) ($_GET['category_id'] ?? $_POST['tournament_category_id'] ?? 0);
+$tournaments = [];
+if ($requestedTournamentId > 0) {
+    $tournamentListStmt = $pdo->prepare("SELECT t.*, g.name AS game_name, g.play_mode
+        FROM tournaments t
+        INNER JOIN games g ON g.game_id = t.game_id
+        WHERE t.tournament_id = :tournament_id
+        LIMIT 1");
+    $tournamentListStmt->execute(['tournament_id' => $requestedTournamentId]);
+    $selectedTournament = $tournamentListStmt->fetch(PDO::FETCH_ASSOC);
+    if ($selectedTournament) {
+        $tournaments[] = $selectedTournament;
+    }
+}
+$categories = [];
+$categoryStmt = $pdo->prepare('SELECT * FROM tournament_categories WHERE tournament_id = :tournament AND is_active = 1 ORDER BY tournament_category_id');
+foreach ($tournaments as $tournament) {
+    $categoryStmt->execute(['tournament' => $tournament['tournament_id']]);
+    $availableCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+    if ($requestedCategoryId > 0) {
+        $availableCategories = array_values(array_filter(
+            $availableCategories,
+            static fn(array $category): bool => (int) $category['tournament_category_id'] === $requestedCategoryId
+        ));
+    }
+    $categories[(int) $tournament['tournament_id']] = $availableCategories;
+}
+if ($requestedTournamentId > 0 && !$tournaments) {
+    $error = 'ไม่พบรายการแข่งขันที่เลือก';
+} elseif ($requestedCategoryId > 0 && $tournaments && !$categories[$requestedTournamentId]) {
+    $error = 'ไม่พบหมวดการแข่งขันของรายการที่เลือก';
+}
+?>
+<!doctype html>
+<html lang="th">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>สมัครแข่งขัน - Korat Esport</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config={theme:{extend:{colors:{brand:{orange:'#FF5500',glow:'#FF7700',dark:'#0A0A0C'}},fontFamily:{sans:['Kanit','sans-serif'],display:['Orbitron','sans-serif']},boxShadow:{'orange-glow':'0 0 25px rgba(255,85,0,.45)'}}}};</script>
     <style>
-        ::-webkit-scrollbar { display: none; }
-        html, body { -ms-overflow-style: none; scrollbar-width: none; }
-        body { background-color: #0F1117; }
-        .bg-esports-arena {
-            background: linear-gradient(to bottom, rgba(15, 17, 23, 0.55), rgba(15, 17, 23, 0.90)),
-                url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop');
-            background-size: cover; background-position: center; background-attachment: fixed;
-        }
-        .glass-nav {
-            background: rgba(15, 17, 23, 0.85); backdrop-filter: blur(16px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.15);
-        }
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.07); backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-        }
-        .grid-bg {
-            background-image: radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 0);
-            background-size: 24px 24px;
-        }
+        body{background:#0f1117}.bg-arena{background:linear-gradient(to bottom,rgba(15,17,23,.65),rgba(15,17,23,.96)),url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop');background-size:cover;background-position:center;background-attachment:fixed}.glass-nav{background:rgba(15,17,23,.88);backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,.15)}.glass-panel{background:rgba(255,255,255,.07);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.15)}.grid-bg{background-image:radial-gradient(rgba(255,255,255,.15) 1px,transparent 0);background-size:24px 24px}
     </style>
 </head>
-
 <body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased">
-
-    <div class="fixed inset-0 bg-esports-arena z-0 pointer-events-none"></div>
-    <div class="fixed inset-0 grid-bg opacity-30 z-0 pointer-events-none"></div>
-
-    <div class="relative z-10 flex flex-col min-h-screen">
-
-        <!-- NAVBAR -->
-        <header class="sticky top-0 z-50 glass-nav">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="flex items-center justify-between h-20">
-                    <a href="index.php" class="flex items-center gap-3">
-                        <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto"
-                            onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
-                        <div>
-                            <span class="font-display font-black text-xl text-white">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] text-gray-200 font-bold uppercase -mt-1">Official Arena & Hub</span>
-                        </div>
-                    </a>
-
-                    <nav class="hidden md:flex items-center gap-2">
-                        <a href="index.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">หน้าแรก</a>
-                        <a href="tournaments.php" class="px-4 py-2 rounded-xl text-sm font-bold text-white bg-brand-orange">ทัวร์นาเมนต์</a>
-                        <a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ตารางคะแนน</a>
-                        <a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ข่าวสาร</a>
-                        <a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">แกลเลอรี่</a>
-                    </nav>
-
-                    <div class="flex items-center gap-3">
-                        <?php if ($isLoggedIn): ?>
-                            <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl">
-                                <span class="text-sm font-bold text-white"><?= htmlspecialchars($currentUser['username']) ?></span>
-                                <a href="profile.php" class="w-9 h-9 rounded-xl bg-brand-orange text-white flex items-center justify-center">
-                                    <i class="fa-solid fa-user-gear text-sm"></i>
-                                </a>
-                                <a href="../auth/logout.php" class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center hover:bg-rose-600 hover:text-white">
-                                    <i class="fa-solid fa-right-from-bracket text-sm"></i>
-                                </a>
-                            </div>
-                        <?php endif; ?>
+<div class="fixed inset-0 bg-arena z-0 pointer-events-none"></div><div class="fixed inset-0 grid-bg opacity-30 z-0 pointer-events-none"></div>
+<div class="relative z-10 min-h-screen">
+<header class="sticky top-0 z-50 glass-nav"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex items-center justify-between h-20">
+    <a href="index.php" class="flex items-center gap-3"><img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto" onerror="this.src='https://placehold.co/100x100/121318/FF5500?text=KE'"><div><span class="font-display font-black text-xl text-white">KORAT <span class="text-brand-orange">ESPORT</span></span><span class="block text-[10px] text-gray-300 font-bold uppercase -mt-1">Official Arena &amp; Hub</span></div></a>
+    <nav class="hidden md:flex items-center gap-1"><a href="index.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">หน้าแรก</a><a href="tournaments.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-brand-orange bg-white/10">ทัวร์นาเมนต์</a><a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ตารางคะแนน</a><a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ข่าวสาร</a><a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">แกลเลอรี่</a></nav>
+    <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl"><span class="hidden sm:block text-sm font-bold"><?= htmlspecialchars($currentUser['username']) ?></span><a href="profile.php" class="w-9 h-9 rounded-xl bg-brand-orange text-white flex items-center justify-center"><i class="fa-solid fa-user"></i></a><a href="../auth/logout.php" class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center"><i class="fa-solid fa-right-from-bracket"></i></a></div>
+</div></div></header>
+<main class="mx-auto max-w-5xl px-4 sm:px-6 py-12">
+    <div class="mb-8 text-center"><div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-orange/20 border border-brand-orange/50 text-brand-orange text-xs font-bold uppercase tracking-widest"><i class="fa-solid fa-trophy"></i> เปิดรับสมัคร</div><h1 class="mt-4 text-3xl sm:text-4xl font-black font-display">สมัครเข้าร่วมการแข่งขัน</h1><p class="mt-2 text-sm text-gray-400">กรอกข้อมูลทีมและเลือกผู้เล่นสำหรับรายการนี้</p></div>
+    <?php if ($error): ?><div class="mb-5 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-200"><?= htmlspecialchars($error); ?></div><?php endif; ?>
+    <?php if ($success): ?><div class="mb-5 rounded-lg border border-green-500/40 bg-green-500/10 p-4 text-green-200"><?= htmlspecialchars($success); ?></div><?php endif; ?>
+    <div class="space-y-8">
+    <?php foreach ($tournaments as $tournament): ?>
+        <?php $id = (int) $tournament['tournament_id']; ?>
+        <?php $tournamentCategories = $categories[$id] ?? []; $fixedCategoryId = count($tournamentCategories) === 1 ? (int) $tournamentCategories[0]['tournament_category_id'] : 0; ?>
+        <section class="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl">
+            <h2 class="text-2xl font-bold"><?= htmlspecialchars($tournament['name']); ?> <span class="text-orange-400">(<?= htmlspecialchars($tournament['game_name']); ?>)</span></h2>
+            <?php if ($tournament['play_mode'] === 'solo'): ?>
+                <form method="post" class="mt-5 flex flex-wrap items-end gap-3">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken); ?>"><input type="hidden" name="tournament_id" value="<?= $id; ?>"><input type="hidden" name="mode" value="solo">
+                    <?php if ($fixedCategoryId): ?><input type="hidden" name="tournament_category_id" value="<?= $fixedCategoryId; ?>"><?php endif; ?>
+                    <label class="text-sm">รุ่นการแข่งขัน<select <?= $fixedCategoryId ? 'disabled' : ''; ?> name="<?= $fixedCategoryId ? '' : 'tournament_category_id'; ?>" required class="mt-1 block rounded-lg bg-slate-900 p-3"><?php foreach ($tournamentCategories as $category): ?><option value="<?= (int) $category['tournament_category_id']; ?>" <?= $fixedCategoryId === (int) $category['tournament_category_id'] ? 'selected' : ''; ?>><?= htmlspecialchars(strtolower((string) ($category['category_code'] ?? '')) === 'open' ? 'โอเพ่น' : ($category['label'] ?: $category['name'])); ?></option><?php endforeach; ?></select></label>
+                    <button class="rounded-lg bg-orange-500 px-5 py-3 font-bold">สมัคร Solo</button>
+                </form>
+            <?php else: ?>
+                <form method="post" enctype="multipart/form-data" class="team-form mt-5 space-y-5" data-tournament="<?= $id; ?>">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken); ?>"><input type="hidden" name="tournament_id" value="<?= $id; ?>"><input type="hidden" name="mode" value="team">
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <label>ชื่อทีม<input name="team_name" required class="mt-1 w-full rounded-lg bg-slate-900 p-3"></label>
+                        <label>ตัวย่อทีม<input name="team_tag" required maxlength="10" pattern="[A-Za-z0-9_-]{2,10}" class="mt-1 w-full rounded-lg bg-slate-900 p-3"></label>
+                        <label>โลโก้ทีม (ถ้ามี)<input type="file" name="team_logo" accept="image/jpeg,image/png,image/webp" class="mt-1 w-full rounded-lg bg-slate-900 p-3"></label>
                     </div>
-                </div>
-            </div>
-        </header>
-
-        <!-- PAGE HEADER -->
-        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-6 text-center space-y-4">
-            <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-orange/20 border border-brand-orange/50 text-brand-orange text-xs font-bold uppercase tracking-widest">
-                <i class="fa-solid fa-file-pen"></i> Tournament Entry Portal
-            </div>
-            <h1 class="text-4xl sm:text-6xl font-black font-display text-white uppercase tracking-wider">
-                สมัครเข้าร่วมแข่งขัน <span class="text-brand-orange">(REGISTRATION)</span>
-            </h1>
-            <p class="text-sm sm:text-base text-gray-300 max-w-xl mx-auto">
-                เลือกทีมสโมสรกลางของคุณและระบุประเภทการแข่งขัน (Open / ชาย / หญิง) สำหรับทัวร์นาเมนต์นี้
-            </p>
+                    <?php if ($fixedCategoryId): ?><input type="hidden" name="tournament_category_id" value="<?= $fixedCategoryId; ?>"><?php endif; ?>
+                    <label>รุ่นการแข่งขัน<select class="category mt-1 w-full rounded-lg bg-slate-900 p-3" <?= $fixedCategoryId ? 'disabled' : ''; ?> name="<?= $fixedCategoryId ? '' : 'tournament_category_id'; ?>" required><option value="" <?= $fixedCategoryId ? '' : 'selected'; ?>>เลือกรุ่นการแข่งขัน</option><?php foreach ($tournamentCategories as $category): ?><option value="<?= (int) $category['tournament_category_id']; ?>" <?= $fixedCategoryId === (int) $category['tournament_category_id'] ? 'selected' : ''; ?> data-starters="<?= (int) $category['starters_count']; ?>" data-subs="<?= (int) $category['substitutes_count']; ?>" data-required="<?= htmlspecialchars((string) $category['checkin_required_roles']); ?>"><?= htmlspecialchars(strtolower((string) ($category['category_code'] ?? '')) === 'open' ? 'โอเพ่น' : ($category['label'] ?: $category['name'])); ?></option><?php endforeach; ?></select></label>
+                    <div class="category-info text-sm text-slate-400"></div><div class="roster-warning text-xs text-amber-300"></div>
+                    <input type="search" class="search w-full rounded-lg bg-slate-900 p-3" placeholder="ค้นหาผู้เล่นด้วยชื่อ Username หรือ Player ID" disabled>
+                    <div class="search-results space-y-2"></div>
+                    <div class="selected grid gap-4 sm:grid-cols-2"><div><h3>ผู้เล่นตัวจริง <span class="starter-count">0</span></h3><div class="starters space-y-2"></div></div><div><h3>ตัวสำรอง <span class="sub-count">0</span></h3><div class="subs space-y-2"></div></div></div>
+                    <div><h3>ทีมงาน</h3><div class="staff space-y-2"></div></div>
+                    <button type="submit" disabled class="submit-team rounded-lg bg-orange-500 px-5 py-3 font-bold disabled:cursor-not-allowed disabled:opacity-40">ยืนยันการสมัคร</button>
+                </form>
+            <?php endif; ?>
         </section>
-
-        <!-- MAIN CONTENT -->
-        <main class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 mb-16 w-full space-y-6">
-
-            <div class="flex items-center justify-between">
-                <a href="tournaments.php" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-gray-300 transition-all">
-                    <i class="fa-solid fa-arrow-left text-brand-orange"></i> กลับไปหน้ารายการทัวร์นาเมนต์
-                </a>
-            </div>
-
-            <?php if ($error): ?>
-                <div class="p-4 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-sm flex items-center gap-3">
-                    <i class="fa-solid fa-triangle-exclamation text-xl text-rose-400"></i>
-                    <span><?= htmlspecialchars($error); ?></span>
-                </div>
-            <?php elseif ($success): ?>
-                <div class="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-sm flex items-center gap-3">
-                    <i class="fa-solid fa-circle-check text-xl text-emerald-400"></i>
-                    <span><?= htmlspecialchars($success); ?></span>
-                </div>
-            <?php endif; ?>
-
-            <?php if (count($tournaments) == 0): ?>
-                <div class="glass-panel p-12 text-center text-gray-300 rounded-3xl space-y-3">
-                    <i class="fa-solid fa-calendar-xmark text-5xl text-brand-orange opacity-60 block mx-auto"></i>
-                    <h3 class="text-xl font-bold text-white">ไม่มีทัวร์นาเมนต์ที่เปิดรับสมัครในขณะนี้</h3>
-                </div>
-            <?php endif; ?>
-
-            <div class="space-y-6">
-                <?php foreach ($tournaments as $t): 
-                    // ดึงทีมกลางทั้งหมดที่ผู้ใช้นี้เป็นกัปตัน (ไม่ต้องกรอง game_id แล้ว เพราะเป็นทีมกลาง)
-                    $myTeamsStmt = $pdo->prepare("
-                        SELECT t.team_id, t.name 
-                        FROM teams t
-                        WHERE t.captain_player_id = :pid
-                    ");
-                    $myTeamsStmt->execute(['pid' => $myPlayerId]);
-                    $filteredTeams = $myTeamsStmt->fetchAll();
-                ?>
-                    <div class="glass-panel p-6 sm:p-8 rounded-3xl border border-white/20 shadow-2xl space-y-6">
-                        <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/15 pb-4 gap-3">
-                            <div>
-                                <div class="flex items-center gap-2">
-                                    <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-brand-orange text-white">
-                                        <i class="fa-solid fa-gamepad mr-1"></i> <?= htmlspecialchars($t['game_name']); ?>
-                                    </span>
-                                    <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-purple-500/20 border border-purple-500/40 text-purple-300">
-                                        <?= ($t['play_mode'] === 'solo') ? 'ประเภทเดี่ยว (Solo)' : 'ประเภททีม (Team)'; ?>
-                                    </span>
-                                </div>
-                                <h3 class="text-2xl font-black font-display text-white mt-2"><?= htmlspecialchars($t['name']); ?></h3>
-                            </div>
-                        </div>
-
-                        <details class="rounded-2xl bg-black/30 border border-white/10" open>
-                            <summary class="cursor-pointer px-4 py-3 text-sm font-bold text-amber-300 flex items-center gap-2">
-                                <i class="fa-solid fa-circle-info"></i> ข้อมูลสำคัญก่อนสมัคร
-                            </summary>
-                            <div class="px-4 pb-4 space-y-4 text-xs">
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
-                                        <span class="block text-gray-400">สถานะ</span>
-                                        <strong class="text-emerald-300">เปิดรับสมัคร</strong>
-                                    </div>
-                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
-                                        <span class="block text-gray-400">รับสมัครถึง</span>
-                                        <strong class="text-white"><?= !empty($t['registration_end']) ? date('d/m/Y H:i', strtotime($t['registration_end'])) : '-'; ?></strong>
-                                    </div>
-                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
-                                        <span class="block text-gray-400">เริ่มแข่งขัน</span>
-                                        <strong class="text-white"><?= !empty($t['start_date']) ? date('d/m/Y H:i', strtotime($t['start_date'])) : '-'; ?></strong>
-                                    </div>
-                                    <div class="p-3 rounded-xl bg-white/5 border border-white/10">
-                                        <span class="block text-gray-400">Check-in</span>
-                                        <strong class="text-white"><?= !empty($t['checkin_open_at']) ? date('d/m/Y H:i', strtotime($t['checkin_open_at'])) : 'ตามประกาศ'; ?></strong>
-                                    </div>
-                                </div>
-                                <?php if (!empty($tournamentDays[(int) $t['tournament_id']])): ?>
-                                    <div class="space-y-2">
-                                        <h4 class="font-bold text-cyan-300">กำหนดการและสถานที่</h4>
-                                        <?php foreach ($tournamentDays[(int) $t['tournament_id']] as $day): ?>
-                                            <div class="flex flex-wrap justify-between gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
-                                                <span class="text-gray-300">วันที่ <?= (int) $day['day_number']; ?>: <?= date('d/m/Y', strtotime($day['event_date'])); ?></span>
-                                                <span class="text-gray-400"><?= $day['start_time'] ? date('H:i', strtotime($day['start_time'])) : ''; ?><?= $day['end_time'] ? ' - ' . date('H:i', strtotime($day['end_time'])) : ''; ?><?= $day['venue_name'] ? ' · ' . htmlspecialchars($day['venue_name']) : ''; ?></span>
-                                            </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                <?php endif; ?>
-                                <?php if (!empty($t['rules'])): ?>
-                                    <div class="p-4 rounded-xl bg-white/5 border border-white/10">
-                                        <h4 class="font-bold text-brand-orange mb-2"><i class="fa-solid fa-scroll mr-1"></i> กฎกติกาการแข่งขัน</h4>
-                                        <div class="text-gray-200 leading-relaxed whitespace-pre-line"><?= htmlspecialchars($t['rules']); ?></div>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                        </details>
-
-                        <div class="space-y-3">
-                            <?php if ($t['play_mode'] === 'solo'): ?>
-                                <div class="bg-black/40 p-4 rounded-2xl border border-white/10 flex items-center justify-between">
-                                    <div>
-                                        <h5 class="text-base font-bold text-white"><?= htmlspecialchars($currentUser['username']); ?></h5>
-                                        <span class="text-[11px] text-gray-400">สมัครแข่งขันเดี่ยว</span>
-                                    </div>
-                                    <div>
-                                        <?php if (isset($existingSoloMap[$t['tournament_id']])): ?>
-                                            <?php [$label, $badgeClass, $icon] = registrationStatusLabel($existingSoloMap[$t['tournament_id']]); ?>
-                                            <span class="px-4 py-2 rounded-xl border text-xs font-bold <?= $badgeClass; ?>"><i class="fa-solid <?= $icon; ?> mr-1"></i><?= $label; ?></span>
-                                        <?php else: ?>
-                                            <form method="POST" class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                                                <input type="hidden" name="csrf_token" value="<?= $csrfToken; ?>">
-                                                <input type="hidden" name="tournament_id" value="<?= $t['tournament_id']; ?>">
-                                                <input type="hidden" name="mode" value="solo">
-                                                <select name="tournament_category_id" required class="bg-black/60 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange">
-                                                    <option value="">เลือก Category</option>
-                                                    <?php foreach (($tournamentCategories[(int) $t['tournament_id']] ?? []) as $category): ?>
-                                                        <option value="<?= (int) $category['tournament_category_id']; ?>" <?= $requestedCategoryId === (int) $category['tournament_category_id'] ? 'selected' : ''; ?>><?= htmlspecialchars($category['label'] ?: $category['category_code']); ?></option>
-                                                    <?php endforeach; ?>
-                                                </select>
-                                                <button type="submit" class="px-6 py-2.5 rounded-xl bg-brand-orange text-white font-bold text-xs uppercase">สมัครแข่งเดี่ยว</button>
-                                            </form>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                            <?php else: ?>
-                                <h4 class="text-xs font-bold uppercase tracking-wider text-gray-400">
-                                    <i class="fa-solid fa-shield-halved text-brand-orange"></i> เลือกทีมสโมสรของคุณและระบุประเภทการแข่งขัน:
-                                </h4>
-
-                                <?php if (empty($filteredTeams)): ?>
-                                    <div class="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-100 space-y-2">
-                                        <div><i class="fa-solid fa-circle-info mr-1.5"></i> คุณยังไม่มีทีมสโมสรกลาง กรุณาสร้างทีมก่อนสมัครแข่งขัน</div>
-                                        <a href="create-team.php" class="inline-block px-3 py-1.5 rounded-lg bg-brand-orange text-white font-bold uppercase text-[10px]">สร้างทีมใหม่</a>
-                                    </div>
-                                <?php else: ?>
-                                    <?php foreach ($filteredTeams as $team): ?>
-                                        <?php $key = $t['tournament_id'] . '-' . $team['team_id']; ?>
-                                        <div class="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
-                                            <div class="flex items-center gap-3">
-                                                <div class="w-10 h-10 rounded-xl bg-white/10 text-brand-orange flex items-center justify-center font-bold">
-                                                    <i class="fa-solid fa-shield"></i>
-                                                </div>
-                                                <div>
-                                                    <h5 class="text-base font-bold text-white"><?= htmlspecialchars($team['name']); ?></h5>
-                                                    <span class="text-[11px] text-gray-400">ทีมสโมสรกลาง (Global Team)</span>
-                                                </div>
-                                            </div>
-
-                                            <?php if (isset($existingTeamMap[$key])): ?>
-                                                <?php [$label, $badgeClass, $icon] = registrationStatusLabel($existingTeamMap[$key]); ?>
-                                                <div class="pt-2">
-                                                    <span class="px-4 py-2 rounded-xl text-xs font-bold border inline-block <?= $badgeClass; ?>">
-                                                        <i class="fa-solid <?= $icon; ?>"></i> <?= $label; ?>
-                                                    </span>
-                                                </div>
-                                            <?php else: ?>
-                                                <form method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                                                    <input type="hidden" name="csrf_token" value="<?= $csrfToken; ?>">
-                                                    <input type="hidden" name="tournament_id" value="<?= $t['tournament_id']; ?>">
-                                                    <input type="hidden" name="team_id" value="<?= $team['team_id']; ?>">
-                                                    <input type="hidden" name="mode" value="team">
-
-                                                    <div class="sm:col-span-2">
-                                                        <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">เลือกประเภทการแข่งขันสำหรับทีมนี้:</label>
-                                                        <select name="tournament_category_id" required class="w-full bg-black/60 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange">
-                                                            <option value="">เลือก Category</option>
-                                                            <?php foreach (($tournamentCategories[(int) $t['tournament_id']] ?? []) as $category): ?>
-                                                                <option value="<?= (int) $category['tournament_category_id'] ?>"><?= htmlspecialchars($category['label'] ?: $category['category_code']) ?></option>
-                                                            <?php endforeach; ?>
-                                                        </select>
-                                                    </div>
-
-                                                    <div class="flex items-end">
-                                                        <button type="submit" class="w-full px-4 py-2 rounded-xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md cursor-pointer">
-                                                            <i class="fa-solid fa-paper-plane mr-1"></i> ยืนยันการสมัคร
-                                                        </button>
-                                                    </div>
-                                                </form>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-
-        </main>
-
-        <footer class="border-t border-white/15 bg-slate-950/80 backdrop-blur-md mt-auto py-8 text-xs text-gray-400">
-            <div class="max-w-7xl mx-auto px-4 text-center">
-                <p class="text-gray-300 font-semibold">&copy; <?= date('Y') ?> KORAT ESPORT. All rights reserved.</p>
-            </div>
-        </footer>
-
+    <?php endforeach; ?>
     </div>
-
+</main></div>
+<script>
+document.querySelectorAll('.team-form').forEach((form) => {
+    const category = form.querySelector('.category'), search = form.querySelector('.search'), results = form.querySelector('.search-results');
+    const starters = form.querySelector('.starters'), subs = form.querySelector('.subs'), staff = form.querySelector('.staff');
+    let selected = new Map(), config = { starters: 0, subs: 0, required: ['coach', 'manager'] };
+    const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+    const hidden = (name, value) => { const i=document.createElement('input'); i.type='hidden'; i.name=name; i.value=value; i.dataset.generated='1'; return i; };
+    const render = () => {
+        form.querySelectorAll('[data-generated]').forEach((e) => e.remove()); starters.innerHTML=''; subs.innerHTML=''; staff.innerHTML='';
+        let si=0, ui=0, fi=0; selected.forEach((v, id) => { const index = v.role==='starter'?si++:v.role==='substitute'?ui++:fi++; const row=document.createElement('div'); row.className='rounded-lg bg-slate-900 p-3 flex justify-between items-center gap-2'; row.innerHTML=`<span>${esc(v.name)}</span><span><select class="change-role rounded bg-slate-800 p-1" data-id="${id}"><option value="starter" ${v.role==='starter'?'selected':''}>ตัวจริง</option><option value="substitute" ${v.role==='substitute'?'selected':''}>สำรอง</option><option value="coach" ${v.role==='coach'?'selected':''}>โค้ช</option><option value="manager" ${v.role==='manager'?'selected':''}>ผู้จัดการ</option></select> <button type="button" class="remove text-red-300" data-id="${id}">นำออก</button></span>`; (v.role==='starter'?starters:v.role==='substitute'?subs:staff).appendChild(row); form.appendChild(hidden(`roster[${v.index}][player_id]`, id)); form.appendChild(hidden(`roster[${v.index}][roles][]`, v.role==='starter'?'player':v.role==='substitute'?'substitute':v.role)); });
+        form.querySelector('.starter-count').textContent=`${si}/${config.starters}`; form.querySelector('.sub-count').textContent=`${ui}/${config.subs}`;
+        const selectedRoles=[...selected.values()].map(v=>v.role); const requiredOk=config.required.every(role=>selectedRoles.indexOf(role==='player'?'starter':role==='substitute'?'substitute':role)>=0); form.querySelector('.submit-team').disabled=si!==config.starters||ui!==config.subs||!requiredOk;
+    };
+    category.addEventListener('change', () => { const o=category.selectedOptions[0]; config={ starters:Number(o.dataset.starters||0),subs:Number(o.dataset.subs||0),required:['coach','manager']}; search.disabled=!category.value; form.querySelector('.category-info').textContent=`ผู้เล่นตัวจริง ${config.starters} คน · ตัวสำรอง ${config.subs} คน · ต้องมีโค้ชและผู้จัดการทีม`; selected.clear(); render(); });
+    search.addEventListener('input', async () => { if(search.value.trim().length<1)return results.innerHTML=''; const p=new URLSearchParams({action:'search_players',tournament_id:form.dataset.tournament,category_id:category.value,q:search.value.trim()}); const r=await fetch(`register-tournament.php?${p}`); const players=await r.json(); results.innerHTML=players.length?players.map(x=>{const disabled=x.eligible?'':'disabled title="'+esc(x.eligibility_reason||'ผู้เล่นคนนี้ไม่ผ่านเงื่อนไขของรายการ')+'"';return `<div class="flex justify-between rounded-lg border border-white/10 p-3"><span>${esc(x.real_name||x.username)} (#${x.player_id}) ${x.age_at_tournament===null?'':'อายุ '+x.age_at_tournament+' ปี'}<small class="ml-2 text-red-300">${x.eligible?'':'ผู้เล่นคนนี้ไม่ผ่านเงื่อนไขของรายการ'}</small></span><span><button ${disabled} type="button" data-role="starter" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add mr-2 text-green-300">ตัวจริง</button><button ${disabled} type="button" data-role="substitute" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add mr-2 text-cyan-300">สำรอง</button><button ${disabled} type="button" data-role="coach" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add mr-2 text-purple-300">โค้ช</button><button ${disabled} type="button" data-role="manager" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add text-purple-300">ผู้จัดการ</button></span></div>`}).join(''):'<div class="rounded-lg border border-white/10 p-3 text-sm text-slate-400">ยังไม่พบนักกีฬาที่ตรงกับคำค้น</div>'; });
+    form.addEventListener('change',(e)=>{const select=e.target.closest('.change-role');if(!select)return;const item=selected.get(Number(select.dataset.id));if(item){const role=select.value;if(role==='starter'&&[...selected.values()].filter(v=>v.role==='starter').length>=config.starters)return render();if(role==='substitute'&&[...selected.values()].filter(v=>v.role==='substitute').length>=config.subs)return render();item.role=role;render();}});
+    form.addEventListener('click',(e)=>{const b=e.target.closest('.add,.remove');if(!b)return;if(b.classList.contains('remove'))selected.delete(Number(b.dataset.id));else{const id=Number(b.dataset.id),role=b.dataset.role;if(selected.has(id))return;if(role==='starter'&&[...selected.values()].filter(v=>v.role==='starter').length>=config.starters)return;if(role==='substitute'&&[...selected.values()].filter(v=>v.role==='substitute').length>=config.subs)return;selected.set(id,{role,name:b.dataset.name,index:selected.size});}render();});
+    if (category.value) category.dispatchEvent(new Event('change'));
+});
+</script>
 </body>
-
 </html>

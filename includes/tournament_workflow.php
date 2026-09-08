@@ -25,7 +25,7 @@ function getTournamentWorkflowState(PDO $pdo, int $tournamentId, ?DateTimeImmuta
     $matchStmt = $pdo->prepare("SELECT COUNT(*) AS total_matches,
             SUM(CASE WHEN status IN ('completed', 'walkover') OR result_type = 'bye' THEN 1 ELSE 0 END) AS finished_matches,
             SUM(CASE WHEN status NOT IN ('completed', 'walkover') AND result_type <> 'bye'
-                AND NOT (bracket_type LIKE 'double_grand_final_reset_%' AND EXISTS (
+                AND NOT (bracket_type = 'grand_final_reset' AND EXISTS (
                     SELECT 1 FROM matches parent_match
                     WHERE parent_match.reset_match_id = matches.match_id
                         AND parent_match.status IN ('completed', 'walkover')
@@ -85,8 +85,8 @@ function workflowTournamentReadyToComplete(PDO $pdo, int $tournamentId, array $c
         FROM matches
         WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id
         ORDER BY CASE
-            WHEN bracket_type LIKE 'double_grand_final_reset_%' AND status IN ('completed', 'walkover') THEN 0
-            WHEN bracket_type LIKE 'double_grand_final_%' AND status IN ('completed', 'walkover') THEN 1
+            WHEN bracket_type = 'grand_final_reset' AND status IN ('completed', 'walkover') THEN 0
+            WHEN bracket_type = 'grand_final' AND status IN ('completed', 'walkover') THEN 1
             ELSE 2
         END, round_number DESC, match_index DESC LIMIT 1");
     foreach ($categories as $category) {

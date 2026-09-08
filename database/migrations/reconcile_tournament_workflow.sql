@@ -36,7 +36,7 @@ SET category_code = COALESCE(category_code, NULLIF(TRIM(code), '')),
     label = COALESCE(label, NULLIF(TRIM(name), '')),
     format = COALESCE(format,
         CASE competition_format
-            WHEN 'group_only' THEN 'round_robin'
+            WHEN 'group_only' THEN 'group_playoff'
             WHEN 'group_then_single' THEN 'group_playoff'
             WHEN 'group_then_double' THEN 'group_playoff'
             WHEN 'multi_participant_points' THEN 'multi_participant_points'
@@ -52,7 +52,7 @@ UPDATE tournament_categories
 SET code = category_code,
     name = COALESCE(label, name),
     competition_format = CASE format
-        WHEN 'round_robin' THEN 'group_only'
+        WHEN 'group_playoff' THEN 'group_only'
         WHEN 'group_playoff' THEN 'group_then_single'
         WHEN 'multi_participant_points' THEN 'multi_participant_points'
         ELSE format

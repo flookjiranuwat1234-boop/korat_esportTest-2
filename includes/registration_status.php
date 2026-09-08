@@ -3,7 +3,15 @@ function ensureRegistrationStatusHistoryTable(PDO $pdo): void
 {
     static $ready = false;
     if ($ready) return;
-    $pdo->exec("CREATE TABLE IF NOT EXISTS registration_status_history (
+    $tableCheck = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name');
+    $tableCheck->execute(['table_name' => 'registration_status_history']);
+    if ((int) $tableCheck->fetchColumn() > 0) {
+        $ready = true;
+        return;
+    }
+
+    $pdo->exec("CREATE TABLE registration_status_history (
         registration_status_history_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
         tournament_registration_id INT UNSIGNED NOT NULL,
         old_status VARCHAR(30) NULL,

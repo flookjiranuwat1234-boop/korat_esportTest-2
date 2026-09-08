@@ -1,1 +1,8 @@
-{}
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^@'\n<\\?php require __DIR__ \\. '/config/db\\.php';\\$q=\\$pdo->query\\(\"SELECT status,COUNT\\(\\*\\) c FROM matches WHERE tournament_id=144 GROUP BY status\"\\);foreach\\(\\$q as \\$r\\)print_r\\(\\$r\\);\\$q=\\$pdo->query\\(\"SELECT bracket_type,COUNT\\(\\*\\) c FROM matches WHERE tournament_id=144 GROUP BY bracket_type\"\\);foreach\\(\\$q as \\$r\\)print_r\\(\\$r\\);\n'@ \\| php$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

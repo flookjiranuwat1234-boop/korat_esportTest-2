@@ -323,7 +323,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1">Official Arena & Hub</span>
+                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
@@ -416,15 +416,15 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                 </h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <?php if (empty($tournamentHistory)): ?>
-                        <div class="glass-panel p-8 text-center text-gray-400 rounded-2xl md:col-span-2">ยังไม่มีประวัติการสมัคร Tournament</div>
+                        <div class="glass-panel p-8 text-center text-gray-400 rounded-2xl md:col-span-2">ยังไม่มีประวัติการสมัครแข่งขัน</div>
                     <?php endif; ?>
                     <?php foreach ($tournamentHistory as $history): ?>
                         <?php $teamCheckinComplete = (int) $history['required_count'] > 0 && (int) $history['checked_count'] >= (int) $history['required_count']; ?>
                         <div class="glass-panel p-5 rounded-2xl border border-white/15 space-y-2">
                             <div class="flex items-start justify-between gap-2"><h3 class="font-bold text-white"><?php echo htmlspecialchars($history['tournament_name']); ?></h3><span class="text-[10px] text-brand-orange font-bold uppercase"><?php echo htmlspecialchars($history['category'] ?: 'open'); ?></span></div>
                             <p class="text-xs text-gray-400"><?php echo htmlspecialchars($history['game_name']); ?> | ทีมที่ใช้สมัคร: <?php echo htmlspecialchars($history['registered_team']); ?></p>
-                            <p class="text-xs text-gray-300">Check-in ของฉัน: <b class="<?php echo in_array($history['own_checkin_status'], ['checked_in', 'waived'], true) ? 'text-emerald-400' : 'text-rose-300'; ?>"><?php echo in_array($history['own_checkin_status'], ['checked_in', 'waived'], true) ? 'เรียบร้อย' : 'ยังไม่ครบ'; ?></b></p>
-                            <p class="text-xs text-gray-300">สถานะทีม: <b class="<?php echo $teamCheckinComplete ? 'text-emerald-400' : 'text-amber-300'; ?>"><?php echo (int) $history['checked_count']; ?>/<?php echo (int) $history['required_count']; ?> <?php echo $teamCheckinComplete ? 'Check-in ครบ' : 'Check-in ไม่ครบ'; ?></b></p>
+                            <p class="text-xs text-gray-300">เช็กอินของฉัน: <b class="<?php echo in_array($history['own_checkin_status'], ['checked_in', 'waived'], true) ? 'text-emerald-400' : 'text-rose-300'; ?>"><?php echo in_array($history['own_checkin_status'], ['checked_in', 'waived'], true) ? 'เรียบร้อย' : 'ยังไม่ครบ'; ?></b></p>
+                            <p class="text-xs text-gray-300">สถานะทีม: <b class="<?php echo $teamCheckinComplete ? 'text-emerald-400' : 'text-amber-300'; ?>"><?php echo (int) $history['checked_count']; ?>/<?php echo (int) $history['required_count']; ?> <?php echo $teamCheckinComplete ? 'เช็กอินครบ' : 'เช็กอินไม่ครบ'; ?></b></p>
                             <p class="text-xs text-gray-400">สถานะการแข่งขัน: <?php echo htmlspecialchars($history['participation_status'] ?: $history['status']); ?></p>
                             <a href="tournament-detail.php?id=<?php echo (int) $history['tournament_id']; ?>&category=<?php echo urlencode($history['category'] ?: 'open'); ?>" class="text-[11px] text-brand-orange hover:underline font-semibold">ดูตารางและเส้นทางการแข่งขัน <i class="fa-solid fa-arrow-right ml-1"></i></a>
                         </div>
@@ -586,7 +586,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
                             <div class="space-y-2">
-                                <label class="block text-xs font-bold uppercase text-gray-300 tracking-wider">ชื่อในเกม (Display Name)</label>
+                                <label class="block text-xs font-bold uppercase text-gray-300 tracking-wider">ชื่อในเกม</label>
                                 <input type="text" name="display_name"
                                     value="<?php echo htmlspecialchars($player['display_name']); ?>" required
                                     class="w-full bg-black/40 border border-white/15 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-brand-orange font-medium">

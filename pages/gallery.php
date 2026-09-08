@@ -443,8 +443,7 @@ if ($selectedAlbumId > 0) {
                 <?php if ($selectedAlbumId > 0): ?>
                     อัลบั้ม: <span class="text-brand-orange"><?php echo htmlspecialchars($currentAlbumName); ?></span>
                 <?php else: ?>
-                    แกลเลอรี่กิจกรรม <span
-                        class="text-transparent bg-clip-text bg-gradient-to-r from-brand-orange via-amber-300 to-white">(GALLERY)</span>
+                    แกลเลอรี่กิจกรรม
                 <?php endif; ?>
             </h1>
 

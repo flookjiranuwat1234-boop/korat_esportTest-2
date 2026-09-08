@@ -95,22 +95,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_
             && $now <= new DateTimeImmutable($closeAt, new DateTimeZone('Asia/Bangkok')));
 
         if (!$member) {
-            $error = 'ไม่พบสมาชิกใน Tournament Roster ที่ได้รับอนุมัติ';
+            $error = 'ไม่พบสมาชิกในไลน์อัปการแข่งขันที่ได้รับอนุมัติ';
         } elseif (!$openAt || !$closeAt) {
-            $error = 'ยังไม่ได้กำหนดเวลา Check-in';
+            $error = 'ยังไม่ได้กำหนดเวลาเช็กอิน';
         } elseif (!$windowOpen || !canCheckinRegistration($pdo, $registrationId, $now)) {
-            $error = $now < new DateTimeImmutable($openAt, new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิด Check-in' : 'ขณะนี้อยู่นอกช่วงเวลา Check-in';
+            $error = $now < new DateTimeImmutable($openAt, new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิดเช็กอิน' : 'ขณะนี้อยู่นอกช่วงเวลาเช็กอิน';
         } elseif (in_array($member['checkin_status'], ['checked_in', 'waived'], true)) {
-            $error = 'สมาชิกคนนี้ Check-in แล้ว';
+            $error = 'สมาชิกคนนี้เช็กอินแล้ว';
         } else {
             try {
                 $pdo->beginTransaction();
                 markRosterPlayerCheckedIn($pdo, $registrationId, $playerId, (int) $_SESSION['user_id']);
                 $pdo->commit();
-                $success = 'Check-in สำเร็จ: ' . ($member['display_name'] ?: $member['username']) . ' — ' . ($member['team_name'] ?: 'ผู้สมัครเดี่ยว');
+                $success = 'เช็กอินสำเร็จ: ' . ($member['display_name'] ?: $member['username']) . ' — ' . ($member['team_name'] ?: 'ผู้สมัครเดี่ยว');
             } catch (Throwable $exception) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
-                $error = 'บันทึก Check-in ไม่สำเร็จ: ' . $exception->getMessage();
+                $error = 'บันทึกเช็กอินไม่สำเร็จ: ' . $exception->getMessage();
             }
         }
     }
@@ -373,11 +373,11 @@ if ($flash) {
             <div class="compact-card p-5">
                 <div class="flex items-center justify-between gap-3">
                     <div>
-                        <div class="mini-label text-slate-500">Tournament</div>
+                        <div class="mini-label text-slate-500">รายการแข่งขัน</div>
                         <h2 class="mt-2 text-lg font-bold text-slate-900">เลือกทัวร์นาเมนต์</h2>
                     </div>
                     <div class="rounded-full bg-orange-50 text-brand-orange px-3 py-1 text-[10px] font-bold uppercase tracking-[0.15em]">
-                        Check-in
+                        เช็กอิน
                     </div>
                 </div>
                 <form method="GET" action="checkin-teams.php" class="mt-4">
@@ -411,7 +411,7 @@ if ($flash) {
                         && $now <= new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok')));
                     $checkinNotStarted = $checkinOpenAt && $now < new DateTimeImmutable($checkinOpenAt, new DateTimeZone('Asia/Bangkok'));
                     $checkinClosed = $checkinCloseAt && $now > new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok'));
-                    $checkinWindowLabel = isDemoTournament($tournament ?? []) ? 'เปิด Check-in (DEMO)' : ((!$checkinOpenAt || !$checkinCloseAt) ? 'ยังไม่ได้กำหนดเวลา Check-in' : ($checkinNotStarted ? 'ยังไม่เปิด Check-in' : ($checkinClosed ? 'ปิด Check-in แล้ว' : 'เปิด Check-in')));
+                    $checkinWindowLabel = isDemoTournament($tournament ?? []) ? 'เปิดเช็กอิน (DEMO)' : ((!$checkinOpenAt || !$checkinCloseAt) ? 'ยังไม่ได้กำหนดเวลาเช็กอิน' : ($checkinNotStarted ? 'ยังไม่เปิดเช็กอิน' : ($checkinClosed ? 'ปิดเช็กอินแล้ว' : 'เปิดเช็กอิน')));
                 ?>
                 <?php if ($gameMissing): ?>
                     <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3 shadow-sm">
@@ -425,7 +425,7 @@ if ($flash) {
                         <div class="mt-2 text-sm font-bold text-slate-900"><?= $gameMissing ? 'ไม่พบข้อมูลเกม' : htmlspecialchars($tournament['game_name']) . ' · ' . ($isSolo ? 'Solo' : 'Team') ?></div>
                     </div>
                     <div class="compact-card p-4">
-                        <div class="mini-label">Check-in</div>
+                        <div class="mini-label">เช็กอิน</div>
                         <div class="mt-2 text-sm font-bold <?= $checkinClosed ? 'text-rose-600' : ($checkinOpen ? 'text-emerald-600' : 'text-amber-600') ?>"><?= $checkinWindowLabel ?></div>
                     </div>
                     <div class="compact-card p-4">
@@ -515,7 +515,7 @@ if ($flash) {
                 <?php if ($totalCount === 0): ?>
                     <div class="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
                         <div class="font-bold">ยังไม่มีทีม/ผู้เล่นที่ได้รับอนุมัติสำหรับทัวร์นาเมนต์นี้</div>
-                        <p class="mt-1 text-xs">ระบบพบใบสมัครที่ยังไม่ผ่านสถานะ approved หรือยังไม่มีใบสมัครที่เชื่อมกับ Category และ Team/Player ที่ใช้งานได้</p>
+                        <p class="mt-1 text-xs">พบใบสมัครที่ยังไม่ผ่านการอนุมัติ หรือยังไม่มีข้อมูลทีม/ผู้สมัครที่ใช้งานได้</p>
                     </div>
                 <?php endif; ?>
 
@@ -594,7 +594,7 @@ if ($flash) {
                                                     <span class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-medium <?php echo $memberChecked ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
                                                         <?php echo htmlspecialchars($member['display_name'] ?: $member['username']); ?>
                                                         <?php if (!$memberChecked): ?>
-                                                            <button type="button" aria-label="Check-in <?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>" class="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-rose-300 bg-white px-2 text-sm font-black leading-none text-rose-600 shadow-sm transition hover:bg-rose-600 hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-300" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">+</button>
+                                                            <button type="button" aria-label="เช็กอิน <?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>" class="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-rose-300 bg-white px-2 text-sm font-black leading-none text-rose-600 shadow-sm transition hover:bg-rose-600 hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-300" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">+</button>
                                                         <?php else: ?>✓<?php endif; ?>
                                                     </span>
                                                 <?php endforeach; ?>
@@ -613,7 +613,7 @@ if ($flash) {
         </main>
     </div>
 
-    <div id="checkinConfirmModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-md rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">ยืนยัน Check-in รายบุคคล</h3><button type="button" onclick="closeCheckinConfirm()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div class="space-y-3 p-6 text-sm"><div class="rounded-xl bg-slate-50 p-4"><div class="text-xs text-slate-500">ผู้เล่น</div><div id="confirmPlayerName" class="font-bold text-slate-900"></div><div class="mt-2 text-xs text-slate-500">ระบบจะ Check-in เฉพาะสมาชิกคนนี้ ไม่ใช่ทั้งทีม</div></div><form method="POST" id="checkinConfirmForm"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="player_checkin"><input type="hidden" name="registration_id" id="confirmRegistrationId"><input type="hidden" name="player_id" id="confirmPlayerId"><div class="flex justify-end gap-2 pt-3"><button type="button" onclick="closeCheckinConfirm()" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">ยืนยัน Check-in</button></div></form></div></div></div>
+    <div id="checkinConfirmModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-md rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">ยืนยันเช็กอินรายบุคคล</h3><button type="button" onclick="closeCheckinConfirm()" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div class="space-y-3 p-6 text-sm"><div class="rounded-xl bg-slate-50 p-4"><div class="text-xs text-slate-500">ผู้เล่น</div><div id="confirmPlayerName" class="font-bold text-slate-900"></div><div class="mt-2 text-xs text-slate-500">ระบบจะเช็กอินเฉพาะสมาชิกคนนี้ ไม่ใช่ทั้งทีม</div></div><form method="POST" id="checkinConfirmForm"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="player_checkin"><input type="hidden" name="registration_id" id="confirmRegistrationId"><input type="hidden" name="player_id" id="confirmPlayerId"><div class="flex justify-end gap-2 pt-3"><button type="button" onclick="closeCheckinConfirm()" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">ยืนยันเช็กอิน</button></div></form></div></div></div>
 
     <!-- Script สำหรับทำ Real-time Search -->
     <script>

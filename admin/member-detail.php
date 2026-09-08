@@ -142,7 +142,7 @@ if ($flash) {
     <div class="flex items-center justify-between gap-4">
         <div><a href="manage-members.php" class="text-sm text-orange-600 hover:underline"><i class="fa-solid fa-arrow-left"></i> กลับหน้าสมาชิก</a>
             <h1 class="text-2xl font-bold mt-2">รายละเอียดสมาชิก: <?= h($member['username']); ?></h1>
-            <p class="text-sm text-slate-500">ข้อมูลบัญชี นักกีฬา ทีม และประวัติ Tournament</p></div>
+            <p class="text-sm text-slate-500">ข้อมูลบัญชี นักกีฬา ทีม และประวัติการแข่งขัน</p></div>
         <?php if ($member['player_id']): ?><a target="_blank" href="../pages/player-profile.php?id=<?= (int) $member['player_id']; ?>" class="px-4 py-2 bg-slate-800 text-white rounded-lg">ดูโปรไฟล์สาธารณะ</a><?php endif; ?>
     </div>
     <?php if ($error): ?><div class="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg"><?= h($error); ?></div><?php endif; ?>
@@ -175,13 +175,13 @@ if ($flash) {
         <?php if (!$teams): ?><tr><td colspan="5" class="p-6 text-center text-slate-400">ยังไม่มีข้อมูลทีม</td></tr><?php endif; ?>
         </tbody></table></div></section>
 
-    <section class="bg-white rounded-2xl shadow-sm border overflow-hidden"><div class="p-5 border-b"><h2 class="font-bold text-lg">Tournament Roster และประวัติการแข่งขัน</h2><p class="text-xs text-slate-500">อ้างอิง Roster ของ Tournament ไม่เปลี่ยนตามทีมปัจจุบัน</p></div>
-        <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-slate-50"><tr><th class="p-3 text-left">Tournament</th><th class="p-3 text-left">ทีมตอนสมัคร</th><th class="p-3">ประเภท</th><th class="p-3">บทบาท</th><th class="p-3">อนุมัติ</th><th class="p-3">Check-in</th></tr></thead><tbody>
+    <section class="bg-white rounded-2xl shadow-sm border overflow-hidden"><div class="p-5 border-b"><h2 class="font-bold text-lg">Tournament Roster และประวัติการแข่งขัน</h2>    <p class="text-xs text-slate-500">อ้างอิงไลน์อัปของรายการ ไม่เปลี่ยนตามทีมปัจจุบัน</p></div>
+        <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-slate-50"><tr><th class="p-3 text-left">Tournament</th><th class="p-3 text-left">ทีมตอนสมัคร</th><th class="p-3">ประเภท</th><th class="p-3">บทบาท</th><th class="p-3">อนุมัติ</th>        <th class="p-3">เช็กอิน</th></tr></thead><tbody>
         <?php foreach ($registrations as $reg): ?><tr class="border-t"><td class="p-3 font-semibold"><?= h($reg['tournament_name']); ?></td><td class="p-3"><?= h($reg['team_name'] ?: 'ผู้เล่นเดี่ยว'); ?></td><td class="p-3 text-center"><?= h($reg['category_name'] ?: 'Open'); ?></td><td class="p-3 text-center"><?= h($reg['member_roles']); ?></td><td class="p-3 text-center"><?= h($reg['status']); ?></td><td class="p-3 text-center"><?= h($reg['checkin_status']); ?></td></tr><?php endforeach; ?>
-        <?php if (!$registrations): ?><tr><td colspan="6" class="p-6 text-center text-slate-400">ยังไม่มี Tournament Roster</td></tr><?php endif; ?>
+        <?php if (!$registrations): ?><tr><td colspan="6" class="p-6 text-center text-slate-400">ยังไม่มีไลน์อัปการแข่งขัน</td></tr><?php endif; ?>
         </tbody></table></div></section>
 
-    <section class="bg-white rounded-2xl shadow-sm border p-5"><h2 class="font-bold text-lg mb-4">Ranking รายบุคคลแยกตามเกม</h2><div class="grid md:grid-cols-3 gap-3">
+    <section class="bg-white rounded-2xl shadow-sm border p-5"><h2 class="font-bold text-lg mb-4">อันดับรายบุคคลแยกตามเกม</h2><div class="grid md:grid-cols-3 gap-3">
         <?php foreach ($rankings as $rank): ?><div class="border rounded-xl p-4"><div class="font-semibold"><?= h($rank['game_name']); ?></div><div class="text-2xl font-bold text-orange-600 mt-2"><?= number_format((float)$rank['points']); ?> คะแนน</div><div class="text-xs text-slate-500 mt-1">ชนะ <?= (int)$rank['wins']; ?> / แพ้ <?= (int)$rank['losses']; ?> · <?= h($rank['category']); ?></div></div><?php endforeach; ?>
         <?php if (!$rankings): ?><p class="text-slate-400">ยังไม่มีข้อมูล Ranking</p><?php endif; ?>
     </div></section>

@@ -275,7 +275,7 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
                         <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)] group-hover:scale-105 transition-transform" onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors drop-shadow">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1 drop-shadow-sm">Official Arena & Hub</span>
+                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1 drop-shadow-sm">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
@@ -341,11 +341,11 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
         <!-- ================= 2. PAGE HEADER (Animated Text) ================= -->
         <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4 w-full text-center space-y-3">
             <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-orange/20 border border-brand-orange/50 text-brand-orange text-xs font-bold uppercase tracking-widest backdrop-blur-md animate-fade-down">
-                <i class="fa-solid fa-hotel"></i> Recommended Accommodations
+                <i class="fa-solid fa-hotel"></i> ที่พักแนะนำ
             </div>
             
             <h1 class="text-4xl sm:text-6xl font-black font-display text-white tracking-wider uppercase leading-none drop-shadow-md animate-fade-down">
-                ที่พักแนะนำ <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-orange via-amber-300 to-white">(LODGING)</span>
+                ที่พักแนะนำ
             </h1>
 
             <p class="text-sm sm:text-base text-gray-300 max-w-xl mx-auto font-normal animate-fade-up">
@@ -356,7 +356,7 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
         <!-- ================= 3. ACCOMMODATIONS LIST SECTION ================= -->
         <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 mb-12 w-full">
             <div class="mb-5 flex items-end justify-between gap-3">
-                <div><h2 class="text-xl font-bold text-white">ที่พักใกล้สถานที่จัดการแข่งขัน</h2><p class="mt-1 text-xs text-gray-300">ที่พักที่ผู้ดูแลแนะนำสำหรับแต่ละ Tournament</p></div>
+                <div><h2 class="text-xl font-bold text-white">ที่พักใกล้สถานที่จัดการแข่งขัน</h2><p class="mt-1 text-xs text-gray-300">ที่พักที่ผู้ดูแลแนะนำสำหรับแต่ละรายการ</p></div>
                 <span class="shrink-0 text-xs text-gray-300">พบที่พักแนะนำ <?= count($accommodations) ?> แห่ง</span>
             </div>
             <?php if (!$accommodations): ?>
@@ -373,11 +373,11 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
                                     <div class="lodging-card-badge absolute left-3 top-3 z-10 max-w-[75%] truncate rounded-full border border-brand-orange/50 bg-slate-950/85 px-3 py-1 text-[10px] font-bold text-orange-200" title="แนะนำสำหรับ: <?= htmlspecialchars($a['tournament_name']) ?>">แนะนำสำหรับ: <?= htmlspecialchars($a['tournament_name']) ?></div>
                                     <?php if (!empty($a['image_path'])): ?>
                                         <img src="../assets/<?php echo htmlspecialchars($a['image_path']); ?>" alt="<?php echo htmlspecialchars($a['name']); ?>" loading="lazy" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" class="lodging-card-image w-full h-full object-cover">
-                                        <div class="hidden w-full h-full flex flex-col items-center justify-center text-gray-500 bg-slate-900/80"><i class="fa-solid fa-hotel text-4xl mb-1 text-brand-orange/50"></i><span class="text-[10px] tracking-widest uppercase opacity-70">KORAT ESPORT LODGING</span></div>
+                                        <div class="hidden w-full h-full flex flex-col items-center justify-center text-gray-500 bg-slate-900/80"><i class="fa-solid fa-hotel text-4xl mb-1 text-brand-orange/50"></i><span class="text-[10px] tracking-widest uppercase opacity-70">ที่พัก Korat Esport</span></div>
                                     <?php else: ?>
                                         <div class="w-full h-full flex flex-col items-center justify-center text-gray-500 bg-slate-900/80">
                                             <i class="fa-solid fa-hotel text-4xl mb-1 text-brand-orange/50 placeholder-icon-pulse"></i>
-                                            <span class="text-[10px] tracking-widest uppercase opacity-70">KORAT ESPORT LODGING</span>
+                                            <span class="text-[10px] tracking-widest uppercase opacity-70">ที่พัก Korat Esport</span>
                                         </div>
                                     <?php endif; ?>
 
@@ -405,12 +405,12 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
                                     <?php endif; ?>
                                     <div class="lodging-card-info rounded-xl border border-brand-orange/30 bg-slate-950/55 p-3 text-xs text-gray-300 space-y-1.5">
                                         <p class="flex items-center justify-between gap-2 font-bold text-orange-200"><span><i class="fa-solid fa-trophy text-brand-orange mr-2"></i>ใกล้สถานที่จัดการแข่งขัน</span><span class="shrink-0 rounded-full border border-brand-orange/30 px-2 py-0.5 text-[10px] text-brand-orange"><?= htmlspecialchars($statusLabels[$a['status']] ?? 'ไม่ทราบสถานะ') ?></span></p>
-                                        <p><i class="fa-solid fa-trophy text-brand-orange mr-2"></i>Tournament: <?= htmlspecialchars($a['tournament_name']) ?></p>
+                                        <p><i class="fa-solid fa-trophy text-brand-orange mr-2"></i>รายการ: <?= htmlspecialchars($a['tournament_name']) ?></p>
                                         <p><i class="fa-solid fa-gamepad text-brand-orange mr-2"></i>เกม: <?= htmlspecialchars($a['game_name'] ?: 'ไม่ระบุเกม') ?></p>
                                         <p><i class="fa-solid fa-location-dot text-brand-orange mr-2"></i>สนาม: <?= htmlspecialchars($a['venue_address'] ?: 'ยังไม่ได้ระบุสถานที่แข่งขัน') ?></p>
                                         <p><i class="fa-regular fa-calendar text-brand-orange mr-2"></i>วันที่: <?= $a['start_date'] && $a['end_date'] ? htmlspecialchars(date('d/m/Y', strtotime($a['start_date'])) . ' - ' . date('d/m/Y', strtotime($a['end_date']))) : 'ยังไม่ได้กำหนดวันแข่งขัน' ?></p>
                                     </div>
-                                    <?php if ($selectedTournamentId && (int) $a['tournament_id'] === $selectedTournamentId): ?><p class="text-[10px] font-bold text-brand-orange">แนะนำสำหรับ Tournament ที่คุณกำลังดู</p><?php endif; ?>
+                                    <?php if ($selectedTournamentId && (int) $a['tournament_id'] === $selectedTournamentId): ?><p class="text-[10px] font-bold text-brand-orange">แนะนำสำหรับรายการที่คุณกำลังดู</p><?php endif; ?>
                                 </div>
                             </div>
 

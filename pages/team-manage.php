@@ -69,11 +69,17 @@ if ($isCaptain && !$rosterLocked && $_SERVER['REQUEST_METHOD'] == 'POST' && ($_P
     } else {
         $newPlayerId = (int) $_POST['player_id'];
 
-        $check = $pdo->prepare("SELECT team_member_id FROM team_members WHERE team_id = :tid AND player_id = :pid AND is_active = 1");
+        $check = $pdo->prepare("SELECT team_member_id, is_active FROM team_members WHERE team_id = :tid AND player_id = :pid");
         $check->execute(['tid' => $teamId, 'pid' => $newPlayerId]);
 
-        if ($check->fetch()) {
+        $existingMember = $check->fetch(PDO::FETCH_ASSOC);
+        if ($existingMember && (int) $existingMember['is_active'] === 1) {
             $error = 'ผู้เล่นนี้อยู่ในทีมอยู่แล้ว';
+        } elseif ($existingMember) {
+            $pdo->prepare("UPDATE team_members SET is_active = 1, left_at = NULL, member_roles = 'player', in_game_role = 'player' WHERE team_member_id = :id")
+                ->execute(['id' => $existingMember['team_member_id']]);
+            syncTeamMemberRoles($pdo, (int) $existingMember['team_member_id'], ['player']);
+            $success = 'เพิ่มสมาชิกกลับเข้าทีมเรียบร้อยแล้ว';
         } else {
             $add = $pdo->prepare("INSERT INTO team_members (team_id, player_id, member_roles, in_game_role, is_active, joined_at) VALUES (:tid, :pid, 'player', 'player', 1, NOW())");
             $add->execute(['tid' => $teamId, 'pid' => $newPlayerId]);
@@ -120,7 +126,7 @@ if ($isCaptain && !$rosterLocked && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_
 }
 
 if ($isCaptain && $rosterLocked && $_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['add_member', 'update_member_roles', 'remove_member'], true)) {
-    $error = 'Tournament Roster ถูกล็อกแล้ว กรุณาให้ Admin ปลดล็อกหรือแก้ไขพร้อมบันทึกเหตุผล';
+    $error = 'ไลน์อัปการแข่งขันถูกล็อกแล้ว กรุณาให้ผู้ดูแลปลดล็อกหรือแก้ไขพร้อมบันทึกเหตุผล';
 }
 
 // ค้นหาผู้เล่นเพื่อเพิ่มเข้าทีม (ค้นได้ทุกคนในระบบ ไม่จำกัดว่าเคยอยู่ทีมไหน)
@@ -180,7 +186,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
         <?php if ($error): ?><p class="error"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
         <?php if ($success): ?><p class="success"><?php echo htmlspecialchars($success); ?></p><?php endif; ?>
         <?php if ($rosterLocked): ?>
-            <p class="error">Tournament Roster ถูกล็อกแล้ว การแก้สมาชิกทีมปัจจุบันจะไม่กระทบ Roster ที่อนุมัติแล้ว และต้องให้ Admin ปลดล็อกก่อน</p>
+            <p class="error">ไลน์อัปการแข่งขันถูกล็อกแล้ว การแก้สมาชิกทีมปัจจุบันจะไม่กระทบรายชื่อที่อนุมัติแล้ว และต้องให้ผู้ดูแลปลดล็อกก่อน</p>
         <?php else: ?>
             <p>การแก้สมาชิกทีมปัจจุบันจะไม่เปลี่ยน Tournament Roster ที่ส่งและอนุมัติแล้ว</p>
         <?php endif; ?>

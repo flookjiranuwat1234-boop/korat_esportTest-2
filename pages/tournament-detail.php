@@ -44,7 +44,7 @@ $tournamentStatusLabels = [
     'registration_closed' => 'ปิดรับสมัคร',
     'ongoing' => 'กำลังแข่งขัน',
     'completed' => 'แข่งขันจบแล้ว',
-    'cancelled' => 'ยกเลิกแล้ว',
+    'cancelled' => 'ยกเลิกรายการ',
 ];
 $tournamentStatusLabel = $tournamentStatusLabels[$tournament['status'] ?? ''] ?? 'ไม่ทราบสถานะ';
 $isOfficialResult = ($tournament['status'] ?? '') === 'completed';
@@ -52,7 +52,11 @@ $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, lab
 $categoryStmt->execute(['tournament_id' => $tournamentId]);
 $availableCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
 $categoryCodes = array_column($availableCategories, 'category_code');
-if ($selectedCategory !== 'all' && !in_array($selectedCategory, $categoryCodes, true)) {
+$isOpenTournament = strtolower(trim((string) ($tournament['category'] ?? ''))) === 'open';
+$hasOpenCategory = $isOpenTournament;
+if ($hasOpenCategory) {
+    $selectedCategory = 'all';
+} elseif ($selectedCategory !== 'all' && !in_array($selectedCategory, $categoryCodes, true)) {
     $selectedCategory = $categoryCodes[0] ?? 'all';
 }
 $selectedCategoryId = null;
@@ -62,7 +66,7 @@ foreach ($availableCategories as $category) {
         break;
     }
 }
-$isOpenGame = count($availableCategories) === 1 && ($categoryCodes[0] ?? '') === 'open';
+$isOpenGame = $hasOpenCategory;
 $publicTab = $_GET['tab'] ?? 'overview';
 $rankingRows = [];
 
@@ -170,6 +174,17 @@ if (empty($matches) && $selectedCategoryId) {
 $playoffMatches = array_values(array_filter($matches, static function ($m): bool {
     return empty($m['group_id']);
 }));
+$bracketEdgesByMatch = [];
+if ($playoffMatches) {
+    $matchIds = array_map(static fn(array $match): int => (int) $match['match_id'], $playoffMatches);
+    $edgePlaceholders = implode(',', array_fill(0, count($matchIds), '?'));
+    $edgeStmt = $pdo->prepare("SELECT match_id, next_match_id, loser_next_match_id
+        FROM bracket_edges WHERE match_id IN ($edgePlaceholders)");
+    $edgeStmt->execute($matchIds);
+    foreach ($edgeStmt->fetchAll(PDO::FETCH_ASSOC) as $edge) {
+        $bracketEdgesByMatch[(int) $edge['match_id']] = $edge;
+    }
+}
 
 $roundsGrouped = [];
 foreach ($playoffMatches as $m) {
@@ -177,6 +192,36 @@ foreach ($playoffMatches as $m) {
 }
 ksort($roundsGrouped);
 $totalRounds = count($roundsGrouped);
+$doubleBracketTypes = ['winners', 'losers', 'grand_final', 'grand_final_reset'];
+$isDoubleBracket = (bool) array_intersect($doubleBracketTypes, array_column($playoffMatches, 'bracket_type'));
+$bracketSections = [];
+if ($isDoubleBracket) {
+    $sectionLabels = [
+        'winners' => 'Winners Bracket · สายผู้ชนะ',
+        'losers' => 'Losers Bracket · สายผู้แพ้',
+        'grand_final' => 'Grand Final · รอบชิงชนะเลิศ',
+        'grand_final_reset' => 'Reset Final · รอบตัดสินเพิ่มเติม',
+    ];
+    foreach ($doubleBracketTypes as $type) {
+        $sectionRounds = [];
+        foreach ($playoffMatches as $match) {
+            if (($match['bracket_type'] ?? '') !== $type) continue;
+            if ($type === 'grand_final_reset'
+                && empty($match['team1_id'])
+                && empty($match['team2_id'])
+                && empty($match['winner_team_id'])) {
+                continue;
+            }
+            $sectionRounds[(int) $match['round_number']][] = $match;
+        }
+        if ($sectionRounds) {
+            ksort($sectionRounds);
+            $bracketSections[] = ['key' => $type, 'label' => $sectionLabels[$type], 'rounds' => $sectionRounds];
+        }
+    }
+} else {
+    $bracketSections[] = ['key' => 'single', 'label' => '', 'rounds' => $roundsGrouped];
+}
 
 // ตารางคะแนนกลุ่ม (ถ้ามี)
 $groups = $pdo->prepare("
@@ -191,6 +236,28 @@ $groups = $pdo->prepare("
 ");
 $groups->execute(['tid' => $tournamentId]);
 $groupRows = $groups->fetchAll();
+
+if ($tournamentPlayMode === 'solo' && !$groupRows) {
+    $soloGroups = $pdo->prepare("
+        SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id,
+               p.player_id AS team_id,
+               COALESCE(p.display_name, u.username, 'ผู้แข่งขัน') AS team_name,
+               COUNT(m.match_id) AS played,
+               SUM(m.winner_team_id = p.player_id) AS wins,
+               SUM(m.winner_team_id IS NOT NULL AND m.winner_team_id <> p.player_id) AS losses,
+               SUM(m.winner_team_id = p.player_id) * 3 AS points,
+               0 AS draws, 0 AS score_diff
+        FROM tournament_groups tg
+        JOIN matches m ON m.group_id = tg.tournament_group_id
+        JOIN players p ON p.player_id IN (m.team1_id, m.team2_id)
+        LEFT JOIN users u ON u.user_id = p.user_id
+        WHERE tg.tournament_id = :tid AND m.status IN ('completed', 'walkover')
+        GROUP BY tg.tournament_group_id, tg.name, tg.tournament_category_id, p.player_id, p.display_name, u.username
+        ORDER BY tg.name, points DESC, wins DESC, losses ASC, team_name ASC
+    ");
+    $soloGroups->execute(['tid' => $tournamentId]);
+    $groupRows = $soloGroups->fetchAll();
+}
 
 $groupedStandings = [];
 foreach ($groupRows as $row) {
@@ -404,6 +471,16 @@ function roundName($roundNum, $totalRounds)
         .bracket-container {
             display: flex; align-items: stretch; justify-content: flex-start; gap: 100px; position: relative; padding: 40px 20px; min-width: max-content; width: 100%;
         }
+        .bracket-stage { position: relative; margin-bottom: 2rem; }
+        .bracket-stage-title {
+            display: inline-flex; align-items: center; gap: .5rem; margin: 0 1rem .25rem;
+            padding: .6rem 1rem; border-left: 3px solid #FF5500; border-radius: .5rem;
+            background: rgba(255, 85, 0, .12); color: #ff9b66; font-size: .75rem;
+            font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+        }
+        .bracket-stage-losers .bracket-stage-title { border-left-color: #9ca3af; color: #d1d5db; background: rgba(107,114,128,.16); }
+        .bracket-stage-grand_final .bracket-stage-title,
+        .bracket-stage-grand_final_reset .bracket-stage-title { border-left-color: #fbbf24; color: #fde68a; background: rgba(251,191,36,.14); }
         .bracket-round {
             display: flex; flex-direction: column; justify-content: space-around; position: relative; z-index: 2; width: 280px; flex-shrink: 0;
         }
@@ -415,7 +492,7 @@ function roundName($roundNum, $totalRounds)
             transform: translateY(-4px); box-shadow: 0 10px 25px -5px rgba(255, 85, 0, 0.4);
         }
         .bracket-svg-lines {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1;
         }
         .bracket-path-base {
             stroke: #FF5500; stroke-width: 3; fill: none; opacity: 0.85;
@@ -481,6 +558,38 @@ function roundName($roundNum, $totalRounds)
             position: absolute; bottom: 8px; left: 8px; width: 32px; height: 32px;
             border-bottom: 2px solid #FF5500; border-left: 2px solid #FF5500; pointer-events: none;
         }
+
+        @media (max-width: 767px) {
+            body { font-size: 14px; }
+            header .h-20 { height: 4.25rem; }
+            header .group > div { display: none; }
+            header img { height: 2.25rem; }
+            header .flex.items-center.gap-4 { gap: .35rem; }
+            header .flex.items-center.gap-4 > a { font-size: .75rem; }
+            header .flex.items-center.gap-3.bg-white\/10 {
+                gap: .25rem; padding: .25rem; border-radius: .75rem;
+            }
+            header .flex.items-center.gap-3.bg-white\/10 > div:first-child { display: none; }
+            header .flex.items-center.gap-3.bg-white\/10 a { width: 2.15rem; height: 2.15rem; }
+            main { padding-left: .75rem !important; padding-right: .75rem !important; }
+            .trophy-glass-bg, .victory-watermark { display: none; }
+            .bracket-stage-title { margin-left: .5rem; font-size: .65rem; }
+            .bracket-container {
+                gap: 2rem; padding: 1.5rem .5rem 2rem; min-width: max-content;
+            }
+            .bracket-round { width: 13.5rem; }
+            .bracket-match { margin: .75rem 0; }
+            .bracket-match-team { padding: .55rem .65rem !important; }
+            .bracket-match-team span { max-width: 7.5rem !important; font-size: .65rem; }
+            .bracket-scroll-area { margin: 0 -.5rem; padding: 0 .25rem 1rem; }
+            .holo-arena-box { padding: .75rem !important; border-radius: 1.25rem; }
+            .holo-arena-box > .flex { flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+            .bracket-svg-lines { pointer-events: none; }
+            .bracket-path-base { stroke-width: 2.5; }
+            .bracket-path-decided { stroke-width: 3; }
+            table { min-width: 38rem; }
+            section { scroll-margin-top: 5rem; }
+        }
     </style>
 </head>
 
@@ -502,7 +611,7 @@ function roundName($roundNum, $totalRounds)
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors drop-shadow">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] tracking-widest text-gray-400 font-bold uppercase -mt-1">Official Arena & Hub</span>
+                            <span class="block text-[10px] tracking-widest text-gray-400 font-bold uppercase -mt-1">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
@@ -657,13 +766,13 @@ function roundName($roundNum, $totalRounds)
                     <div class="flex items-center gap-3">
                         <i class="fa-solid fa-sitemap text-brand-orange text-2xl"></i>
                         <div>
-                            <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">สายการแข่งขัน (TOURNAMENTS BRACKET)</h2>
+                            <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">สายการแข่งขัน</h2>
                             <p class="text-xs text-gray-400">เส้นทางของทีมที่รู้ผลผู้ชนะแล้วจะเรืองแสงส้มถาวร ชี้เมาส์เพื่อดูเส้นทาง</p>
                         </div>
                     </div>
                 </div>
 
-                <?php if (count($availableCategories) > 1): ?>
+                <?php if (count($availableCategories) > 1 && !$hasOpenCategory): ?>
                     <div class="flex items-center gap-2 glass-panel p-4 rounded-2xl border border-white/15 shadow-xl">
                         <span class="text-xs font-bold text-gray-400 uppercase mr-2"><i class="fa-solid fa-filter text-brand-orange mr-1"></i> เลือกสายการแข่งขัน:</span>
                         <?php foreach ($availableCategories as $category): ?>
@@ -690,21 +799,30 @@ function roundName($roundNum, $totalRounds)
                         </div>
 
                         <div class="bracket-scroll-area">
-                            <div class="bracket-container relative z-10" id="bracketContainer">
-                                <svg class="bracket-svg-lines" id="bracketSvg"></svg>
-                                <?php foreach ($roundsGrouped as $roundNum => $roundMatches): ?>
+                            <?php foreach ($bracketSections as $section): ?>
+                                <div class="bracket-stage <?php echo $isDoubleBracket ? 'bracket-stage-' . htmlspecialchars($section['key'], ENT_QUOTES, 'UTF-8') : ''; ?>">
+                                    <?php if ($section['label'] !== ''): ?>
+                                        <div class="bracket-stage-title"><?php echo htmlspecialchars($section['label']); ?></div>
+                                    <?php endif; ?>
+                                    <div class="bracket-container relative z-10" data-bracket-container>
+                                <svg class="bracket-svg-lines" data-bracket-svg></svg>
+                                <?php foreach ($section['rounds'] as $roundNum => $roundMatches): ?>
                                     <div class="bracket-round">
                                     <div class="text-center font-display font-bold text-xs text-brand-orange uppercase tracking-wider mb-2">
-                                        <?php echo roundName($roundNum, $totalRounds); ?>
+                                        <?php echo $section['key'] === 'grand_final' || $section['key'] === 'grand_final_reset'
+                                            ? htmlspecialchars($section['label'])
+                                            : roundName($roundNum, count($section['rounds'])); ?>
                                     </div>
                                     <div class="flex flex-col justify-around h-full">
                                         <?php foreach ($roundMatches as $m):
-                                            $isDecided = !empty($m['winner_team_id']);
-                                            $isWalkover = ($m['status'] ?? '') === 'walkover';
-                                            $isBye = !$isWalkover && $isDecided && (empty($m['team1_id']) || empty($m['team2_id']));
+                                            $isDecided = !empty($m['winner_team_id']) || (($m['result_type'] ?? '') === 'bye' && ($m['status'] ?? '') === 'walkover');
+                                            $isBye = ($m['result_type'] ?? '') === 'bye';
+                                            $isWalkover = ($m['status'] ?? '') === 'walkover' && !$isBye;
                                         ?>
                                             <div class="glass-card rounded-2xl border border-white/15 overflow-hidden shadow-lg p-1.5 space-y-1 bracket-match"
                                                 data-match-id="<?php echo $m['match_id']; ?>"
+                                                data-next-match-id="<?php echo (int) ($bracketEdgesByMatch[(int) $m['match_id']]['next_match_id'] ?? 0); ?>"
+                                                data-loser-next-match-id="<?php echo (int) ($bracketEdgesByMatch[(int) $m['match_id']]['loser_next_match_id'] ?? 0); ?>"
                                                 data-decided="<?php echo $isDecided ? '1' : '0'; ?>"
                                                 data-winner-id="<?php echo $m['winner_team_id'] ?? ''; ?>">
                                                 <?php if (!empty($m['scheduled_at']) || !empty($m['venue_name']) || !empty($m['venue_area'])): ?>
@@ -722,7 +840,7 @@ function roundName($roundNum, $totalRounds)
                                                 <?php
                                                     $isT1Winner = ($m['winner_team_id'] == $m['team1_id'] && $m['team1_id']);
                                                     $t1Id = $m['team1_id'] ?? 'none';
-                                                    $t1Name = $m['team1_name'] ?? 'รอผู้ชนะรอบก่อน';
+                                                    $t1Name = !empty($m['team1_id']) ? ($m['team1_name'] ?? 'ผู้แข่งขัน') : ($isBye ? 'ไม่มีคู่แข่งขัน' : 'รอผู้ชนะรอบก่อน');
                                                     $isMyTeam1 = in_array((int) ($m['team1_id'] ?? 0), $myParticipantIds, true);
                                                 ?>
                                                 <div onmouseenter="highlightTeamPath('<?php echo $t1Id; ?>')" onmouseleave="resetTeamPath()"
@@ -747,7 +865,7 @@ function roundName($roundNum, $totalRounds)
                                                 <?php 
                                                     $isT2Winner = ($m['winner_team_id'] == $m['team2_id'] && $m['team2_id']);
                                                     $t2Id = $m['team2_id'] ?? 'none';
-                                                    $t2Name = $m['team2_name'] ?? 'รอผู้ชนะรอบก่อน';
+                                                    $t2Name = !empty($m['team2_id']) ? ($m['team2_name'] ?? 'ผู้แข่งขัน') : ($isBye ? 'ไม่มีคู่แข่งขัน' : 'รอผู้ชนะรอบก่อน');
                                                     $isMyTeam2 = in_array((int) ($m['team2_id'] ?? 0), $myParticipantIds, true);
                                                 ?>
                                                 <div onmouseenter="highlightTeamPath('<?php echo $t2Id; ?>')" onmouseleave="resetTeamPath()"
@@ -770,6 +888,9 @@ function roundName($roundNum, $totalRounds)
                                                 </div>
                                             </div>
                                         <?php endforeach; ?>
+                                            </div>
+                                        </div>
+                            <?php endforeach; ?>
                                     </div>
                                 </div>
                             <?php endforeach; ?>
@@ -786,11 +907,11 @@ function roundName($roundNum, $totalRounds)
             <section id="ranking" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex items-center gap-3 border-b border-white/15 pb-4">
                             <i class="fa-solid fa-ranking-star text-amber-400 text-2xl"></i>
-                            <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider"><?php echo $tournamentPlayMode === 'solo' ? 'อันดับผู้เล่นในรายการ' : 'อันดับในรายการ'; ?> <?php echo htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?> ใช้เฉพาะข้อมูลของ Tournament นี้</p></div>
+                            <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider"><?php echo $tournamentPlayMode === 'solo' ? 'อันดับผู้เล่นในรายการ' : 'อันดับในรายการ'; ?><?php echo $hasOpenCategory ? ' OPEN' : ' ' . htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?> ใช้ข้อมูลรวมทุกประเภทสำหรับรายการ Open</p></div>
                 </div>
                 <div class="glass-panel rounded-2xl overflow-hidden border border-white/15">
                     <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับในรายการ</th><th class="p-3"><?php echo $tournamentPlayMode === 'solo' ? 'ผู้เล่น' : 'ผู้แข่งขัน'; ?></th><th class="p-3 text-center">คะแนนในรายการ</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
-                    <?php if (!$rankingRows): ?><tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูล Ranking</td></tr><?php endif; ?>
+                    <?php if (!$rankingRows): ?><tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูลอันดับ</td></tr><?php endif; ?>
                     <?php foreach ($rankingRows as $rankIndex => $ranking): ?><tr class="hover:bg-white/10"><td class="p-3 font-bold text-brand-orange">#<?php echo $rankIndex + 1; ?></td><td class="p-3 font-bold text-white"><?php echo htmlspecialchars($ranking['participant_name']); ?></td><td class="p-3 text-center font-display text-brand-orange"><?php echo (float) $ranking['points']; ?></td><td class="p-3 text-center text-emerald-300"><?php echo (int) $ranking['wins']; ?></td><td class="p-3 text-center text-rose-300"><?php echo (int) $ranking['losses']; ?></td></tr><?php endforeach; ?></tbody></table>
                 </div>
             </section>
@@ -848,7 +969,7 @@ function roundName($roundNum, $totalRounds)
                             <i class="fa-solid fa-lock text-xl"></i>
                         </div>
                         <h2 id="loginPromptTitle" class="text-xl font-bold text-white">กรุณาเข้าสู่ระบบก่อนสมัคร</h2>
-                        <p class="mt-2 text-sm leading-relaxed text-gray-300">คุณต้องเข้าสู่ระบบหรือสมัครสมาชิกก่อน จึงจะสามารถสมัครเข้าร่วม Tournament นี้ได้</p>
+                        <p class="mt-2 text-sm leading-relaxed text-gray-300">กรุณาเข้าสู่ระบบหรือสมัครสมาชิกก่อน จึงจะสมัครแข่งขันรายการนี้ได้</p>
                     </div>
                     <button type="button" onclick="closeLoginPrompt()" class="shrink-0 rounded-xl p-2 text-gray-400 hover:bg-white/10 hover:text-white" aria-label="ปิดหน้าต่าง">
                         <i class="fa-solid fa-xmark text-lg"></i>
@@ -934,64 +1055,37 @@ function roundName($roundNum, $totalRounds)
 
         // ฟังก์ชันวาดเส้นเชื่อมมุมฉากสมมาตร + ใส่เรืองแสงถาวรให้คู่ที่รู้ผลผู้ชนะแล้ว
         function drawProportionalCenterLines() {
-            const container = document.getElementById('bracketContainer');
-            const svg = document.getElementById('bracketSvg');
-            if (!container || !svg) return;
+            document.querySelectorAll('[data-bracket-container]').forEach(container => {
+                const svg = container.querySelector('[data-bracket-svg]');
+                if (!svg) return;
+                svg.innerHTML = '';
+                svg.setAttribute('width', container.scrollWidth);
+                svg.setAttribute('height', container.scrollHeight);
+                const containerRect = container.getBoundingClientRect();
+                const matchesById = new Map([...container.querySelectorAll('.bracket-match')]
+                    .map(match => [match.dataset.matchId, match]));
 
-            svg.innerHTML = '';
-            
-            const totalWidth = container.scrollWidth;
-            const totalHeight = container.scrollHeight;
-            svg.setAttribute('width', totalWidth);
-            svg.setAttribute('height', totalHeight);
-
-            const containerRect = container.getBoundingClientRect();
-            const rounds = container.querySelectorAll('.bracket-round');
-
-            for (let i = 0; i < rounds.length - 1; i++) {
-                const currentRoundMatches = rounds[i].querySelectorAll('.bracket-match');
-                const nextRoundMatches = rounds[i + 1].querySelectorAll('.bracket-match');
-
-                for (let j = 0; j < nextRoundMatches.length; j++) {
-                    const matchTop = currentRoundMatches[j * 2];
-                    const matchBottom = currentRoundMatches[j * 2 + 1];
-                    const targetMatch = nextRoundMatches[j];
-
-                    if (matchTop && targetMatch) {
-                        const rTop = matchTop.getBoundingClientRect();
-                        const rTarget = targetMatch.getBoundingClientRect();
-
-                        const x1 = rTop.right - containerRect.left + container.scrollLeft;
-                        const yTop = rTop.top + (rTop.height / 2) - containerRect.top + container.scrollTop;
-                        const xTarget = rTarget.left - containerRect.left + container.scrollLeft;
-                        const yTarget = rTarget.top + (rTarget.height / 2) - containerRect.top + container.scrollTop;
-                        const midX = x1 + (xTarget - x1) / 2;
-
-                        const topDecided = matchTop.getAttribute('data-decided') === '1';
-                        const pathTop = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                        pathTop.setAttribute('d', `M ${x1} ${yTop} L ${midX} ${yTop} L ${midX} ${yTarget} L ${xTarget} ${yTarget}`);
-                        pathTop.setAttribute('class', 'bracket-path-base' + (topDecided ? ' bracket-path-decided' : ''));
-
-                        const winnerTop = matchTop.getAttribute('data-winner-id');
-                        if (winnerTop) pathTop.setAttribute('data-team-match', winnerTop);
-                        svg.appendChild(pathTop);
-
-                        if (matchBottom) {
-                            const bottomDecided = matchBottom.getAttribute('data-decided') === '1';
-                            const rBot = matchBottom.getBoundingClientRect();
-                            const yBot = rBot.top + (rBot.height / 2) - containerRect.top + container.scrollTop;
-
-                            const pathBot = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                            pathBot.setAttribute('d', `M ${x1} ${yBot} L ${midX} ${yBot} L ${midX} ${yTarget} L ${xTarget} ${yTarget}`);
-                            pathBot.setAttribute('class', 'bracket-path-base' + (bottomDecided ? ' bracket-path-decided' : ''));
-
-                            const winnerBot = matchBottom.getAttribute('data-winner-id');
-                            if (winnerBot) pathBot.setAttribute('data-team-match', winnerBot);
-                            svg.appendChild(pathBot);
-                        }
-                    }
-                }
-            }
+                container.querySelectorAll('.bracket-match').forEach(source => {
+                    [source.dataset.nextMatchId, source.dataset.loserNextMatchId]
+                        .filter(targetId => targetId && targetId !== '0')
+                        .forEach(targetId => {
+                            const target = matchesById.get(targetId);
+                            if (!target) return;
+                            const sourceRect = source.getBoundingClientRect();
+                            const targetRect = target.getBoundingClientRect();
+                            const x1 = sourceRect.right - containerRect.left + container.scrollLeft;
+                            const y1 = sourceRect.top + sourceRect.height / 2 - containerRect.top + container.scrollTop;
+                            const x2 = targetRect.left - containerRect.left + container.scrollLeft;
+                            const y2 = targetRect.top + targetRect.height / 2 - containerRect.top + container.scrollTop;
+                            const midX = x1 + (x2 - x1) / 2;
+                            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                            path.setAttribute('d', `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`);
+                            path.setAttribute('class', 'bracket-path-base' + (source.dataset.decided === '1' ? ' bracket-path-decided' : ''));
+                            if (source.dataset.winnerId) path.setAttribute('data-team-match', source.dataset.winnerId);
+                            svg.appendChild(path);
+                        });
+                });
+            });
         }
 
         // Interactive Hover Effect
@@ -1032,10 +1126,9 @@ function roundName($roundNum, $totalRounds)
 
         window.addEventListener('resize', drawProportionalCenterLines);
         // เพิ่ม Event ให้วาดเส้นใหม่ทุกครั้งเวลาเลื่อน Scroll เผื่อมีปัญหาเส้นเบี้ยว
-        const arenaBox = document.querySelector('.holo-arena-box');
-        if (arenaBox) {
+        document.querySelectorAll('.holo-arena-box').forEach(arenaBox => {
             arenaBox.addEventListener('scroll', drawProportionalCenterLines);
-        }
+        });
     </script>
 </body>
 </html>

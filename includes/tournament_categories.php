@@ -80,8 +80,12 @@ function ensureTournamentCategorySchema(PDO $pdo): void
     }
 
     $formatColumnType = $pdo->query("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tournaments' AND COLUMN_NAME = 'format'")->fetchColumn();
-    if ($formatColumnType !== false && stripos((string) $formatColumnType, 'group_playoff') === false && stripos((string) $formatColumnType, 'round_robin') === false) {
-        $pdo->exec("ALTER TABLE tournaments MODIFY COLUMN format ENUM('single_elimination','double_elimination','round_robin','group_playoff') NOT NULL DEFAULT 'single_elimination'");
+    if ($formatColumnType !== false && stripos((string) $formatColumnType, 'round_robin') !== false) {
+        $pdo->exec("UPDATE tournaments SET format = 'group_playoff' WHERE format = 'round_robin'");
+        $pdo->exec("UPDATE tournament_categories SET format = 'group_playoff' WHERE format = 'round_robin'");
+        $pdo->exec("ALTER TABLE tournaments MODIFY COLUMN format ENUM('single_elimination','double_elimination','group_playoff') NOT NULL DEFAULT 'single_elimination'");
+    } elseif ($formatColumnType !== false && stripos((string) $formatColumnType, 'group_playoff') === false) {
+        $pdo->exec("ALTER TABLE tournaments MODIFY COLUMN format ENUM('single_elimination','double_elimination','group_playoff') NOT NULL DEFAULT 'single_elimination'");
     }
 
     $rCols = $pdo->query('SHOW COLUMNS FROM tournament_registrations')->fetchAll(PDO::FETCH_COLUMN);
@@ -317,7 +321,7 @@ function applyCheckinWalkovers(PDO $pdo, int $tournamentId): int
 
         $winnerId = $p1['complete'] ? $match['team1_id'] : $match['team2_id'];
         $loserId = $p1['complete'] ? $match['team2_id'] : $match['team1_id'];
-        $reason = 'Check-in ไม่ครบภายในเวลาที่กำหนด';
+        $reason = 'เช็กอินไม่ครบภายในเวลาที่กำหนด';
 
         $pdo->prepare("UPDATE matches SET status = 'walkover', result_type = 'walkover', wo_reason = :reason,
                 winner_team_id = :winner, completed_at = NOW()

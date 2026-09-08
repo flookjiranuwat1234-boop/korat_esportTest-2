@@ -84,11 +84,14 @@ try {
         SELECT DISTINCT m.*, tr.tournament_category_id, t1.name AS team1_name, t2.name AS team2_name, tour.name AS tournament_name
         FROM matches m
         JOIN tournaments tour ON tour.tournament_id = m.tournament_id
-        JOIN tournament_registration_members trm ON trm.player_id IN (m.team1_id, m.team2_id)
-        JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id AND tr.team_id = :team_id3 AND tr.tournament_id = m.tournament_id
+        JOIN tournament_registrations tr ON tr.team_id = :team_id3
+            AND tr.tournament_id = m.tournament_id
+            AND tr.status = 'approved'
+        JOIN tournament_registration_members trm ON trm.tournament_registration_id = tr.tournament_registration_id
         LEFT JOIN teams t1 ON t1.team_id = m.team1_id
         LEFT JOIN teams t2 ON t2.team_id = m.team2_id
-        WHERE (m.team1_id = :team_id OR m.team2_id = :team_id2) AND trm.roster_status = 'active'
+        WHERE (m.team1_id = :team_id OR m.team2_id = :team_id2)
+          AND trm.roster_status = 'active'
           AND m.status IN ('completed', 'walkover')
         ORDER BY m.completed_at DESC
         LIMIT 10
@@ -250,7 +253,7 @@ try {
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1">Official Arena & Hub</span>
+                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
@@ -333,7 +336,7 @@ try {
                     <?php if ($ranking): ?>
                         <div class="pt-2 flex flex-wrap items-center justify-center md:justify-start gap-3 text-xs font-bold">
                             <span class="px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-300">
-                                <i class="fa-solid fa-crown mr-1"></i> คะแนนสะสม: <?php echo number_format($ranking['points'] ?? 0); ?> PTS
+                                <i class="fa-solid fa-crown mr-1"></i> คะแนนสะสม: <?php echo number_format($ranking['points'] ?? 0); ?> คะแนน
                             </span>
                             <span class="px-3 py-1.5 rounded-xl bg-white/10 border border-white/20 text-gray-200 font-mono">
                                 ชนะ <strong class="text-emerald-400"><?php echo $ranking['wins'] ?? 0; ?></strong> — แพ้ <strong class="text-rose-400"><?php echo $ranking['losses'] ?? 0; ?></strong>

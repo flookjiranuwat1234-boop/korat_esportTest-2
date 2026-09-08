@@ -9,7 +9,17 @@ function ensureTournamentRosterTables(PDO $pdo): void
     if ($ready) return;
     ensureTeamMemberRolesTable($pdo);
 
-    $pdo->exec("CREATE TABLE IF NOT EXISTS tournament_registration_members (
+    $tableCheck = $pdo->prepare('SELECT TABLE_NAME FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN (:roster_table, :checkin_table)');
+    $tableCheck->execute([
+        'roster_table' => 'tournament_registration_members',
+        'checkin_table' => 'player_tournament_checkins',
+    ]);
+    $existingTables = $tableCheck->fetchAll(PDO::FETCH_COLUMN);
+
+    if (!in_array('tournament_registration_members', $existingTables, true)) {
+        $pdo->exec("CREATE TABLE tournament_registration_members (
         id INT UNSIGNED NOT NULL AUTO_INCREMENT,
         tournament_registration_id INT UNSIGNED NOT NULL,
         player_id INT UNSIGNED NOT NULL,
@@ -26,9 +36,11 @@ function ensureTournamentRosterTables(PDO $pdo): void
             REFERENCES tournament_registrations (tournament_registration_id) ON DELETE CASCADE,
         CONSTRAINT registration_member_player_fk FOREIGN KEY (player_id)
             REFERENCES players (player_id) ON DELETE RESTRICT
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    }
 
-    $pdo->exec("CREATE TABLE IF NOT EXISTS player_tournament_checkins (
+    if (!in_array('player_tournament_checkins', $existingTables, true)) {
+        $pdo->exec("CREATE TABLE player_tournament_checkins (
         player_tournament_checkin_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
         tournament_registration_id INT UNSIGNED NOT NULL,
         player_id INT UNSIGNED NOT NULL,
@@ -45,7 +57,8 @@ function ensureTournamentRosterTables(PDO $pdo): void
             REFERENCES players (player_id) ON DELETE RESTRICT,
         CONSTRAINT player_checkin_user_fk FOREIGN KEY (checked_in_by)
             REFERENCES users (user_id) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    }
 
     $ready = true;
 }
@@ -69,16 +82,19 @@ function snapshotTournamentRoster(PDO $pdo, int $registrationId, ?int $teamId, ?
         $requiredRoles = null;
     }
     if ($playerId) {
-        $rows[] = ['player_id' => $playerId, 'roles' => ['player'], 'starter' => 1, 'required' => 1];
+        $rows[] = [
+            'player_id' => $playerId,
+            'roles' => ['player'],
+            'starter' => 1,
+            'required' => $requiredRoles !== null && in_array('player', $requiredRoles, true) ? 1 : 0,
+        ];
     } elseif ($teamId) {
         $stmt = $pdo->prepare('SELECT team_member_id, player_id FROM team_members WHERE team_id = :team_id AND is_active = 1');
         $stmt->execute(['team_id' => $teamId]);
         foreach ($stmt->fetchAll() as $member) {
             $roles = getTeamMemberRoles($pdo, (int) $member['team_member_id']);
             $isSubstitute = in_array('substitute', $roles, true) && !in_array('player', $roles, true);
-            $isRequired = $requiredRoles !== null
-                ? (bool) array_intersect($requiredRoles, $roles)
-                : (in_array('player', $roles, true) || (!$roles && !$isSubstitute));
+            $isRequired = $requiredRoles !== null && (bool) array_intersect($requiredRoles, $roles);
             $rows[] = [
                 'player_id' => (int) $member['player_id'],
                 'roles' => $roles,
@@ -123,7 +139,7 @@ function markRosterPlayerCheckedIn(PDO $pdo, int $registrationId, int $playerId,
           AND checkin_status NOT IN (\'checked_in\', \'waived\')');
     $remaining->execute(['registration_id' => $registrationId]);
     if ((int) $remaining->fetchColumn() === 0) {
-        $pdo->prepare('UPDATE tournament_registrations SET checkin_status = \'checked_in\', checkin_at = NOW()
+        $pdo->prepare('UPDATE tournament_registrations SET checkin_status = \'checked_in\', participation_status = \'qualified_for_draw\', checkin_at = NOW()
             WHERE tournament_registration_id = :registration_id AND status = \'approved\'')
             ->execute(['registration_id' => $registrationId]);
     }

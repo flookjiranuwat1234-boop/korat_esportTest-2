@@ -1,13 +1,10 @@
 <?php
-// includes/round_robin.php
-// สร้างตารางแข่งขันแบบพบกันหมด (Round Robin)
-// รองรับ 2 รูปแบบทัวร์นาเมนต์:
-//   - format = 'round_robin'    : ทุกทีมอยู่กลุ่มเดียว พบกันหมดทุกคู่
-//   - format = 'group_playoff'  : แบ่งเป็นหลายกลุ่ม พบกันหมดในกลุ่มตัวเอง (รอบ playoff ทำแยกทีหลัง)
+// includes/group_stage.php
+// สร้างรอบแบ่งกลุ่มและรอบ Playoff สำหรับ Group Stage + Knockout
 require_once __DIR__ . '/tournament_categories.php';
 require_once __DIR__ . '/bracket.php';
 
-// ฟังก์ชันหลัก เรียกตอน admin กด "ปิดรับสมัคร" ของทัวร์นาเมนต์ที่เป็น round_robin/group_playoff
+// ฟังก์ชันจัดการรอบแบ่งกลุ่มของ Group Stage + Knockout
 function resetTournamentGroupStage(PDO $pdo, int $tournamentId): void
 {
     $pdo->prepare('DELETE FROM bracket_edges WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
@@ -17,7 +14,7 @@ function resetTournamentGroupStage(PDO $pdo, int $tournamentId): void
     $pdo->prepare('DELETE FROM tournament_groups WHERE tournament_id = :tid')->execute(['tid' => $tournamentId]);
 }
 
-function generateRoundRobin($pdo, $tournamentId)
+function generateGroupStage(PDO $pdo, int $tournamentId): int
 {
     ensureTournamentCategorySchema($pdo);
     $check = $pdo->prepare("SELECT COUNT(*) FROM tournament_groups WHERE tournament_id = :tid");
@@ -34,13 +31,14 @@ function generateRoundRobin($pdo, $tournamentId)
         $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tid')->execute(['tid' => $tournamentId]);
     }
 
-    $tStmt = $pdo->prepare("SELECT format, group_count FROM tournaments WHERE tournament_id = :tid");
+    $tStmt = $pdo->prepare("SELECT t.format, t.group_count, t.best_of, g.play_mode
+        FROM tournaments t JOIN games g ON g.game_id = t.game_id WHERE t.tournament_id = :tid");
     $tStmt->execute(['tid' => $tournamentId]);
     $tournament = $tStmt->fetch();
+    $bestOf = max(1, (int) ($tournament['best_of'] ?? 1));
 
-    // ดึงทีมที่อนุมัติแล้ว เรียงตามวันที่สมัคร (ไม่ต้อง seed ตามคะแนนเหมือน bracket
-    // เพราะ round robin ทุกทีมเจอกันหมดอยู่แล้ว ลำดับก่อนหลังไม่มีผล)
-    $teamsStmt = $pdo->prepare("SELECT team_id, tournament_category_id, category, registered_at
+    // ดึงทีมที่อนุมัติแล้ว เรียงตามวันที่สมัคร
+    $teamsStmt = $pdo->prepare("SELECT team_id, player_id, tournament_category_id, category, registered_at
         FROM tournament_registrations
         WHERE tournament_id = :tid AND status = 'approved' AND participation_status = 'qualified_for_draw'
         ORDER BY registered_at");
@@ -48,10 +46,10 @@ function generateRoundRobin($pdo, $tournamentId)
     $teamRows = $teamsStmt->fetchAll();
 
     if (count($teamRows) < 2) {
-        throw new Exception("ต้องมีทีมที่ผ่าน Check-in และพร้อมจัดสายอย่างน้อย 2 ทีม");
+        throw new Exception("ต้องมีทีมที่ผ่านการเช็กอินและพร้อมจัดสายอย่างน้อย 2 ทีม");
     }
 
-    // แบ่งกลุ่มตามค่า “ทีมต่อกลุ่ม” ของ category จริง ๆ สำหรับ Group/Group Playoff
+    // แบ่งกลุ่มตามค่า “ทีมต่อกลุ่ม” ของ category
     // ไม่ใช้ group_count ของ tournament เพราะมันเป็นจำนวนกลุ่มรวมทั้งหมด ไม่ใช่ทีมต่อกลุ่ม
     $categoryStmt = $pdo->prepare("SELECT tournament_category_id, category_code, group_size
         FROM tournament_categories
@@ -75,16 +73,16 @@ function generateRoundRobin($pdo, $tournamentId)
             $categoryBuckets[$bucketKey]['category_id'] = $teamRow['tournament_category_id'] ?: null;
             $categoryBuckets[$bucketKey]['category_code'] = $teamRow['category'] ?: 'open';
             $categoryBuckets[$bucketKey]['group_size'] = (int) (($categoryMaps[$bucketKey]['group_size'] ?? 0) ?: 0);
-            $categoryBuckets[$bucketKey]['team_ids'][] = (int) $teamRow['team_id'];
+            $categoryBuckets[$bucketKey]['participant_ids'][] = (int) ($teamRow['team_id'] ?: $teamRow['player_id']);
         }
 
         $createdGroups = 0;
         foreach ($categoryBuckets as $categoryBucket) {
             $groupSize = (int) ($categoryBucket['group_size'] ?? 0);
             $groupCount = $groupSize > 1
-                ? max(1, (int) ceil(count($categoryBucket['team_ids']) / $groupSize))
+                ? max(1, (int) ceil(count($categoryBucket['participant_ids']) / $groupSize))
                 : 1;
-            $groups = splitIntoGroups($categoryBucket['team_ids'], $groupCount);
+            $groups = splitIntoGroups($categoryBucket['participant_ids'], $groupCount);
             foreach ($groups as $i => $groupTeamIds) {
                 $categoryLabel = strtoupper($categoryBucket['category_code']);
                 $groupName = $categoryLabel . ' ' . ($groupCount > 1 ? "Group {$groupLetters[$i]}" : 'Group A');
@@ -94,9 +92,11 @@ function generateRoundRobin($pdo, $tournamentId)
                 $groupId = $pdo->lastInsertId();
                 $createdGroups++;
 
-                foreach ($groupTeamIds as $teamId) {
-                    $pdo->prepare("INSERT INTO group_teams (group_id, team_id) VALUES (:gid, :team_id)")
-                        ->execute(['gid' => $groupId, 'team_id' => $teamId]);
+                if (($tournament['play_mode'] ?? 'team') !== 'solo') {
+                    foreach ($groupTeamIds as $teamId) {
+                        $pdo->prepare("INSERT INTO group_teams (group_id, team_id) VALUES (:gid, :team_id)")
+                            ->execute(['gid' => $groupId, 'team_id' => $teamId]);
+                    }
                 }
 
                 $rounds = circleMethodSchedule($groupTeamIds);
@@ -104,12 +104,13 @@ function generateRoundRobin($pdo, $tournamentId)
                 foreach ($rounds as $roundNumber => $pairs) {
                     foreach ($pairs as $index => $pair) {
                         [$team1, $team2] = $pair;
-                        $insert = $pdo->prepare("INSERT INTO matches (tournament_id, tournament_category_id, group_id, round_number, match_index, team1_id, team2_id, status)
-                            VALUES (:tid, :category_id, :gid, :round, :idx, :team1, :team2, 'scheduled')");
+                        $insert = $pdo->prepare("INSERT INTO matches (tournament_id, tournament_category_id, group_id, best_of, round_number, match_index, team1_id, team2_id, status)
+                            VALUES (:tid, :category_id, :gid, :best_of, :round, :idx, :team1, :team2, 'scheduled')");
                         $insert->execute([
                             'tid' => $tournamentId,
                             'category_id' => $categoryBucket['category_id'],
                             'gid' => $groupId,
+                            'best_of' => $bestOf,
                             'round' => $roundNumber + 1,
                             'idx' => $index,
                             'team1' => $team1,
@@ -145,8 +146,12 @@ function generateGroupPlayoff(PDO $pdo, int $tournamentId): int
         throw new Exception('Tournament นี้สร้างสาย Playoff แล้ว');
     }
 
+    $playModeStmt = $pdo->prepare('SELECT g.play_mode FROM tournaments t JOIN games g ON g.game_id = t.game_id WHERE t.tournament_id = :tournament_id');
+    $playModeStmt->execute(['tournament_id' => $tournamentId]);
+    $playMode = $playModeStmt->fetchColumn();
+
     $groupStmt = $pdo->prepare('SELECT tg.tournament_group_id, tg.tournament_category_id
-        FROM tournament_groups tg WHERE tg.tournament_id = :tournament_id ORDER BY tg.tournament_group_id');
+    FROM tournament_groups tg WHERE tg.tournament_id = :tournament_id ORDER BY tg.tournament_group_id');
     $groupStmt->execute(['tournament_id' => $tournamentId]);
     $qualifiedByCategory = [];
     foreach ($groupStmt->fetchAll() as $group) {
@@ -154,7 +159,32 @@ function generateGroupPlayoff(PDO $pdo, int $tournamentId): int
             FROM tournament_categories tc WHERE tc.tournament_category_id = :category_id');
         $advanceStmt->execute(['category_id' => $group['tournament_category_id']]);
         $advanceCount = max(1, (int) ($advanceStmt->fetchColumn() ?: 1));
-        $standingStmt = $pdo->prepare('SELECT team_id
+        if ($playMode === 'solo') {
+            $standingStmt = $pdo->prepare('SELECT participant_id
+                FROM (
+                    SELECT participant_id, SUM(points) AS points, SUM(wins) AS wins, SUM(losses) AS losses
+                    FROM (
+                        SELECT m.team1_id AS participant_id,
+                               CASE WHEN m.winner_team_id = m.team1_id THEN 3 ELSE 0 END AS points,
+                               CASE WHEN m.winner_team_id = m.team1_id THEN 1 ELSE 0 END AS wins,
+                               CASE WHEN m.winner_team_id IS NOT NULL AND m.winner_team_id <> m.team1_id THEN 1 ELSE 0 END AS losses
+                        FROM matches m
+                        WHERE m.group_id = :group_id AND m.status IN ("completed", "walkover")
+                        UNION ALL
+                        SELECT m.team2_id AS participant_id,
+                               CASE WHEN m.winner_team_id = m.team2_id THEN 3 ELSE 0 END,
+                               CASE WHEN m.winner_team_id = m.team2_id THEN 1 ELSE 0 END,
+                               CASE WHEN m.winner_team_id IS NOT NULL AND m.winner_team_id <> m.team2_id THEN 1 ELSE 0 END
+                        FROM matches m
+                        WHERE m.group_id = :group_id AND m.status IN ("completed", "walkover")
+                    ) results
+                    WHERE participant_id IS NOT NULL
+                    GROUP BY participant_id
+                ) ranked
+                ORDER BY points DESC, wins DESC, losses ASC, participant_id ASC
+                LIMIT ' . $advanceCount);
+        } else {
+            $standingStmt = $pdo->prepare('SELECT team_id
             FROM (
                 SELECT gt.team_id,
                        MAX(gt.points) AS points,
@@ -168,6 +198,7 @@ function generateGroupPlayoff(PDO $pdo, int $tournamentId): int
             ) ranked
             ORDER BY points DESC, score_diff DESC, wins DESC, draws DESC, losses ASC, team_id ASC
             LIMIT ' . $advanceCount);
+        }
         $standingStmt->execute(['group_id' => $group['tournament_group_id']]);
         foreach ($standingStmt->fetchAll(PDO::FETCH_COLUMN) as $teamId) {
             $qualifiedByCategory[(string) $group['tournament_category_id']][] = (int) $teamId;

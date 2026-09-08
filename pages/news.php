@@ -301,7 +301,7 @@ html, body {
                         <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(255,85,0,0.4)] group-hover:scale-105 transition-transform" onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors drop-shadow">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] tracking-widest text-gray-400 font-bold uppercase -mt-1">Official Arena & Hub</span>
+                            <span class="block text-[10px] tracking-widest text-gray-400 font-bold uppercase -mt-1">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
@@ -374,7 +374,7 @@ html, body {
             </div>
             
             <h1 class="text-4xl sm:text-6xl font-black font-display text-white tracking-wider uppercase leading-none drop-shadow-[0_0_35px_rgba(255,85,0,0.8)] animate-fade-down">
-                ข่าวสารและประกาศ <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-orange via-amber-300 to-white">(NEWS)</span>
+                ข่าวสารและประกาศ
             </h1>
 
             <p class="text-sm sm:text-base text-gray-300 max-w-xl mx-auto font-normal animate-fade-up">

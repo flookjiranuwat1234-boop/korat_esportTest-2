@@ -1,0 +1,60 @@
+{
+    "tournament_id": 138,
+    "backup_path": "C:\\xampp1\\htdocs\\korat_esportTest-2\\audit-esport_korattest-20260908-1320.sql",
+    "status": "completed_after_bug_fix",
+    "created_records": {
+        "teams": [147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158],
+        "registrations": [599, 600, 601, 602, 603, 604, 605, 606, 607, 608, 609, 610],
+        "roster_members": {
+            "599": [653, 654, 655, 656, 657, 658],
+            "600": [661, 662, 663, 664, 665, 666],
+            "601": [669, 670, 671, 672, 673, 674],
+            "602": [677, 678, 679, 680, 681, 682],
+            "603": [685, 686, 687, 688, 689, 690],
+            "604": [693, 694, 695, 696, 697, 698],
+            "605": [701, 702, 703, 704, 705, 706],
+            "606": [709, 710, 711, 712, 713, 714],
+            "607": [717, 718, 719, 720, 721, 722],
+            "608": [725, 726, 727, 728, 729, 730],
+            "609": [733, 734, 735, 736, 737, 738],
+            "610": [741, 742, 743, 744, 745, 746]
+        }
+    },
+    "counts": {
+        "registrations_approved": 12,
+        "registrations_pending": 0,
+        "registrations_rejected": 0,
+        "registrations_withdrawn": 0,
+        "registrations_disqualified": 0,
+        "groups": 3,
+        "matches": 25,
+        "matches_completed": 25,
+        "playoff_matches_created": 7,
+        "ranking_history_records": 46,
+        "team_ranking_rows": 12,
+        "player_ranking_rows": 0,
+        "team_profile_match_history": 6,
+        "player_profile_tournament_history": 1,
+        "qualified_for_draw": 12,
+        "duplicate_roster": 0
+    },
+    "previous_error": "Fatal Error: Call to undefined function generateGroupPlayoff() in includes/bracket.php:546 while advancing the final group-stage match (match_id 679).",
+    "playoff_match_ids": [680, 681, 682, 683, 684, 685, 686],
+    "champion_team_id": 147,
+    "runner_up_team_id": 150,
+    "champion_team_name": "E2E138-02",
+    "runner_up_team_name": "E2E138-05",
+    "final_match_id": 686,
+    "tournament_status": "completed",
+    "note": "Playoff generation now succeeds after loading includes/round_robin.php lazily from maybeAutoGenerateGroupPlayoff(). All playoff results were recorded through the Admin workflow and Tournament 138 was completed through the Admin workflow."
+    ,
+    "post_completion_validation": {
+        "team_profile": "passed_after_fix",
+        "player_profile": "passed",
+        "tournament_detail": "passed",
+        "ranking_page": "passed",
+        "duplicate_qualified": 0,
+        "orphan_matches": 0,
+        "team_profile_fix": "Changed team history query to join approved team registration by team_id instead of comparing roster player_id to team_id."
+    }
+}

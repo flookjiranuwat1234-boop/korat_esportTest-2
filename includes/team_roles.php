@@ -6,7 +6,15 @@ function ensureTeamMemberRolesTable(PDO $pdo): void
     static $ready = false;
     if ($ready) return;
 
-    $pdo->exec("CREATE TABLE IF NOT EXISTS team_member_roles (
+    $tableCheck = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name');
+    $tableCheck->execute(['table_name' => 'team_member_roles']);
+    if ((int) $tableCheck->fetchColumn() > 0) {
+        $ready = true;
+        return;
+    }
+
+    $pdo->exec("CREATE TABLE team_member_roles (
         team_member_role_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
         team_member_id INT UNSIGNED NOT NULL,
         role_code VARCHAR(30) NOT NULL,

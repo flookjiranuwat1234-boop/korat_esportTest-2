@@ -52,6 +52,12 @@ function updateRankingsAfterMatch($pdo, $matchId, bool $includePlayerRankings = 
     if ($match['status'] != 'completed' && $match['status'] != 'walkover') {
         throw new Exception("แมตช์ยังไม่จบ ยังคำนวณคะแนนไม่ได้");
     }
+    $historyColumns = $pdo->query('SHOW COLUMNS FROM ranking_history')->fetchAll(PDO::FETCH_COLUMN);
+    if (in_array('match_id', $historyColumns, true)) {
+        $historyCheck = $pdo->prepare('SELECT COUNT(*) FROM ranking_history WHERE match_id = :match_id');
+        $historyCheck->execute(['match_id' => $matchId]);
+        if ((int) $historyCheck->fetchColumn() > 0) return;
+    }
 
     $gameId = $match['game_id'];
     $tournamentId = $match['tournament_id'];
@@ -226,6 +232,8 @@ function bumpPlayerRankings($pdo, $gameId, $teamId, $category, $result, $tournam
                 JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
                 WHERE tr.team_id = :team_id AND tr.tournament_id = :tournament_id
                     AND tr.status = 'approved'
+                    AND trm.roster_status = 'active'
+                    AND (FIND_IN_SET('player', trm.member_roles) > 0 OR FIND_IN_SET('substitute', trm.member_roles) > 0)
     ");
     $stmt->execute(['team_id' => $teamId, 'tournament_id' => $tournamentId]);
     $players = $stmt->fetchAll(PDO::FETCH_COLUMN);

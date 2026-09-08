@@ -6,13 +6,13 @@
     <span>สวัสดี, <?php echo htmlspecialchars($_SESSION['username']); ?> (Admin)</span>
     <a href="dashboard.php">หน้าหลัก</a>
     <a href="manage-tournament.php">จัดการทัวร์นาเมนต์</a>
-    <a href="manage-teams.php">ทีมสมัคร Tournament</a>
+    <a href="manage-teams.php">ทีมสมัครแข่งขัน</a>
     <a href="manage-members.php">จัดการสมาชิก</a>
     <a href="manage-news.php">จัดการข่าวสาร</a>
     <a href="manage-gallery.php">จัดการแกลลอรี่</a>
     <a href="recommended-lodging.php">ที่พักแนะนำ</a>
     <a href="manage-score.php">บันทึกผลแมตช์</a>
-    <a href="checkin-teams.php">เช็คอินทีม</a>
+    <a href="checkin-teams.php">เช็กอินทีม</a>
     <a href="../auth/logout.php">ออกจากระบบ</a>
 </nav>
 <script src="/korat_esportTest-2/assets/js/main.js" defer></script>

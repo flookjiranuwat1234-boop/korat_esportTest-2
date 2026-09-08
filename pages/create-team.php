@@ -2,6 +2,7 @@
 // pages/create-team.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/team_roles.php';
 requireLogin();
 
 // ดึงข้อมูล Player จาก user_id
@@ -53,26 +54,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (empty($error)) {
-                // 1. สร้างทีมกลาง (Global Team) โดยไม่บังคับ game_id และ team_category
-                $insert = $pdo->prepare("INSERT INTO teams (name, logo_path, captain_player_id, game_id) VALUES (:name, :logo, :captain, NULL)");
-                $insert->execute([
-                    'name' => $teamName,
-                    'logo' => $logoPath,
-                    'captain' => $playerId
-                ]);
-                $teamId = $pdo->lastInsertId();
-
-                // 2. เพิ่มตัวเองเป็นสมาชิกทีมทันที
-                $addMember = $pdo->prepare("
-                    INSERT INTO team_members (team_id, player_id, in_game_role, is_active) 
-                    VALUES (:team_id, :player_id, 'Captain', 1)
-                ");
-                $addMember->execute(['team_id' => $teamId, 'player_id' => $playerId]);
-
-                // ส่งกลับไปหน้าโปรไฟล์พร้อมแสดงแจ้งเตือนสร้างทีมสำเร็จ
-                setFlashMessage('success', 'สร้างทีมเรียบร้อยแล้ว คุณเป็นกัปตันทีม');
-                header('Location: profile.php', true, 303);
-                exit;
+                try {
+                    $pdo->beginTransaction();
+                    $insert = $pdo->prepare("INSERT INTO teams (name, logo_path, captain_player_id, game_id) VALUES (:name, :logo, :captain, NULL)");
+                    $insert->execute(['name' => $teamName, 'logo' => $logoPath, 'captain' => $playerId]);
+                    $teamId = $pdo->lastInsertId();
+                    $addMember = $pdo->prepare("INSERT INTO team_members (team_id, player_id, member_roles, in_game_role, is_active) VALUES (:team_id, :player_id, 'player', 'player', 1)");
+                    $addMember->execute(['team_id' => $teamId, 'player_id' => $playerId]);
+                    syncTeamMemberRoles($pdo, (int) $pdo->lastInsertId(), ['player']);
+                    $pdo->commit();
+                    setFlashMessage('success', 'สร้างทีมเรียบร้อยแล้ว คุณเป็นกัปตันทีม');
+                    header('Location: profile.php', true, 303);
+                    exit;
+                } catch (Throwable $exception) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    $error = 'สร้างทีมไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+                }
             }
         }
     }
@@ -160,7 +157,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                         <div>
                             <span class="font-display font-black text-xl text-white">KORAT <span
                                     class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] text-gray-200 font-bold uppercase -mt-1">Official Arena & Hub</span>
+                            <span class="block text-[10px] text-gray-200 font-bold uppercase -mt-1">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 

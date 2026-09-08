@@ -38,11 +38,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
         $currentMatchStatus = $matchOwnership['status'] ?? false;
 
         if (!$matchOwnership || (int) $matchOwnership['tournament_id'] !== $tournamentId) {
-            $error = 'Match นี้ไม่อยู่ใน Tournament ที่กำลังจัดการ';
+            $error = 'แมตช์นี้ไม่อยู่ในรายการที่กำลังจัดการ';
         } elseif (!empty($_POST['category_id']) && (int) $_POST['category_id'] !== (int) ($matchOwnership['tournament_category_id'] ?? 0)) {
             $error = 'Match นี้ไม่อยู่ใน Category ที่เลือก';
         } elseif (!canRecordMatch($pdo, $tournamentId, $matchId)) {
-            $error = 'Tournament หรือ Match นี้ไม่อนุญาตให้บันทึกผลในสถานะปัจจุบัน';
+            $error = 'รายการหรือแมตช์นี้ยังไม่เปิดให้บันทึกผล';
         } elseif ($currentMatchStatus == 'completed' || $currentMatchStatus == 'walkover') {
             $error = 'แมตช์นี้ถูกบันทึกผลการแข่งขันไปแล้ว ไม่สามารถบันทึกซ้ำได้';
         } else {
@@ -74,6 +74,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
             }
 
             $bestOf = max(1, (int) ($matchInfo['best_of'] ?? 1));
+
+            if ($error === '' && !in_array(strtolower((string) ($matchInfo['status'] ?? 'scheduled')), ['scheduled', 'ongoing'], true)) {
+                $error = 'แมตช์นี้บันทึกผลไปแล้วหรือไม่อยู่ในสถานะที่รับผลได้';
+            }
 
             if ($error === '' && $bestOf <= 1) {
                     $score1raw = $_POST['score1'] ?? '';
@@ -347,7 +351,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         $scheduleCheck->execute(['match_id' => $matchId]);
         $scheduleMatch = $scheduleCheck->fetch(PDO::FETCH_ASSOC);
         if (!$scheduleMatch || (int) $scheduleMatch['tournament_id'] !== $tournamentId || (!empty($_POST['category_id']) && (int) $_POST['category_id'] !== (int) $scheduleMatch['tournament_category_id'])) {
-            $error = 'Match นี้ไม่อยู่ใน Tournament ที่กำลังจัดการ';
+            $error = 'แมตช์นี้ไม่อยู่ในรายการที่กำลังจัดการ';
         } else {
             $scheduledAt = trim((string) ($_POST['scheduled_at'] ?? ''));
             $dateCheck = $pdo->prepare('SELECT start_date, end_date FROM tournaments WHERE tournament_id = :id');

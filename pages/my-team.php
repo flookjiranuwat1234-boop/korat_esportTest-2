@@ -57,7 +57,7 @@ $teams = $teams->fetchAll();
         </div>
 
         <p><a href="create-team.php" class="btn">+ สร้างทีมใหม่</a></p>
-        <p><a href="register-tournament.php">สมัครเข้าร่วมทัวร์นาเมนต์ &rarr;</a></p>
+        <p><a href="register-tournament.php">สมัครแข่งขัน &rarr;</a></p>
     </section>
 </body>
 </html>

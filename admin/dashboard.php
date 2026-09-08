@@ -18,7 +18,7 @@ function displayDashboardCategoryLabels(?string $categoryLabels): string
         return match (strtolower(trim($category))) {
             'male' => 'ชาย',
             'female' => 'หญิง',
-            'open' => 'ทั่วไป',
+            'open' => 'โอเพ่น',
             default => trim($category),
         };
     }, explode(',', (string) $categoryLabels));
@@ -34,7 +34,7 @@ function renderDashboardCategoryBadges(?string $categoryLabels): string
         $categoryConfig = match ($categoryCode) {
             'male' => ['ชาย', 'bg-blue-50 text-blue-700 border-blue-100'],
             'female' => ['หญิง', 'bg-pink-50 text-pink-700 border-pink-100'],
-            'open' => ['ทั่วไป', 'bg-orange-50 text-orange-700 border-orange-100'],
+            'open' => ['โอเพ่น', 'bg-orange-50 text-orange-700 border-orange-100'],
             default => [$category, 'bg-violet-50 text-violet-700 border-violet-100'],
         };
         $badges[] = '<span class="inline-flex items-center rounded-full border px-2 py-0.5 font-bold ' . $categoryConfig[1] . '">' . htmlspecialchars($categoryConfig[0]) . '</span>';
@@ -152,13 +152,13 @@ $memberChartData = [
     ['label' => 'ยังไม่มีโปรไฟล์', 'value' => (int) $noProfileCount, 'color' => '#94A3B8', 'url' => 'manage-members.php'],
 ];
 $workflowChartData = [
-    ['label' => 'เปิดรับสมัคร', 'value' => (int) $openTournamentCount, 'color' => '#10B981', 'icon' => 'fa-door-open', 'description' => 'Tournament ที่เปิดให้สมัคร'],
-    ['label' => 'รออนุมัติ', 'value' => (int) $pendingRegistrationCount, 'color' => '#F59E0B', 'icon' => 'fa-user-clock', 'description' => 'ใบสมัครที่รอ Admin ตรวจสอบ'],
-    ['label' => 'กำลัง Check-in', 'value' => (int) $checkinTournamentCount, 'color' => '#3B82F6', 'icon' => 'fa-user-check', 'description' => 'Tournament ที่อยู่ในช่วง Check-in'],
-    ['label' => 'Check-in ไม่ครบ', 'value' => (int) $incompleteCheckinCount, 'color' => '#F43F5E', 'icon' => 'fa-triangle-exclamation', 'description' => 'Registration ที่ยังเช็กอินไม่ครบ'],
-    ['label' => 'พร้อมจัดสาย', 'value' => (int) $readyForDrawCount, 'color' => '#0EA5E9', 'icon' => 'fa-sitemap', 'description' => 'Tournament ที่พร้อมสร้าง Bracket'],
-    ['label' => 'กำลังแข่งขัน', 'value' => (int) $ongoingCountYear, 'color' => '#8B5CF6', 'icon' => 'fa-gamepad', 'description' => 'Tournament ที่กำลังแข่งขัน'],
-    ['label' => 'Match รอผล', 'value' => (int) $pendingMatches, 'color' => '#F97316', 'icon' => 'fa-clock', 'description' => 'Match ที่รอบันทึกผล'],
+    ['label' => 'เปิดรับสมัคร', 'value' => (int) $openTournamentCount, 'color' => '#10B981', 'icon' => 'fa-door-open', 'description' => 'รายการที่เปิดให้สมัคร'],
+    ['label' => 'รอตรวจสอบ', 'value' => (int) $pendingRegistrationCount, 'color' => '#F59E0B', 'icon' => 'fa-user-clock', 'description' => 'ใบสมัครที่รอผู้ดูแลตรวจสอบ'],
+    ['label' => 'กำลังเช็กอิน', 'value' => (int) $checkinTournamentCount, 'color' => '#3B82F6', 'icon' => 'fa-user-check', 'description' => 'รายการที่อยู่ในช่วงเช็กอิน'],
+    ['label' => 'เช็กอินไม่ครบ', 'value' => (int) $incompleteCheckinCount, 'color' => '#F43F5E', 'icon' => 'fa-triangle-exclamation', 'description' => 'ใบสมัครที่ยังเช็กอินไม่ครบ'],
+    ['label' => 'พร้อมจัดสาย', 'value' => (int) $readyForDrawCount, 'color' => '#0EA5E9', 'icon' => 'fa-sitemap', 'description' => 'รายการที่พร้อมสร้างสายการแข่งขัน'],
+    ['label' => 'กำลังแข่งขัน', 'value' => (int) $ongoingCountYear, 'color' => '#8B5CF6', 'icon' => 'fa-gamepad', 'description' => 'รายการที่กำลังแข่งขัน'],
+    ['label' => 'แมตช์รอผล', 'value' => (int) $pendingMatches, 'color' => '#F97316', 'icon' => 'fa-clock', 'description' => 'แมตช์ที่รอบันทึกผล'],
     ['label' => 'แข่งขันจบแล้ว', 'value' => (int) $completedTournamentCount, 'color' => '#64748B', 'icon' => 'fa-flag-checkered', 'description' => 'Tournament ที่จบการแข่งขันแล้ว'],
 ];
 $dashboardGames = $pdo->query("SELECT game_id, name FROM games WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -512,14 +512,14 @@ $openTournaments = $pdo->query("
                 <a href="checkin-teams.php" class="stat-card-light p-5 rounded-2xl relative block group border-rose-200">
                     <div>
                         <div class="flex items-center justify-between mb-3">
-                            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">ทีม Check-in ไม่ครบ</span>
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">ทีมเช็กอินไม่ครบ</span>
                             <div class="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
                                 <i class="fa-solid fa-user-clock"></i>
                             </div>
                         </div>
 
                         <div class="flex items-end justify-between">
-                            <div><h3 class="text-3xl font-black font-display text-rose-600" data-countup="<?php echo $incompleteCheckinCount; ?>">0</h3><p class="text-[11px] text-slate-400 mt-1">ต้องตรวจสอบก่อนปิด Check-in</p></div>
+                            <div><h3 class="text-3xl font-black font-display text-rose-600" data-countup="<?php echo $incompleteCheckinCount; ?>">0</h3>                            <p class="text-[11px] text-slate-400 mt-1">ต้องตรวจสอบก่อนปิดการเช็กอิน</p></div>
                             <span class="text-xs font-bold text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity">ตรวจสอบ <i class="fa-solid fa-arrow-right"></i></span>
                         </div>
                     </div>
@@ -563,7 +563,7 @@ $openTournaments = $pdo->query("
                                         <th class="p-4">เกม</th>
                                         <th class="p-4">ประเภท</th>
                                         <th class="p-4 text-center">สมัคร / อนุมัติ</th>
-                                        <th class="p-4 text-center">Check-in</th>
+                                        <th class="p-4 text-center">เช็กอิน</th>
                                         <th class="p-4 text-center">Match</th>
                                         <th class="p-4">วันแข่งขัน</th>
                                         <th class="p-4 text-center">สถานะ</th>
@@ -588,7 +588,7 @@ $openTournaments = $pdo->query("
                                                     'registration_open' => ['เปิดรับสมัคร', 'bg-emerald-100 text-emerald-700 border-emerald-200'],
                                                     'ongoing' => ['กำลังแข่ง', 'bg-violet-100 text-violet-700 border-violet-200'],
                                                     'bracket_generated' => ['จัดสายแล้ว', 'bg-sky-100 text-sky-700 border-sky-200'],
-                                                    'checkin_open' => ['กำลัง Check-in', 'bg-blue-100 text-blue-700 border-blue-200'],
+                                                    'checkin_open' => ['กำลังเช็กอิน', 'bg-blue-100 text-blue-700 border-blue-200'],
                                                     'completed' => ['จบแล้ว', 'bg-slate-100 text-slate-600 border-slate-200'],
                                                 ];
                                                 $label = $statusLabels[$t['status']] ?? [$t['status'], 'bg-slate-100 text-slate-600 border-slate-200'];

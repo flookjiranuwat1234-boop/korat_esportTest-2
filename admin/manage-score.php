@@ -33,9 +33,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
         $matchState = $matchCheck->fetch(PDO::FETCH_ASSOC);
 
         if (!$matchState) {
-            $error = 'ไม่พบ Match ที่ต้องการบันทึกผล';
+            $error = 'ไม่พบแมตช์ที่ต้องการบันทึกผล';
         } elseif ($matchState['tournament_status'] !== 'ongoing' || !in_array($matchState['status'], ['scheduled', 'ongoing'], true)) {
-            $error = 'Tournament หรือ Match นี้ไม่อนุญาตให้บันทึกผลในสถานะปัจจุบัน';
+            $error = 'รายการหรือแมตช์นี้ยังไม่เปิดให้บันทึกผล';
         } else {
 
         // ต้องรู้ก่อนว่าแมตช์นี้อยู่ในทัวร์นาเมนต์รูปแบบไหน เพราะ Single Elimination ห้ามเสมอ

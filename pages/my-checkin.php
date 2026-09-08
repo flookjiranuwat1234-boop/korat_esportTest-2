@@ -43,9 +43,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'playe
         if (!$verifiedRegistration) {
             $error = 'คุณไม่มีสิทธิ์เช็คอินในรายการนี้';
         } elseif (!$verifiedRegistration['checkin_open_at'] || !$verifiedRegistration['checkin_close_at']) {
-            $error = 'ยังไม่ได้กำหนดเวลา Check-in';
+            $error = 'ยังไม่ได้กำหนดเวลาเช็กอิน';
         } elseif (!$checkinWindowOpen || !canCheckinRegistration($pdo, $registrationId, $now)) {
-            $error = $now < new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิด Check-in' : 'ขณะนี้อยู่นอกช่วงเวลา Check-in';
+            $error = $now < new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิดเช็กอิน' : 'ขณะนี้อยู่นอกช่วงเวลาเช็กอิน';
         } else {
             markRosterPlayerCheckedIn($pdo, $registrationId, (int) $myPlayerId, (int) $_SESSION['user_id']);
             $success = 'เช็คอินเรียบร้อยแล้ว';
@@ -90,15 +90,15 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>Check-in ของฉัน - Korat Esport</title>
+    <title>เช็กอินของฉัน - Korat Esport</title>
     <link rel="stylesheet" href="../assets/css/style.css">
 </head>
 <body>
     <?php include '../includes/public_nav.php'; ?>
 
     <section class="content">
-        <h1>Check-in ของฉัน</h1>
-        <p>เช็คอินรายบุคคลตาม Tournament Roster ของคุณ</p>
+        <h1>เช็กอินของฉัน</h1>
+        <p>เช็กอินตามไลน์อัปการแข่งขันของคุณ</p>
 
         <?php if (!empty($error)): ?><p class="error"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
         <?php if (!empty($success)): ?><p class="success"><?php echo htmlspecialchars($success); ?></p><?php endif; ?>
@@ -123,12 +123,12 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken); ?>">
                                 <input type="hidden" name="action" value="player_checkin">
                                 <input type="hidden" name="registration_id" value="<?php echo (int) $c['tournament_registration_id']; ?>">
-                                <button type="submit">Check-in</button>
+                                <button type="submit">เช็กอิน</button>
                             </form>
                         <?php else: ?>
-                            <span class="badge"><?php echo (!$c['checkin_open_at'] || !$c['checkin_close_at']) ? 'ยังไม่ได้กำหนดเวลา Check-in' : ($checkinNow < new DateTimeImmutable($c['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิด Check-in' : 'ปิด Check-in แล้ว'); ?></span>
+                            <span class="badge"><?php echo (!$c['checkin_open_at'] || !$c['checkin_close_at']) ? 'ยังไม่ได้กำหนดเวลาเช็กอิน' : ($checkinNow < new DateTimeImmutable($c['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิดเช็กอิน' : 'ปิดเช็กอินแล้ว'); ?></span>
                         <?php endif; ?>
-                        <span class="badge">ยังไม่ Check-in</span>
+                        <span class="badge">ยังไม่เช็กอิน</span>
                     <?php endif; ?>
 
                     <?php if ($c['player_checkin_at']): ?>
@@ -137,11 +137,11 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 
                     <p>สถานะรายชื่อ: <strong><?php echo (int) $c['checked_count']; ?>/<?php echo (int) $c['required_count']; ?></strong>
                         <?php if ((int) $c['required_count'] > 0 && (int) $c['checked_count'] >= (int) $c['required_count']): ?>
-                            <span style="color:#15803d;">✓ Check-in ครบ</span>
+                            <span style="color:#15803d;">✓ เช็กอินครบ</span>
                         <?php elseif ((int) $c['checked_count'] > 0): ?>
-                            <span style="color:#b45309;">— Check-in ไม่ครบ</span>
+                            <span style="color:#b45309;">— เช็กอินไม่ครบ</span>
                         <?php else: ?>
-                            <span style="color:#64748b;">— ยังไม่มีใคร Check-in</span>
+                            <span style="color:#64748b;">— ยังไม่มีใครเช็กอิน</span>
                         <?php endif; ?>
                     </p>
 
@@ -158,7 +158,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                     ?>
                     <?php if ($roster): ?>
                         <div style="margin-top:0.8rem; border-top:1px solid #e2e8f0; padding-top:0.6rem;">
-                            <strong>สมาชิก Tournament Roster</strong>
+                            <strong>สมาชิกในไลน์อัปการแข่งขัน</strong>
                             <?php foreach ($roster as $member): ?>
                                 <div style="display:flex; justify-content:space-between; gap:0.5rem; margin-top:0.35rem; font-size:0.9rem;">
                                     <span><?php echo htmlspecialchars($member['display_name'] ?: $member['username']); ?><?php echo $member['is_required_for_checkin'] ? ' *' : ''; ?></span>
@@ -167,12 +167,12 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                     </span>
                                 </div>
                             <?php endforeach; ?>
-                            <small>* ผู้ที่ต้อง Check-in ตามกติกา</small>
+                            <small>* ผู้ที่ต้องเช็กอินตามกติกา</small>
                         </div>
                     <?php endif; ?>
 
                     <?php if ($c['checkin_open_at'] || $c['checkin_close_at']): ?>
-                        <p>ช่วงเวลา Check-in: <?php echo $c['checkin_open_at'] ? date('d/m/Y H:i', strtotime($c['checkin_open_at'])) : 'ไม่กำหนด'; ?> - <?php echo $c['checkin_close_at'] ? date('d/m/Y H:i', strtotime($c['checkin_close_at'])) : 'ไม่กำหนด'; ?></p>
+                        <p>ช่วงเวลาเช็กอิน: <?php echo $c['checkin_open_at'] ? date('d/m/Y H:i', strtotime($c['checkin_open_at'])) : 'ไม่กำหนด'; ?> - <?php echo $c['checkin_close_at'] ? date('d/m/Y H:i', strtotime($c['checkin_close_at'])) : 'ไม่กำหนด'; ?></p>
                     <?php endif; ?>
 
                     <?php if ($c['venue_address']): ?>

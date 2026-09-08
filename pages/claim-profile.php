@@ -201,7 +201,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                         <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)] group-hover:scale-105 transition-transform" onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors drop-shadow">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1 drop-shadow-sm">Official Arena & Hub</span>
+                            <span class="block text-[10px] tracking-widest text-gray-200 font-bold uppercase -mt-1 drop-shadow-sm">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
@@ -346,7 +346,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                     <input type="hidden" name="action" value="create_new">
 
                     <div class="space-y-2">
-                        <label class="block text-xs font-bold uppercase text-gray-300 tracking-wider">ชื่อในเกม (Display Name)</label>
+                        <label class="block text-xs font-bold uppercase text-gray-300 tracking-wider">ชื่อในเกม</label>
                         <input type="text" name="display_name" required maxlength="50"
                             value="<?php echo htmlspecialchars($newDisplayName); ?>"
                             placeholder="เช่น NightWolf_th"

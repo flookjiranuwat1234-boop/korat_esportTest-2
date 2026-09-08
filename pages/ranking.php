@@ -20,7 +20,7 @@ function rankingCategoryLabel(string $category): string
     return match (strtolower(trim($category))) {
         'male' => 'ชาย',
         'female' => 'หญิง',
-        'open' => 'ทั่วไป',
+        'open' => 'โอเพ่น',
         default => $category,
     };
 }
@@ -151,10 +151,6 @@ if ($type === 'team') {
             $sql .= " AND CASE WHEN LOWER(TRIM(tr.category)) IN ('male', 'female') THEN LOWER(TRIM(tr.category)) ELSE 'open' END = :category";
             $params['category'] = $category;
         }
-        if (!$isOpenGame) {
-            $sql .= " AND LOWER(TRIM(tr.category)) <> 'open'";
-        }
-
         if ($search !== '') {
             $sql .= " AND t.name LIKE :search";
             $params['search'] = "%{$search}%";
@@ -215,10 +211,6 @@ if ($type === 'team') {
             $sql .= " AND CASE WHEN LOWER(TRIM(pr.category)) IN ('male', 'female') THEN LOWER(TRIM(pr.category)) ELSE 'open' END = :category";
             $params['category'] = $category;
         }
-        if (!$isOpenGame) {
-            $sql .= " AND LOWER(TRIM(pr.category)) <> 'open'";
-        }
-
         $sql .= " GROUP BY p.player_id, p.display_name, p.avatar_path, $playerCategorySql";
         $sql .= " ORDER BY total_points DESC, wins DESC";
         $stmt = $pdo->prepare($sql);
@@ -241,7 +233,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ตารางคะแนนและอันดับ - Korat Esport</title>
+    <title>ตารางคะแนนและอันดับสะสม - Korat Esport</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
@@ -479,14 +471,14 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors drop-shadow">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] tracking-widest text-gray-400 font-bold uppercase -mt-1">Official Arena & Hub</span>
+                            <span class="block text-[10px] tracking-widest text-gray-400 font-bold uppercase -mt-1">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
                     <nav class="hidden md:flex items-center gap-1 lg:gap-2">
                         <a href="index.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-house text-xs mr-1.5"></i> หน้าแรก</a>
                         <a href="tournaments.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-trophy text-xs mr-1.5"></i> ทัวร์นาเมนต์</a>
-                        <a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-bold text-white bg-brand-orange transition-all shadow-orange-glow"><i class="fa-solid fa-ranking-star text-xs mr-1.5"></i> ตารางคะแนน</a>
+                        <a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-bold text-white bg-brand-orange transition-all shadow-orange-glow"><i class="fa-solid fa-ranking-star text-xs mr-1.5"></i> อันดับสะสม</a>
                         <a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-newspaper text-xs mr-1.5"></i> ข่าวสาร</a>
                         <a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-images text-xs mr-1.5"></i> แกลเลอรี่</a>
                     </nav>
@@ -524,13 +516,13 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
         <!-- PAGE HEADER -->
         <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-6 w-full text-center space-y-4">
             <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-bold uppercase tracking-widest backdrop-blur-md animate-fade-down shadow-gold-glow">
-                <i class="fa-solid fa-crown text-amber-400 crown-float"></i> Hall of Fame & Leaderboards
+                <i class="fa-solid fa-crown text-amber-400 crown-float"></i> อันดับและทำเนียบแชมป์
             </div>
             <h1 class="text-4xl sm:text-6xl font-black font-display text-white tracking-wider uppercase leading-none drop-shadow-[0_0_35px_rgba(255,85,0,0.8)] animate-fade-down">
-                อันดับตารางคะแนน <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-orange via-amber-300 to-white">(RANKING)</span>
+                ตารางคะแนนและอันดับสะสม
             </h1>
             <p class="text-sm sm:text-base text-gray-300 max-w-xl mx-auto font-normal animate-fade-up">
-                สรุปอันดับคะแนนสะสม สถิติการแข่งขัน และอัตราการชนะของสโมสรและนักกีฬาประจำจังหวัดนครราชสีมา
+                สรุปคะแนนสะสม สถิติการแข่งขัน และอัตราการชนะของทีมและนักกีฬาในจังหวัดนครราชสีมา
             </p>
         </section>
 
@@ -558,7 +550,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             <i class="fa-solid fa-magnifying-glass"></i>
                         </span>
                         <input type="text" id="rankingSearchInput"
-                            placeholder="ค้นหาชื่อทีม หรือผู้เล่น..."
+                            placeholder="ค้นหาทีมหรือนักกีฬา..."
                             value="<?php echo htmlspecialchars($search); ?>"
                             class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-white placeholder-gray-500 text-xs focus:outline-none focus:border-brand-orange transition-all shadow-inner">
                     </div>
@@ -567,7 +559,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                     <?php if ($gamePlayMode === 'solo'): ?>
                         <div class="flex items-center bg-black/40 p-1.5 rounded-2xl border border-white/10 shrink-0 justify-center w-full sm:w-auto">
                             <span class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center gap-2 bg-white/20 text-white border border-white/30 shadow">
-                                <i class="fa-solid fa-user text-amber-400"></i> อันดับผู้เล่น
+                                <i class="fa-solid fa-user text-amber-400"></i> อันดับนักกีฬา
                             </span>
                         </div>
                     <?php else: ?>
@@ -578,7 +570,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             </a>
                             <a href="ranking.php?game_id=<?php echo $gameId; ?>&type=player&category=<?php echo $category; ?>"
                                 class="px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center gap-2 <?php echo $type == 'player' ? 'bg-white/20 text-white border border-white/30 shadow' : 'text-gray-400 hover:text-white'; ?>">
-                                <i class="fa-solid fa-user text-amber-400"></i> อันดับผู้เล่น
+                                <i class="fa-solid fa-user text-amber-400"></i> อันดับนักกีฬา
                             </a>
                         </div>
                     <?php endif; ?>
@@ -602,9 +594,9 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
         <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8 w-full">
             <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b border-white/20 pb-4 gap-4">
                 <div>
-                    <span class="text-amber-400 font-bold text-xs uppercase tracking-widest block mb-1">HALL OF FAME</span>
+                    <span class="text-amber-400 font-bold text-xs uppercase tracking-widest block mb-1">ตารางอันดับ</span>
                     <h2 class="text-3xl font-black font-display text-white uppercase tracking-wide flex items-center gap-3 drop-shadow">
-                        <i class="fa-solid fa-crown text-amber-400"></i> ทำเนียบเกียรติยศ (อันดับสูงสุด)
+                        <i class="fa-solid fa-crown text-amber-400"></i> อันดับยอดเยี่ยม
                     </h2>
                 </div>
                 <span class="text-xs text-gray-400">อันดับรวมทุกเกม</span>
@@ -612,8 +604,8 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <?php foreach ([
-                    ['title' => 'สโมสร / ทีมยอดเยี่ยม', 'icon' => 'fa-shield-halved', 'color' => 'brand-orange', 'rows' => $topTeams, 'name' => 'team_name', 'id' => 'team_id', 'url' => 'team-profile.php?id=', 'score' => 'points'],
-                    ['title' => 'นักกีฬา / ผู้เล่นยอดเยี่ยม', 'icon' => 'fa-user-ninja', 'color' => 'amber-400', 'rows' => $topPlayers, 'name' => 'display_name', 'id' => 'player_id', 'url' => 'player-profile.php?id=', 'score' => 'points'],
+                    ['title' => 'อันดับทีม', 'icon' => 'fa-shield-halved', 'color' => 'brand-orange', 'rows' => $topTeams, 'name' => 'team_name', 'id' => 'team_id', 'url' => 'team-profile.php?id=', 'score' => 'points'],
+                    ['title' => 'อันดับผู้เล่น', 'icon' => 'fa-user-ninja', 'color' => 'amber-400', 'rows' => $topPlayers, 'name' => 'display_name', 'id' => 'player_id', 'url' => 'player-profile.php?id=', 'score' => 'points'],
                 ] as $hall): ?>
                     <div class="space-y-4">
                         <h3 class="text-base font-bold font-display text-<?= $hall['color'] ?> uppercase tracking-wider flex items-center gap-2">
@@ -623,7 +615,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             <div class="overflow-x-auto">
                                 <table class="w-full text-left text-sm text-gray-200">
                                     <thead class="bg-black/40 text-xs uppercase font-bold text-gray-300 border-b border-white/15 font-display">
-                                        <tr><th class="p-4 text-center w-16">อันดับ</th><th class="p-4"><?= $hall['name'] === 'team_name' ? 'ทีม' : 'ผู้เล่น' ?></th><th class="p-4 text-center">W - L</th><th class="p-4 text-right">คะแนน</th></tr>
+                                        <tr><th class="p-4 text-center w-16">อันดับ</th><th class="p-4"><?= $hall['name'] === 'team_name' ? 'ทีม' : 'ผู้เล่น' ?></th><th class="p-4 text-center">สถิติ ชนะ–แพ้</th><th class="p-4 text-right">คะแนน</th></tr>
                                     </thead>
                                     <tbody class="divide-y divide-white/10 font-medium">
                                         <?php if (empty($hall['rows'])): ?><tr><td colspan="4" class="p-6 text-center text-gray-400 text-xs">ยังไม่มีข้อมูลอันดับ</td></tr><?php endif; ?>
@@ -632,7 +624,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                                 <td class="p-4 text-center font-display font-black text-sm"><?= $i + 1 ?></td>
                                                 <td class="p-4 font-bold text-white text-sm truncate max-w-[180px]"><?= htmlspecialchars($row[$hall['name']]) ?><span class="block text-[10px] text-gray-400 font-normal"><?= htmlspecialchars($row['game_name']) ?></span></td>
                                                 <td class="p-4 text-center font-mono text-xs"><span class="text-emerald-400 font-bold"><?= (int) $row['wins'] ?>W</span>-<span class="text-rose-400 font-bold"><?= (int) $row['losses'] ?>L</span></td>
-                                                <td class="p-4 text-right font-display font-black text-<?= $hall['color'] ?> text-base"><?= number_format((int) $row[$hall['score']]) ?> <span class="text-[10px] text-gray-300 font-normal">PTS</span></td>
+                                                <td class="p-4 text-right font-display font-black text-<?= $hall['color'] ?> text-base"><?= number_format((int) $row[$hall['score']]) ?> <span class="text-[10px] text-gray-300 font-normal">คะแนน</span></td>
                                             </tr>
                                         <?php endforeach; ?>
                                     </tbody>
@@ -662,11 +654,11 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             </div>
                             <div>
                                 <h3 class="text-xl font-bold font-display text-white truncate"><?php echo htmlspecialchars($name2); ?></h3>
-                                <p class="text-xs text-gray-400 mt-0.5">แข่ง <?php echo $r2['matches_played']; ?> นัด (Win Rate <?php echo $wr2; ?>%)</p>
+                                <p class="text-xs text-gray-400 mt-0.5">แข่ง <?php echo $r2['matches_played']; ?> นัด (อัตราชนะ <?php echo $wr2; ?>%)</p>
                             </div>
                             <div class="pt-2 border-t border-white/10 flex items-center justify-between">
                                 <span class="text-xs text-gray-400 uppercase font-bold">คะแนนสะสม</span>
-                                <span class="font-display font-black text-slate-200 text-xl"><span class="podium-counter" data-target="<?php echo $r2['total_points']; ?>">0</span> <span class="text-xs font-normal">PTS</span></span>
+                                <span class="font-display font-black text-slate-200 text-xl"><span class="podium-counter" data-target="<?php echo $r2['total_points']; ?>">0</span> <span class="text-xs font-normal">คะแนน</span></span>
                             </div>
                         </a>
                     <?php endif; ?>
@@ -688,11 +680,11 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             </div>
                             <div class="relative z-10">
                                 <h3 class="text-2xl sm:text-3xl font-black font-display text-white truncate"><?php echo htmlspecialchars($name1); ?></h3>
-                                <p class="text-xs text-gray-300 mt-1">แข่ง <?php echo $r1['matches_played']; ?> นัด (Win Rate <?php echo $wr1; ?>%)</p>
+                                <p class="text-xs text-gray-300 mt-1">แข่ง <?php echo $r1['matches_played']; ?> นัด (อัตราชนะ <?php echo $wr1; ?>%)</p>
                             </div>
                             <div class="pt-3 border-t border-white/15 flex items-center justify-between relative z-10">
                                 <span class="text-xs text-amber-300 uppercase font-bold tracking-wider">คะแนนสะสมสูงสุด</span>
-                                <span class="font-display font-black text-amber-400 text-2xl sm:text-3xl"><span class="podium-counter" data-target="<?php echo $r1['total_points']; ?>">0</span> <span class="text-xs font-normal">PTS</span></span>
+                                <span class="font-display font-black text-amber-400 text-2xl sm:text-3xl"><span class="podium-counter" data-target="<?php echo $r1['total_points']; ?>">0</span> <span class="text-xs font-normal">คะแนน</span></span>
                             </div>
                         </a>
                     <?php endif; ?>
@@ -710,11 +702,11 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             </div>
                             <div>
                                 <h3 class="text-xl font-bold font-display text-white truncate"><?php echo htmlspecialchars($name3); ?></h3>
-                                <p class="text-xs text-gray-400 mt-0.5">แข่ง <?php echo $r3['matches_played']; ?> นัด (Win Rate <?php echo $wr3; ?>%)</p>
+                                <p class="text-xs text-gray-400 mt-0.5">แข่ง <?php echo $r3['matches_played']; ?> นัด (อัตราชนะ <?php echo $wr3; ?>%)</p>
                             </div>
                             <div class="pt-2 border-t border-white/10 flex items-center justify-between">
                                 <span class="text-xs text-gray-400 uppercase font-bold">คะแนนสะสม</span>
-                                <span class="font-display font-black text-amber-500 text-xl"><span class="podium-counter" data-target="<?php echo $r3['total_points']; ?>">0</span> <span class="text-xs font-normal">PTS</span></span>
+                                <span class="font-display font-black text-amber-500 text-xl"><span class="podium-counter" data-target="<?php echo $r3['total_points']; ?>">0</span> <span class="text-xs font-normal">คะแนน</span></span>
                             </div>
                         </a>
                     <?php endif; ?>
@@ -731,13 +723,13 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                         <thead class="bg-black/70 text-xs uppercase font-bold text-gray-300 border-b border-white/15 font-display tracking-wider">
                             <tr>
                                 <th class="p-5 text-center w-20">อันดับ</th>
-                                <th class="p-5"><?php echo $type == 'player' ? 'ผู้เล่น (Player)' : 'สโมสร / ทีม (Team)'; ?></th>
+                                <th class="p-5"><?php echo $type == 'player' ? 'นักกีฬา' : 'ทีม'; ?></th>
                                 <?php if ($type === 'team'): ?>
                                     <th class="p-5 text-center">ประเภท</th>
                                 <?php endif; ?>
                                 <th class="p-5 text-center">แข่งแล้ว</th>
-                                <th class="p-5 text-center">ชนะ - แพ้</th>
-                                <th class="p-5 text-center">Win Rate</th>
+                                <th class="p-5 text-center">สถิติ ชนะ–แพ้</th>
+                                <th class="p-5 text-center">อัตราชนะ</th>
                                 <th class="p-5 text-right w-36">คะแนนสะสม</th>
                             </tr>
                         </thead>
@@ -751,7 +743,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             <?php elseif (count($rankings) <= 3): ?>
                                 <tr id="noMoreRankingRow">
                                     <td colspan="7" class="p-10 text-center text-gray-400 font-normal">
-                                        แสดงอันดับครบถ้วนในโซน Podium ด้านบนแล้ว
+                                        แสดงอันดับครบถ้วนด้านบนแล้ว
                                     </td>
                                 </tr>
                             <?php else: ?>
@@ -789,7 +781,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                                     $cat = $r['team_category'] ?? 'open';
                                                     if ($cat === 'male') echo '<span class="px-2.5 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30">ชาย</span>';
                                                     elseif ($cat === 'female') echo '<span class="px-2.5 py-0.5 rounded-full text-[10px] bg-pink-500/20 text-pink-300 font-bold border border-pink-500/30">หญิง</span>';
-                                                    else echo '<span class="px-2.5 py-0.5 rounded-full text-[10px] bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">ทั่วไป</span>';
+                                                    else echo '<span class="px-2.5 py-0.5 rounded-full text-[10px] bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">โอเพ่น</span>';
                                                 ?>
                                             </td>
                                         <?php endif; ?>
@@ -808,7 +800,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                             </div>
                                         </td>
                                         <td class="p-5 text-right font-display font-black text-brand-orange text-xl">
-                                            <?php echo number_format($r['total_points']); ?> <span class="text-xs text-gray-400 font-normal font-sans">PTS</span>
+                                            <?php echo number_format($r['total_points']); ?> <span class="text-xs text-gray-400 font-normal font-sans">คะแนน</span>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>

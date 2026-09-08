@@ -2,6 +2,7 @@
 // pages/profile.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/team_roles.php';
 requireLogin();
 
 // ดึงข้อมูล Player จาก user_id
@@ -15,6 +16,7 @@ if (!$player) {
 }
 
 $playerId = (int) $player['player_id'];
+$csrfToken = generateCsrfToken();
 $error = '';
 $success = '';
 
@@ -51,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
         }
 
         if (empty($displayNameInput)) {
-            $error = 'กรุณากรอกชื่อแสดงผล (Display Name)';
+            $error = 'กรุณากรอกชื่อแสดงผล';
         } else {
             // บังคับบันทึก avatar_path ลงฐานข้อมูลเสมอ
             $update = $pdo->prepare("
@@ -118,6 +120,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manag
                         $pdo->prepare("INSERT INTO team_members (team_id, player_id, in_game_role, is_active) VALUES (:tid, :pid, :role, 0)")
                             ->execute(['tid' => $teamId, 'pid' => $addPlayerId, 'role' => $role]);
                         $inviteCount++;
+                    } elseif ((int) $existingMem['is_active'] === 0) {
+                        $pdo->prepare("UPDATE team_members SET is_active = 1, left_at = NULL, in_game_role = :role, member_roles = 'player' WHERE team_member_id = :id")
+                            ->execute(['role' => $role ?: 'player', 'id' => $existingMem['team_member_id']]);
+                        syncTeamMemberRoles($pdo, (int) $existingMem['team_member_id'], ['player']);
+                        $inviteCount++;
                     }
                 }
                 if ($inviteCount > 0) {
@@ -139,6 +146,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manag
                     }
                 }
             }
+        }
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remove_team_member') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง';
+    } else {
+        $teamId = (int) ($_POST['team_id'] ?? 0);
+        $memberId = (int) ($_POST['team_member_id'] ?? 0);
+        $memberStmt = $pdo->prepare('
+            SELECT tm.player_id
+            FROM team_members tm
+            INNER JOIN teams t ON t.team_id = tm.team_id
+            WHERE tm.team_member_id = :member_id
+              AND tm.team_id = :team_id
+              AND tm.is_active = 1
+              AND t.captain_player_id = :captain
+              AND t.status = "active"
+            LIMIT 1
+        ');
+        $memberStmt->execute([
+            'member_id' => $memberId,
+            'team_id' => $teamId,
+            'captain' => $playerId,
+        ]);
+        $memberPlayerId = (int) $memberStmt->fetchColumn();
+        if (!$memberPlayerId) {
+            $error = 'ไม่พบสมาชิกที่ต้องการลบ';
+        } elseif ($memberPlayerId === $playerId) {
+            $error = 'ไม่สามารถลบกัปตันทีมได้';
+        } else {
+            $pdo->prepare('UPDATE team_members SET is_active = 0, left_at = COALESCE(left_at, NOW()) WHERE team_member_id = :member_id AND team_id = :team_id')
+                ->execute(['member_id' => $memberId, 'team_id' => $teamId]);
+            $success = 'ลบสมาชิกออกจากทีมเรียบร้อยแล้ว';
         }
     }
 }
@@ -316,7 +358,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                         <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto" onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl text-white">KORAT <span class="text-brand-orange">ESPORT</span></span>
-                            <span class="block text-[10px] text-gray-200 font-bold uppercase -mt-1">Official Arena & Hub</span>
+                            <span class="block text-[10px] text-gray-200 font-bold uppercase -mt-1">ศูนย์กลางอีสปอร์ตอย่างเป็นทางการ</span>
                         </div>
                     </a>
 
@@ -588,7 +630,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                                     <i class="fa-solid fa-qrcode"></i> QR Code รายงานตัว
                                                 </p>
                                                 <div class="bg-white p-3 rounded-2xl inline-block shadow-lg mx-auto">
-                                                    <img src="https://quickchart.io/qr?text=<?= urlencode($reg['qr_code_token']); ?>&size=160" alt="Check-in QR Code" class="w-36 h-36 mx-auto">
+                                                    <img src="https://quickchart.io/qr?text=<?= urlencode($reg['qr_code_token']); ?>&size=160" alt="QR เช็กอิน" class="w-36 h-36 mx-auto">
                                                 </div>
                                                 <div class="font-mono text-xs text-gray-300">
                                                     รหัสอ้างอิง: <span class="font-bold text-white tracking-widest bg-white/10 px-2 py-1 rounded border border-white/10">****<?= htmlspecialchars(substr((string) $reg['qr_code_token'], -4)) ?></span>
@@ -611,7 +653,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                         <div class="lg:col-span-8 bg-white/5 p-6 rounded-2xl border border-white/10 space-y-5 flex flex-col justify-between">
                                             <div class="space-y-3">
                                                 <h4 class="text-xs font-bold text-brand-orange uppercase tracking-wider flex items-center gap-1.5">
-                                                    <i class="fa-solid fa-list-check"></i> ขั้นตอนการรายงานตัวเข้าแข่งขัน (Check-in Steps)
+                                                    <i class="fa-solid fa-list-check"></i> ขั้นตอนการเช็กอิน
                                                 </h4>
                                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                                                     <div class="bg-black/40 p-3 rounded-xl border border-white/10 space-y-1">
@@ -673,7 +715,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                     <div class="flex items-center gap-3">
                         <i class="fa-solid fa-people-group text-brand-orange text-2xl"></i>
                         <div>
-                            <h2 class="text-xl font-bold font-display text-white uppercase">ทีมของฉัน (MY TEAMS)</h2>
+                            <h2 class="text-xl font-bold font-display text-white uppercase">ทีมของฉัน</h2>
                             <p class="text-xs text-gray-400">รายการทีมสโมสรที่คุณสังกัด สามารถกดดูรายชื่อสมาชิกในทีม หรือจัดการทีมได้</p>
                         </div>
                     </div>
@@ -770,7 +812,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-gray-300 mb-1">ชื่อแสดงผลในเกม (Display Name):</label>
+                        <label class="block text-xs font-bold text-gray-300 mb-1">ชื่อแสดงผลในเกม:</label>
                         <input type="text" name="display_name" value="<?= htmlspecialchars($displayName) ?>" required
                                class="w-full bg-black/50 border border-white/20 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-brand-orange">
                     </div>
@@ -819,17 +861,16 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                         <label class="block text-xs font-bold text-gray-300 uppercase">🔍 ค้นหาและเลือกผู้เล่นเข้าทีม (เลือกได้หลายคน):</label>
                         
                         <div class="relative">
-                            <input type="text" id="liveSearchInput" oninput="onSearchInput()" placeholder="พิมพ์ชื่อ Display Name เพื่อค้นหาผู้เล่น..." autocomplete="off"
+                            <input type="text" id="liveSearchInput" oninput="onSearchInput()" placeholder="พิมพ์ชื่อแสดงผลเพื่อค้นหาผู้เล่น..." autocomplete="off"
                                    class="w-full bg-black/50 border border-white/20 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-orange pr-10">
                             <i class="fa-solid fa-magnifying-glass absolute right-3.5 top-3 text-xs text-gray-400"></i>
+                            <div id="searchResultsList" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-white/20 rounded-2xl max-h-48 overflow-y-auto z-50 shadow-2xl divide-y divide-white/10"></div>
                         </div>
 
-                        <div id="searchResultsList" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-white/20 rounded-2xl max-h-48 overflow-y-auto z-50 shadow-2xl divide-y divide-white/10"></div>
-
+                        <div id="currentTeamMembersList" class="space-y-1 pt-2"></div>
+                        <p class="pt-2 text-[10px] font-bold text-brand-orange"><i class="fa-solid fa-user-plus mr-1"></i>ผู้เล่นที่เลือกเพิ่มเข้าทีม</p>
                         <div id="selectedPlayersContainer" class="flex flex-wrap gap-2 pt-1 min-h-[36px]"></div>
 
-                        <input type="text" name="in_game_role" placeholder="กำหนดตำแหน่งในเกม (เช่น Carry, Support)" 
-                               class="w-full bg-black/50 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange mt-2">
                     </div>
 
                     <div class="flex items-center justify-end gap-3 pt-2 border-t border-white/10">
@@ -874,13 +915,17 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
             <?php foreach ($myTeams as $t): ?>
                 <?php
                     $mStmt = $pdo->prepare("
-                        SELECT p.player_id, p.display_name, tm.in_game_role
+                        SELECT p.player_id, p.display_name, tm.team_member_id, tm.in_game_role, tm.member_roles
                         FROM team_members tm
                         JOIN players p ON p.player_id = tm.player_id
                         WHERE tm.team_id = :tid AND tm.is_active = 1
                     ");
                     $mStmt->execute(['tid' => $t['team_id']]);
                     $mList = $mStmt->fetchAll();
+                    foreach ($mList as &$m) {
+                        $m['role_codes'] = getTeamMemberRoles($pdo, (int) $m['team_member_id']);
+                    }
+                    unset($m);
                 ?>
                 "<?= $t['team_id'] ?>": <?= json_encode($mList) ?>,
             <?php endforeach; ?>
@@ -897,9 +942,37 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
         function openTeamModal(teamId, teamName) {
             document.getElementById('modalTeamId').value = teamId;
             document.getElementById('modalTeamName').innerText = '"' + teamName + '"';
+            renderCurrentTeamMembers(teamId);
             selectedPlayersMap.clear();
             renderSelectedPlayersBadges();
             toggleModal('manageTeamModal');
+        }
+
+        function renderCurrentTeamMembers(teamId) {
+            const container = document.getElementById('currentTeamMembersList');
+            const members = teamRostersData[teamId] || [];
+            if (members.length === 0) {
+                container.innerHTML = '<p class="text-[11px] text-gray-500 italic">ยังไม่มีสมาชิกในทีม</p>';
+                return;
+            }
+            container.innerHTML = '<p class="text-[10px] font-bold text-gray-400">สมาชิกปัจจุบัน (ติ๊กเพื่อเลือก)</p>' +
+                members.map((member) => `
+                    <div class="flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 p-2 text-xs text-white hover:bg-white/10">
+                        <span class="min-w-0 flex-1 truncate"><i class="fa-solid fa-user mr-2 text-brand-orange"></i>${escapeHtml(member.display_name)}</span>
+                        <span class="text-[10px] text-brand-orange">${escapeHtml(member.in_game_role || 'สมาชิก')}</span>
+                        ${Number(member.player_id) === <?= $playerId ?> ? '<span class="text-[10px] text-amber-300">กัปตัน</span>' : `<button type="button" class="remove-team-member shrink-0 rounded-lg bg-rose-500/20 px-2 py-1 text-[10px] font-bold text-rose-300 hover:bg-rose-600 hover:text-white" data-team-id="${teamId}" data-member-id="${member.team_member_id}" data-member-name="${escapeHtml(member.display_name)}"><i class="fa-solid fa-trash-can mr-1"></i>ลบ</button>`}
+                    </div>
+                `).join('');
+            container.querySelectorAll('.remove-team-member').forEach((button) => {
+                button.addEventListener('click', function() {
+                    if (!confirm('ต้องการลบสมาชิก ' + this.dataset.memberName + ' ออกจากทีมใช่หรือไม่?')) return;
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.innerHTML = `<input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="remove_team_member"><input type="hidden" name="team_id" value="${this.dataset.teamId}"><input type="hidden" name="team_member_id" value="${this.dataset.memberId}">`;
+                    document.body.appendChild(form);
+                    form.submit();
+                });
+            });
         }
 
         function viewTeamRoster(teamId, teamName) {
@@ -961,8 +1034,16 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                 filtered.forEach(p => {
                     const div = document.createElement('div');
                     div.className = 'p-3 hover:bg-brand-orange/20 cursor-pointer text-xs font-bold text-white transition-colors flex items-center justify-between';
-                    div.innerHTML = `<span><i class="fa-solid fa-user text-brand-orange mr-2"></i>${escapeHtml(p.display_name)}</span> <span class="text-[10px] text-brand-orange font-bold">+ เพิ่ม</span>`;
-                    div.onclick = function() { addPlayerToSelection(p.player_id, p.display_name); };
+                    div.innerHTML = `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="accent-orange-500 w-4 h-4" data-player-id="${p.player_id}"><span><i class="fa-solid fa-user text-brand-orange mr-2"></i>${escapeHtml(p.display_name)}</span></label><span class="text-[10px] text-brand-orange font-bold">เลือกเพิ่ม</span>`;
+                    const checkbox = div.querySelector('input');
+                    checkbox.addEventListener('change', function() {
+                        if (this.checked) addPlayerToSelection(p.player_id, p.display_name);
+                    });
+                    div.addEventListener('click', function(event) {
+                        if (event.target === checkbox) return;
+                        checkbox.checked = true;
+                        addPlayerToSelection(p.player_id, p.display_name);
+                    });
                     resultsBox.appendChild(div);
                 });
             }
@@ -972,6 +1053,8 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 
         function addPlayerToSelection(id, name) {
             selectedPlayersMap.set(id.toString(), name);
+            const currentCheckbox = document.querySelector(`#currentTeamMembersList input[data-player-id="${id}"]`);
+            if (currentCheckbox) currentCheckbox.checked = true;
             renderSelectedPlayersBadges();
             document.getElementById('liveSearchInput').value = '';
             document.getElementById('searchResultsList').classList.add('hidden');
@@ -979,6 +1062,8 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 
         function removeSelectedPlayer(id) {
             selectedPlayersMap.delete(id.toString());
+            const currentCheckbox = document.querySelector(`#currentTeamMembersList input[data-player-id="${id}"]`);
+            if (currentCheckbox) currentCheckbox.checked = false;
             renderSelectedPlayersBadges();
         }
 

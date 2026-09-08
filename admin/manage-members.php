@@ -1074,7 +1074,7 @@ if ($flash) {
                             <select name="role_in_team" class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-brand-orange">
                                 <option value="member">Member (ตัวจริง)</option>
                                 <option value="leader">Leader (กัปตัน)</option>
-                                <option value="substitute">Substitute (ตัวสำรอง)</option>
+                                <option value="substitute">ตัวสำรอง</option>
                             </select>
                         </div>
                     </div>

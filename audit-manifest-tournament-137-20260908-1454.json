@@ -1,0 +1,35 @@
+{
+    "tournament_id": 137,
+    "name": "Korat RoV U18 Championship 2026",
+    "status": "completed",
+    "categories_tested": [
+        {
+            "category_id": 101,
+            "category_code": "male",
+            "registrations": [611, 613],
+            "matches": [688]
+        },
+        {
+            "category_id": 102,
+            "category_code": "female",
+            "registrations": [612, 614],
+            "matches": [687]
+        }
+    ],
+    "registrations": 4,
+    "qualified_for_draw": 4,
+    "matches_completed": 2,
+    "eligibility_validation": {
+        "u18_max_age": 17,
+        "male_category_rejects_female": true,
+        "female_category_rejects_male": true
+    },
+    "roster_validation": {
+        "starters_per_team": 5,
+        "substitutes_per_team": 1,
+        "coach_per_team": 1,
+        "manager_per_team": 1
+    },
+    "duplicate_qualified": 0,
+    "notes": "Completed through Admin approval, Check-in, bracket generation, match results, and tournament completion workflows. Eligibility and staff-role validation were fixed and verified before this test."
+}

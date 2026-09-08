@@ -23,7 +23,7 @@ $dateFilter = in_array($requestedDateFilter, ['today', 'week', 'month', 'startin
 $yearFilter = preg_match('/^20\d{2}$/', (string) ($_GET['year'] ?? '')) ? (int) $_GET['year'] : 0;
 $availableGameIds = array_map('intval', $pdo->query('SELECT game_id FROM games')->fetchAll(PDO::FETCH_COLUMN));
 if ($gameFilter > 0 && !in_array($gameFilter, $availableGameIds, true)) $gameFilter = 0;
-$categoryLabels = ['male' => 'ชาย', 'female' => 'หญิง', 'open' => 'Open'];
+$categoryLabels = ['male' => 'ชาย', 'female' => 'หญิง', 'open' => 'โอเพ่น'];
 if ($categoryFilter !== '' && !isset($categoryLabels[$categoryFilter])) $categoryFilter = '';
 $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
 $nowSql = $now->format('Y-m-d H:i:s');
@@ -107,11 +107,11 @@ $categoryOptions = array_values(array_filter($categoryOptions, static function (
 }));
 $statusLabels = [
     'registration_closed' => 'ปิดรับสมัคร',
-    'check_in' => 'เตรียม Check-in',
-    'checkin_open' => 'กำลัง Check-in',
-    'ready_for_draw' => 'รอจับสาย',
+    'check_in' => 'เปิดเช็กอิน',
+    'checkin_open' => 'เปิดเช็กอิน',
+    'ready_for_draw' => 'พร้อมจัดสาย',
     'grouped' => 'แบ่งกลุ่มแล้ว',
-    'bracket_generated' => 'สร้างสายการแข่งขันแล้ว',
+    'bracket_generated' => 'สร้างสายแล้ว',
     'ongoing' => 'กำลังแข่งขัน',
 ];
 $completedYears = $pdo->query("SELECT DISTINCT YEAR(start_date) AS year FROM tournaments WHERE status = 'completed' AND start_date IS NOT NULL ORDER BY year DESC")->fetchAll(PDO::FETCH_COLUMN);
@@ -434,17 +434,16 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
         <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-8 w-full text-center space-y-5">
             <div
                 class="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-brand-orange/20 border border-brand-orange/60 text-brand-orange text-xs font-bold uppercase tracking-widest backdrop-blur-md animate-fade-down shadow-orange-glow">
-                <i class="fa-solid fa-bolt text-amber-300 animate-bounce"></i> Official Cyber Arena Tournaments
+                <i class="fa-solid fa-bolt text-amber-300 animate-bounce"></i> รายการแข่งขันอย่างเป็นทางการ
             </div>
 
             <h1
                 class="text-3xl sm:text-7xl font-black font-display text-white tracking-wider uppercase leading-none break-words drop-shadow-[0_0_40px_rgba(255,85,0,0.9)] animate-fade-down">
-                ทัวร์นาเมนต์การแข่งขัน <span
-                    class="text-transparent bg-clip-text bg-gradient-to-r from-brand-orange via-amber-400 to-white">(BATTLEGROUNDS)</span>
+                รายการแข่งขันอีสปอร์ต
             </h1>
 
             <p class="text-sm sm:text-base text-gray-300 max-w-2xl mx-auto font-normal animate-fade-up leading-relaxed">
-                เตรียมทีมของคุณให้พร้อมแล้วก้าวเข้าสู่สมรภูมิอีสปอร์ตระดับจังหวัด ชิงเงินรางวัลและเกียรติยศสูงสุดแห่ง
+                เตรียมทีมให้พร้อมสำหรับการแข่งขันอีสปอร์ตระดับจังหวัด และติดตามผลการแข่งขันได้ที่
                 Korat Esport
             </p>
         </section>
@@ -459,7 +458,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                 <input type="hidden" name="view" value="<?= htmlspecialchars($view) ?>">
                 <input type="search" name="search" value="<?= htmlspecialchars($searchFilter) ?>" placeholder="ค้นหาชื่อ Tournament" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white placeholder:text-gray-500 focus:border-brand-orange focus:outline-none">
                 <select name="game_id" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกเกม</option><?php foreach ($games as $game): ?><option value="<?= (int) $game['game_id'] ?>" <?= $gameFilter === (int) $game['game_id'] ? 'selected' : '' ?>><?= htmlspecialchars($game['name']) ?></option><?php endforeach; ?></select>
-                <select name="category" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุก Category</option><?php foreach ($categoryOptions as $category): $categoryCode = strtolower((string) $category['category_code']); ?><option value="<?= htmlspecialchars($categoryCode) ?>" <?= $categoryFilter === $categoryCode ? 'selected' : '' ?>><?= htmlspecialchars($categoryLabels[$categoryCode]) ?></option><?php endforeach; ?></select>
+                <select name="category" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกรุ่นการแข่งขัน</option><?php foreach ($categoryOptions as $category): $categoryCode = strtolower((string) $category['category_code']); ?><option value="<?= htmlspecialchars($categoryCode) ?>" <?= $categoryFilter === $categoryCode ? 'selected' : '' ?>><?= htmlspecialchars($categoryLabels[$categoryCode]) ?></option><?php endforeach; ?></select>
                 <select name="mode" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกประเภทการแข่งขัน</option><?php foreach (['team' => 'ประเภททีม', 'solo' => 'ประเภทบุคคล'] as $modeValue => $modeLabel): ?><option value="<?= $modeValue ?>" <?= $modeFilter === $modeValue ? 'selected' : '' ?>><?= $modeLabel ?></option><?php endforeach; ?></select>
                 <?php if ($view === 'current'): ?>
                     <select name="status" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกสถานะ</option><?php foreach ($statusLabels as $statusValue => $statusLabel): ?><option value="<?= $statusValue ?>" <?= $statusFilter === $statusValue ? 'selected' : '' ?>><?= $statusLabel ?></option><?php endforeach; ?></select>
@@ -508,7 +507,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                                 LEFT JOIN players winner_player ON winner_player.player_id = m.winner_team_id
                                 LEFT JOIN users winner_user ON winner_user.user_id = winner_player.user_id
                                 WHERE m.tournament_id = :tournament_id AND m.winner_team_id IS NOT NULL AND m.status IN ('completed', 'walkover')
-                                ORDER BY CASE WHEN m.bracket_type LIKE 'double_grand_final_reset_%' THEN 0 WHEN m.bracket_type LIKE 'double_grand_final_%' THEN 1 ELSE 2 END, m.round_number DESC, m.match_index DESC LIMIT 1");
+                                ORDER BY CASE WHEN m.bracket_type = 'grand_final_reset' THEN 0 WHEN m.bracket_type = 'grand_final' THEN 1 ELSE 2 END, m.round_number DESC, m.match_index DESC LIMIT 1");
                             $championStmt->execute(['tournament_id' => $tId]);
                             $tChampion = trim((string) ($championStmt->fetchColumn() ?: ''));
                         }
@@ -532,11 +531,11 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                                     <!-- ป้ายสถานะทัวร์นาเมนต์ -->
                                     <div class="absolute top-4 left-4 z-10 badge-pop-in">
                                         <?php if ($isCheckinOpen): ?>
-                                            <span class="px-3.5 py-1.5 rounded-full bg-blue-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-blue-300"><i class="fa-solid fa-user-check mr-1"></i> กำลัง Check-in</span>
+                                            <span class="px-3.5 py-1.5 rounded-full bg-blue-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-blue-300"><i class="fa-solid fa-user-check mr-1"></i> เปิดเช็กอิน</span>
                                         <?php elseif ($status === 'ongoing'): ?>
                                             <span
                                                 class="px-3.5 py-1.5 rounded-full bg-rose-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest shadow-[0_0_15px_rgba(225,29,72,0.6)] flex items-center gap-1.5 border border-rose-400">
-                                                <span class="w-2 h-2 rounded-full bg-white animate-ping"></span> กำลังแข่งขัน (LIVE)
+                                                <span class="w-2 h-2 rounded-full bg-white animate-ping"></span> กำลังแข่งขัน
                                             </span>
                                         <?php elseif ($status === 'registration_closed'): ?>
                                             <span class="px-3.5 py-1.5 rounded-full bg-sky-600/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest border border-sky-300"><i class="fa-solid fa-lock mr-1"></i> ปิดรับสมัคร</span>
@@ -617,7 +616,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
 
                                         <?php if ($view === 'current'): ?>
                                         <div class="flex items-center justify-between text-gray-300 pt-1.5 border-t border-white/5">
-                                            <span class="text-gray-400 text-[11px]"><i class="fa-solid fa-user-check text-emerald-400 mr-1"></i> Check-in / Match</span>
+                                            <span class="text-gray-400 text-[11px]">                                            <i class="fa-solid fa-user-check text-emerald-400 mr-1"></i> เช็กอิน / แมตช์</span>
                                             <span class="font-mono text-gray-200 text-[11px]"><?php echo (int) $t['checkin_complete_count']; ?> / <?php echo (int) $t['completed_match_count']; ?>-<?php echo (int) $t['match_count']; ?></span>
                                         </div>
                                         <?php endif; ?>

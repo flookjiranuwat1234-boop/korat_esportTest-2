@@ -590,7 +590,7 @@ try {
         <!-- Cyber HUD Badge Divider -->
         <div class="hud-divider">
             <div class="hud-divider-badge">
-                <span></span> ARENA STATS <span></span>
+                <span></span> สถิติการแข่งขัน <span></span>
             </div>
         </div>
 
@@ -601,7 +601,7 @@ try {
                 <div class="glass-card p-6 rounded-2xl border-l-4 border-l-brand-orange relative overflow-hidden group shadow-lg"
                     data-aos="fade-up" data-aos-delay="0" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
                     <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">TEAMS</span>
+                        <span class="text-xs font-bold uppercase tracking-wider">ทีม</span>
                         <i
                             class="fa-solid fa-people-group text-brand-orange text-xl group-hover:scale-110 transition-transform stats-icon"></i>
                     </div>
@@ -613,7 +613,7 @@ try {
                 <div class="glass-card p-6 rounded-2xl border-l-4 border-l-amber-400 relative overflow-hidden group shadow-lg"
                     data-aos="fade-up" data-aos-delay="100" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
                     <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">PLAYERS</span>
+                        <span class="text-xs font-bold uppercase tracking-wider">ผู้เล่น</span>
                         <i
                             class="fa-solid fa-gamepad text-amber-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
                     </div>
@@ -625,7 +625,7 @@ try {
                 <div class="glass-card p-6 rounded-2xl border-l-4 border-l-purple-400 relative overflow-hidden group shadow-lg"
                     data-aos="fade-up" data-aos-delay="200" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
                     <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">TOURNAMENTS</span>
+                        <span class="text-xs font-bold uppercase tracking-wider">รายการแข่งขัน</span>
                         <i
                             class="fa-solid fa-trophy text-purple-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
                     </div>
@@ -637,7 +637,7 @@ try {
                 <div class="glass-card p-6 rounded-2xl border-l-4 border-l-emerald-400 relative overflow-hidden group shadow-lg"
                     data-aos="fade-up" data-aos-delay="300" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
                     <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">MATCHES</span>
+                        <span class="text-xs font-bold uppercase tracking-wider">แมตช์</span>
                         <i
                             class="fa-solid fa-bolt text-emerald-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
                     </div>
@@ -652,7 +652,7 @@ try {
         <!-- Cyber HUD Badge Divider -->
         <div class="hud-divider">
             <div class="hud-divider-badge">
-                <span></span> TOURNAMENTS <span></span>
+                <span></span> รายการแข่งขัน <span></span>
             </div>
         </div>
 
@@ -661,8 +661,7 @@ try {
             <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b border-white/20 pb-4 gap-4"
                 data-aos="fade-right">
                 <div>
-                    <span class="text-brand-orange font-bold text-xs uppercase tracking-widest block mb-1">ARENA
-                        EVENTS</span>
+                    <span class="text-brand-orange font-bold text-xs uppercase tracking-widest block mb-1">                    รายการแข่งขัน</span>
                     <h2
                         class="text-3xl font-black font-display text-white uppercase tracking-wide flex items-center gap-3 drop-shadow">
                         <i class="fa-solid fa-fire text-brand-orange"></i>                         เปิดรับสมัครตอนนี้
@@ -741,7 +740,7 @@ try {
                                 <?php endforeach; ?>
                             </div>
                             <div class="grid grid-cols-2 gap-2 text-xs text-gray-300">
-                                <span><i class="fa-solid fa-users text-brand-orange mr-1"></i><?php echo $t['play_mode'] === 'solo' ? 'Solo / คน' : 'Team / ทีม'; ?></span>
+                                <span><i class="fa-solid fa-users text-brand-orange mr-1"></i><?php echo $t['play_mode'] === 'solo' ? 'เดี่ยว' : 'ทีม'; ?></span>
                                 <span class="text-right"><i class="fa-regular fa-clock text-amber-400 mr-1"></i>ปิด <?php echo date('d/m/Y H:i', strtotime($t['registration_end'])); ?></span>
                                 <span><i class="fa-solid fa-user-plus text-emerald-400 mr-1"></i>สมัคร <?php echo $totalRegistered; ?> / <?php echo $totalCapacity > 0 ? $totalCapacity : 'ไม่จำกัด'; ?></span>
                                 <span class="text-right text-emerald-300"><?php echo $remainingCapacity === null ? 'ว่างไม่จำกัด' : 'ว่าง ' . $remainingCapacity; ?></span>
@@ -764,7 +763,7 @@ try {
         <!-- Cyber HUD Badge Divider -->
         <div class="hud-divider">
             <div class="hud-divider-badge">
-                <span></span> LIVE STREAM & HIGHLIGHTS <span></span>
+                <span></span> ถ่ายทอดสดและวิดีโอการแข่งขัน <span></span>
             </div>
         </div>
 
@@ -813,7 +812,7 @@ try {
                         <a href="<?php echo $youtubeChannelUrl; ?>" target="_blank" rel="noopener noreferrer"
                             class="shrink-0 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase tracking-wider transition-all shadow-lg">
                             <i class="fa-brands fa-youtube text-base"></i>
-                            <span>ดูทาง YOUTUBE</span>
+                            <span>ดูวิดีโอการแข่งขัน</span>
                         </a>
                     </div>
                 </div>
@@ -854,7 +853,7 @@ try {
                     <div class="p-3 border-t border-white/10">
                         <a href="<?php echo $youtubeChannelUrl; ?>" target="_blank" rel="noopener noreferrer"
                             class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/10 hover:bg-brand-orange text-white text-xs font-bold uppercase tracking-wider transition-all border border-white/15">
-                            <span>ดูวิดีโอทั้งหมดใน YOUTUBE</span>
+                            <span>ดูวิดีโอการแข่งขันทั้งหมด</span>
                             <i class="fa-solid fa-arrow-right"></i>
                         </a>
                     </div>

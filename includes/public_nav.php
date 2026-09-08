@@ -14,7 +14,7 @@
     <a href="/korat_esportTest-2/admin/manage-gallery.php">จัดการแกลลอรี่</a>
     <a href="/korat_esportTest-2/admin/recommended-lodging.php">ที่พักแนะนำ</a>
     <a href="/korat_esportTest-2/admin/record-match.php">บันทึกผลแมตช์</a>
-    <a href="/korat_esportTest-2/admin/checkin-teams.php">เช็คอินทีม</a>
+    <a href="/korat_esportTest-2/admin/checkin-teams.php">เช็กอินทีม</a>
     <a href="/korat_esportTest-2/auth/logout.php">ออกจากระบบ</a>
 <?php else: ?>
     <a href="/korat_esportTest-2/pages/index.php" class="logo">
@@ -31,7 +31,7 @@
 
     <?php if (isLoggedIn()): ?>
         <a href="/korat_esportTest-2/pages/my-team.php">ทีมของฉัน</a>
-        <a href="/korat_esportTest-2/pages/my-checkin.php">QR Check-in</a>
+        <a href="/korat_esportTest-2/pages/my-checkin.php">เช็กอินด้วย QR</a>
         <a href="/korat_esportTest-2/pages/profile.php">โปรไฟล์ของฉัน</a>
         <a href="/korat_esportTest-2/auth/logout.php">ออกจากระบบ</a>
     <?php else: ?>

@@ -1,0 +1,30 @@
+{
+    "tournament_id": 139,
+    "name": "Korat Free Fire Open Championship 2026",
+    "status": "completed",
+    "created_records_before_stop": {
+        "teams": [164, 165],
+        "registrations": [615, 616]
+    },
+    "error": "Initial duplicate-roster defect was reproduced and fixed before the end-to-end run.",
+    "fix_applied": "Added an in-transaction conflict check in saveTeamTournamentRegistration() for active roster members across pending/approved registrations.",
+    "fix_validation": {
+        "duplicate_registration_rejected": true,
+        "rollback_verified": true,
+        "test_team_persisted": 0
+    },
+    "rule": "The duplicate-roster case was rejected and rolled back, then testing resumed after the fix. No cleanup or restore was performed.",
+    "final_run": {
+        "qualified_registrations": 16,
+        "excluded_registrations": 1,
+        "groups": 4,
+        "teams_per_group": 4,
+        "group_matches": 24,
+        "playoff_matches": 7,
+        "completed_matches": 31,
+        "champion_team_id": 164,
+        "runner_up_team_id": 172,
+        "tournament_status": "completed",
+        "checkin_complete": true
+    }
+}

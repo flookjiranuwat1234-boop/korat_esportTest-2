@@ -57,29 +57,29 @@ function statusBadge(string $status, string $type = 'approval'): string
 {
     $approvedMap = [
         'pending' => ['label' => 'รอตรวจสอบ', 'class' => 'bg-yellow-100 text-yellow-700'],
-        'approved' => ['label' => 'อนุมัติแล้ว', 'class' => 'bg-emerald-100 text-emerald-700'],
+        'approved' => ['label' => 'ผ่านการอนุมัติ', 'class' => 'bg-emerald-100 text-emerald-700'],
         'revision_required' => ['label' => 'ส่งกลับแก้ไข', 'class' => 'bg-orange-100 text-orange-700'],
-        'rejected' => ['label' => 'ปฏิเสธ', 'class' => 'bg-red-100 text-red-700'],
+        'rejected' => ['label' => 'ไม่ผ่านการอนุมัติ', 'class' => 'bg-red-100 text-red-700'],
         'withdrawn' => ['label' => 'ถอนตัว', 'class' => 'bg-slate-200 text-slate-700'],
-        'disqualified' => ['label' => 'ตัดสิทธิ์', 'class' => 'bg-red-100 text-red-700'],
+        'disqualified' => ['label' => 'ถูกตัดสิทธิ์', 'class' => 'bg-red-100 text-red-700'],
         'walkover' => ['label' => 'WO', 'class' => 'bg-red-700 text-white'],
     ];
 
     $checkinMap = [
-        'not_checked_in' => ['label' => 'ยังไม่ Check-in', 'class' => 'bg-slate-200 text-slate-700'],
-        'partial' => ['label' => 'Check-in บางส่วน', 'class' => 'bg-yellow-100 text-yellow-700'],
-        'checked_in' => ['label' => 'Check-in ครบ', 'class' => 'bg-emerald-100 text-emerald-700'],
+        'not_checked_in' => ['label' => 'ยังไม่เช็กอิน', 'class' => 'bg-slate-200 text-slate-700'],
+        'partial' => ['label' => 'เช็กอินบางส่วน', 'class' => 'bg-yellow-100 text-yellow-700'],
+        'checked_in' => ['label' => 'เช็กอินครบ', 'class' => 'bg-emerald-100 text-emerald-700'],
         'expired' => ['label' => 'หมดเวลา', 'class' => 'bg-red-100 text-red-700'],
-        'waived' => ['label' => 'อนุโลม', 'class' => 'bg-sky-100 text-sky-700'],
+        'waived' => ['label' => 'ได้รับการยกเว้น', 'class' => 'bg-sky-100 text-sky-700'],
     ];
 
     $participationMap = [
         'registered' => ['label' => 'ลงทะเบียนแล้ว', 'class' => 'bg-slate-100 text-slate-700'],
-        'checkin_open' => ['label' => 'อยู่ในช่วง Check-in', 'class' => 'bg-blue-100 text-blue-700'],
-        'checkin_complete' => ['label' => 'Check-in ครบ', 'class' => 'bg-emerald-100 text-emerald-700'],
+        'checkin_open' => ['label' => 'อยู่ในช่วงเช็กอิน', 'class' => 'bg-blue-100 text-blue-700'],
+        'checkin_complete' => ['label' => 'เช็กอินครบ', 'class' => 'bg-emerald-100 text-emerald-700'],
         'checkin_incomplete' => ['label' => 'Check-in ไม่ครบ', 'class' => 'bg-yellow-100 text-yellow-700'],
         'pending_admin_review' => ['label' => 'รอ Admin ตรวจสอบ', 'class' => 'bg-yellow-100 text-yellow-700'],
-        'qualified_for_draw' => ['label' => 'พร้อมจัดสาย', 'class' => 'bg-indigo-100 text-indigo-700'],
+        'qualified_for_draw' => ['label' => 'พร้อมเข้าสู่สายการแข่งขัน', 'class' => 'bg-indigo-100 text-indigo-700'],
         'withdrawn' => ['label' => 'ถอนตัว', 'class' => 'bg-slate-200 text-slate-700'],
         'disqualified' => ['label' => 'ถูกตัดสิทธิ์', 'class' => 'bg-red-100 text-red-700'],
     ];
@@ -735,9 +735,9 @@ $autoOpenRegistrationMembers = $autoOpenRegistrationId ? getRegistrationMembers(
 $autoOpenMatchCount = $autoOpenRegistration ? getRegistrationMatchCount($pdo, $autoOpenRegistration) : 0;
 $registrationActionTitles = [
     'detail' => 'รายละเอียดใบสมัคร',
-    'view_roster' => 'ตรวจ Tournament Roster',
+    'view_roster' => 'ตรวจไลน์อัปการแข่งขัน',
     'change_registration_status' => 'เปลี่ยนสถานะใบสมัคร',
-    'view_checkin' => 'ดูสถานะ Check-in',
+    'view_checkin' => 'ดูสถานะเช็กอิน',
     'show_qr' => 'แสดง QR Check-in',
     'withdraw_registration' => 'ถอนออกจากการแข่งขัน',
     'disqualify_registration' => 'ตัดสิทธิ์ผู้สมัคร',
@@ -1110,9 +1110,9 @@ if ($flash) {
                             <label class="block text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-1">Check-in</label>
                             <select name="checkin_status" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none">
                                 <option value="all" <?= $checkinStatus === 'all' ? 'selected' : '' ?>>ทั้งหมด</option>
-                                <option value="not_checked_in" <?= $checkinStatus === 'not_checked_in' ? 'selected' : '' ?>>ยังไม่ Check-in</option>
-                                <option value="partial" <?= $checkinStatus === 'partial' ? 'selected' : '' ?>>Check-in บางส่วน</option>
-                                <option value="checked_in" <?= $checkinStatus === 'checked_in' ? 'selected' : '' ?>>Check-in ครบ</option>
+                                <option value="not_checked_in" <?= $checkinStatus === 'not_checked_in' ? 'selected' : '' ?>>ยังไม่เช็กอิน</option>
+                                <option value="partial" <?= $checkinStatus === 'partial' ? 'selected' : '' ?>>เช็กอินบางส่วน</option>
+                                <option value="checked_in" <?= $checkinStatus === 'checked_in' ? 'selected' : '' ?>>เช็กอินครบ</option>
                             </select>
                         </div>
                         <div>
@@ -1311,7 +1311,7 @@ if ($flash) {
                                 <div class="rounded-xl border border-slate-200 overflow-hidden">
                                     <div class="bg-slate-50 px-4 py-3 border-b border-slate-200 text-sm font-bold text-slate-700">สมาชิกและบทบาทใน Tournament Roster</div>
                                     <?php if (empty($autoOpenRegistrationMembers)): ?>
-                                        <div class="p-6 text-center text-slate-500">ยังไม่มี Tournament Roster สำหรับใบสมัครนี้</div>
+                                        <div class="p-6 text-center text-slate-500">ยังไม่มีไลน์อัปการแข่งขันสำหรับใบสมัครนี้</div>
                                     <?php else: ?>
                                         <div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-white text-slate-500"><tr><th class="px-4 py-3">ผู้เล่น</th><th class="px-4 py-3">Username</th><th class="px-4 py-3">บทบาท</th><th class="px-4 py-3">ตำแหน่ง</th><th class="px-4 py-3">Required</th><th class="px-4 py-3">Roster Status</th></tr></thead><tbody class="divide-y divide-slate-200">
                                             <?php foreach ($autoOpenRegistrationMembers as $member): ?><tr><td class="px-4 py-3 font-bold text-slate-800"><?= htmlspecialchars($member['display_name'] ?: 'Player') ?></td><td class="px-4 py-3 text-slate-600"><?= htmlspecialchars($member['username'] ?: '-') ?></td><td class="px-4 py-3 text-slate-600"><?= htmlspecialchars($member['member_roles'] ?: 'player') ?></td><td class="px-4 py-3 text-slate-600"><?= (int) $member['is_starter'] ? 'Starter' : 'Substitute' ?></td><td class="px-4 py-3"><?= (int) $member['is_required_for_checkin'] ? 'Required' : 'Optional' ?></td><td class="px-4 py-3 text-emerald-700 font-bold">Active</td></tr><?php endforeach; ?>
@@ -1383,7 +1383,7 @@ if ($flash) {
                                 <div class="mt-1 text-sm font-bold text-slate-800"><?= htmlspecialchars($autoOpenRegistration['captain_name'] ?? '-') ?></div>
                             </div>
                             <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                <div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Tournament Roster</div>
+                                <div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">ไลน์อัปการแข่งขัน</div>
                                 <div class="mt-1 text-sm font-bold text-slate-800"><?= (int) $autoOpenRegistration['roster_count'] ?> คน</div>
                             </div>
                             <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
