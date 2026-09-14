@@ -885,9 +885,10 @@ function getGameId($games_array, $game_name) {
 function uploadTournamentImage($file) {
     if (isset($file) && $file['error'] == UPLOAD_ERR_OK) {
         $allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-        if (in_array($file['type'], $allowedTypes)) {
-            $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $fileName = 'tourney_' . uniqid() . '.' . $ext;
+        $mimeType = mime_content_type($file['tmp_name']);
+        if ($file['size'] <= 5 * 1024 * 1024 && in_array($mimeType, $allowedTypes, true) && @getimagesize($file['tmp_name']) !== false) {
+            $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp', 'image/gif' => 'gif'];
+            $fileName = 'tourney_' . bin2hex(random_bytes(16)) . '.' . $extensions[$mimeType];
             $uploadDir = '../assets/uploads/';
             if (!is_dir($uploadDir)) { mkdir($uploadDir, 0755, true); }
             $destination = $uploadDir . $fileName;
@@ -917,8 +918,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                 $pdo->beginTransaction();
                 $pdo->prepare('DELETE FROM bracket_edges WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tournament_id) OR next_match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tournament_id_next)')
                     ->execute(['tournament_id' => $tournamentId, 'tournament_id_next' => $tournamentId]);
-                $pdo->prepare('DELETE FROM match_participants WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tournament_id)')
-                    ->execute(['tournament_id' => $tournamentId]);
                 $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
                 $pdo->prepare('DELETE FROM ranking_history WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
                 $pdo->prepare('DELETE FROM player_tournament_checkins WHERE tournament_registration_id IN (SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id)')
@@ -1868,8 +1867,13 @@ $csrfToken = generateCsrfToken();
                 if (input._flatpickr) input._flatpickr.setDate(value, false, 'Y-m-d\\TH:i');
                 input.value = value;
             };
-            const parse = value => value ? new Date(`${value}:00`) : null;
+            const parse = value => {
+                if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+                const date = new Date(`${value}:00`);
+                return Number.isNaN(date.getTime()) ? null : date;
+            };
             const format = date => {
+                if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
                 const pad = value => String(value).padStart(2, '0');
                 return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
             };
@@ -1915,11 +1919,25 @@ $csrfToken = generateCsrfToken();
                     }
                     request(next, 'เปิดรับสมัครตอนนี้');
                 } else if (commandName === 'open-checkin') {
-                    const now = format(roundedNow()); const start = current.start_date && current.start_date > addMinutes(now, 20) ? current.start_date : addMinutes(now, 20); const duration = current.start_date && current.end_date && parse(current.end_date) > parse(current.start_date) ? (parse(current.end_date) - parse(current.start_date)) / 60000 : 120;
-                    request({ checkin_open_at: now, checkin_close_at: addMinutes(now, 15), start_date: start, end_date: addMinutes(start, duration) }, 'เปิด Check-in ตอนนี้');
+                    const now = format(roundedNow());
+                    request({
+                        registration_end: addMinutes(now, 5),
+                        roster_lock_at: addMinutes(now, 10),
+                        checkin_open_at: addMinutes(now, 15),
+                        checkin_close_at: addMinutes(now, 30),
+                        start_date: addMinutes(now, 35),
+                        end_date: addMinutes(now, 155)
+                    }, 'เปิด Check-in ตอนนี้');
                 } else if (commandName === 'start-15') {
-                    const now = format(roundedNow()); const startValue = addMinutes(now, 15); const duration = current.start_date && current.end_date && parse(current.end_date) > parse(current.start_date) ? (parse(current.end_date) - parse(current.start_date)) / 60000 : 120;
-                    request({ checkin_open_at: now, checkin_close_at: addMinutes(now, 10), start_date: startValue, end_date: addMinutes(startValue, duration) }, 'เริ่มแข่งขันใน 15 นาที');
+                    const now = format(roundedNow()); const startValue = addMinutes(now, 15);
+                    request({
+                        registration_end: current.registration_end && current.registration_end > now ? current.registration_end : addMinutes(now, 5),
+                        roster_lock_at: addMinutes(now, 10),
+                        checkin_open_at: now,
+                        checkin_close_at: addMinutes(now, 10),
+                        start_date: startValue,
+                        end_date: addMinutes(startValue, 120)
+                    }, 'เริ่มแข่งขันใน 15 นาที');
                 } else if (commandName === 'single-day') {
                     if (!current.start_date) return alert('กรุณากำหนดวันเริ่มแข่งขันก่อน');
                     const endValue = current.end_date && current.end_date > current.start_date ? `${current.start_date.slice(0, 10)}T${current.end_date.slice(11)}` : addMinutes(current.start_date, 360);
@@ -2343,7 +2361,7 @@ $csrfToken = generateCsrfToken();
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
 
     <!-- SIDEBAR -->
-    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
+    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl -translate-x-full transition-transform duration-200 lg:translate-x-0">
         <div class="p-6 border-b border-slate-800 flex items-center gap-3">
             <img src="../assets/img/logo.png" alt="Korat Esport" class="h-10 w-auto filter drop-shadow" onError="this.src='https://placehold.co/80x80/0F172A/FF5500?text=KE';">
             <div>
@@ -2413,8 +2431,8 @@ $csrfToken = generateCsrfToken();
         </div>
     </aside>
 
-    <div class="flex-1 ml-64 min-h-screen flex flex-col">
-        <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+    <div class="flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col min-w-0">
+        <header class="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
             <div>
                 <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
@@ -2427,7 +2445,7 @@ $csrfToken = generateCsrfToken();
             </a>
         </header>
 
-        <main class="p-8 space-y-8 flex-1">
+        <main class="p-4 sm:p-8 space-y-8 flex-1 min-w-0">
             <?php if ($error): ?>
                 <div class="flash-alert p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3" role="alert">
                     <i class="fa-solid fa-triangle-exclamation text-lg shrink-0 text-rose-500"></i>

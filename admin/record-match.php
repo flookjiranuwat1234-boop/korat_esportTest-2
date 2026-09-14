@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                     $score1 = (int) $score1raw;
                     $score2 = (int) $score2raw;
 
-                    if ($score1raw === '' || $score2raw === '' || $score1 < 0 || $score2 < 0) {
+                    if (!is_string($score1raw) || !preg_match('/^\d+$/', trim($score1raw)) || !is_string($score2raw) || !preg_match('/^\d+$/', trim($score2raw))) {
                         $error = 'กรุณากรอกคะแนนเป็นตัวเลขตั้งแต่ 0 ขึ้นไป';
                     } elseif (empty($matchInfo['team1_id']) || empty($matchInfo['team2_id'])) {
                         $error = 'ยังไม่ทราบคู่แข่งขัน จึงยังบันทึกผลไม่ได้';
@@ -100,14 +100,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             $pdo->beginTransaction();
                         }
 
-                        $pdo->prepare("
+                        $scoreUpdate = $pdo->prepare("
                             UPDATE matches
                             SET team1_score = :s1, team2_score = :s2, winner_team_id = :winner,
                                 status = 'completed', completed_at = NOW()
-                            WHERE match_id = :id
-                        ")->execute(['s1' => $score1, 's2' => $score2, 'winner' => $winnerId, 'id' => $matchId]);
+                            WHERE match_id = :id AND status IN ('scheduled', 'ongoing')
+                        ");
+                        $scoreUpdate->execute(['s1' => $score1, 's2' => $score2, 'winner' => $winnerId, 'id' => $matchId]);
+                        if ($scoreUpdate->rowCount() !== 1) {
+                            throw new RuntimeException('แมตช์นี้ถูกบันทึกผลไปแล้ว');
+                        }
                         if (function_exists('updateRankingsAfterMatch')) {
-                                    try { updateRankingsAfterMatch($pdo, $matchId, false); } catch (Exception $ex) { throw new RuntimeException('บันทึก Ranking ไม่สำเร็จ: ' . $ex->getMessage(), 0, $ex); }
+                                    try { updateRankingsAfterMatch($pdo, $matchId, true); } catch (Exception $ex) { throw new RuntimeException('บันทึก Ranking ไม่สำเร็จ: ' . $ex->getMessage(), 0, $ex); }
                         }
                         $advanceAlreadySaved = false;
                         try {
@@ -159,7 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                     $gs1 = (int) $gs1raw;
                     $gs2 = (int) $gs2raw;
 
-                    if ($gs1raw === '' || $gs2raw === '' || $gs1 < 0 || $gs2 < 0 || $gs1 == $gs2) {
+                    if (!is_string($gs1raw) || !preg_match('/^\d+$/', trim($gs1raw)) || !is_string($gs2raw) || !preg_match('/^\d+$/', trim($gs2raw)) || $gs1 == $gs2) {
                         $gameValidationError = "เกมที่ " . ($i + 1) . " คะแนนเสมอกันไม่ได้ ต้องมีผู้ชนะในแต่ละเกม";
                         break;
                     }
@@ -204,16 +208,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             ]);
                         }
 
-                        $pdo->prepare("
+                        $scoreUpdate = $pdo->prepare("
                             UPDATE matches
                             SET team1_score = :s1, team2_score = :s2, winner_team_id = :winner,
                                 status = 'completed', completed_at = NOW()
-                            WHERE match_id = :id
-                        ")->execute([
+                            WHERE match_id = :id AND status IN ('scheduled', 'ongoing')
+                        ");
+                        $scoreUpdate->execute([
                             's1' => $team1GamesWon, 's2' => $team2GamesWon,
                             'winner' => $winnerId, 'id' => $matchId,
                         ]);
-                        if (function_exists('updateRankingsAfterMatch')) updateRankingsAfterMatch($pdo, $matchId, false);
+                        if ($scoreUpdate->rowCount() !== 1) {
+                            throw new RuntimeException('แมตช์นี้ถูกบันทึกผลไปแล้ว');
+                        }
+                        if (function_exists('updateRankingsAfterMatch')) updateRankingsAfterMatch($pdo, $matchId, true);
                         $advanceAlreadySaved = false;
                         try {
                             advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
@@ -263,7 +271,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
        $levels = ['outstanding' => 5, 'normal' => 3, 'participation' => 1, 'absent' => 0];
        if (!$performanceMatch || !in_array($performanceMatch['status'], ['completed', 'walkover'], true)) {
            $error = 'ต้องบันทึกผล Match ให้เสร็จก่อนบันทึกผลงานผู้เล่น';
-       } elseif (!$played || !$mvpId || !in_array($mvpId, $played, true)) {
+       } elseif (!$played || count($played) !== count(array_unique($played)) || !$mvpId || !in_array($mvpId, $played, true)) {
            $error = 'กรุณาเลือกผู้เล่นที่ลงแข่งและ MVP 1 คน';
        } else {
            $winnerTeamId = (int) $performanceMatch['winner_team_id'];
@@ -290,13 +298,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                $duplicateStmt->execute(['match_id' => $matchId]);
                $alreadyScored = (int) $duplicateStmt->fetchColumn() > 0;
            }
+           $invalidRating = false;
+           foreach ($played as $playerId) {
+               if (!isset($levels[$ratings[$playerId] ?? ''])) {
+                   $invalidRating = true;
+                   break;
+               }
+           }
            if (!$roster || array_diff($played, array_keys($rosterMap)) || !isset($rosterMap[$mvpId])) {
                $error = 'รายชื่อผู้เล่นไม่ตรงกับ Tournament Roster';
+           } elseif ($invalidRating) {
+               $error = 'ระดับผลงานผู้เล่นไม่ถูกต้อง';
            } elseif ($alreadyScored) {
                $error = 'Match นี้ประเมินคะแนนผู้เล่นไปแล้ว';
            } else {
                try {
                    $pdo->beginTransaction();
+                   if ($hasMatchId) {
+                       $duplicateLock = $pdo->prepare('SELECT ranking_history_id
+                           FROM ranking_history
+                           WHERE match_id = :match_id AND player_id IS NOT NULL
+                           LIMIT 1 FOR UPDATE');
+                       $duplicateLock->execute(['match_id' => $matchId]);
+                       if ($duplicateLock->fetchColumn()) {
+                           throw new RuntimeException('Match นี้ประเมินคะแนนผู้เล่นไปแล้ว');
+                       }
+                   }
                    $rankingStmt = $pdo->prepare('INSERT INTO player_rankings (game_id, player_id, category, points, matches_played, wins, losses)
                        VALUES (:game_id, :player_id, :category, :points, 1, :wins, :losses)
                        ON DUPLICATE KEY UPDATE points = points + VALUES(points), matches_played = matches_played + 1,
@@ -814,7 +841,7 @@ if ($flash) {
 </head>
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
 
-    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
+    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl -translate-x-full transition-transform duration-200 lg:translate-x-0">
         <div class="p-6 border-b border-slate-800 flex items-center gap-3">
             <img src="../assets/img/logo.png" alt="Korat Esport" class="h-10 w-auto filter drop-shadow" onError="this.src='https://placehold.co/80x80/0F172A/FF5500?text=KE';">
             <div>
@@ -884,9 +911,9 @@ if ($flash) {
         </div>
     </aside>
 
-    <div class="flex-1 ml-64 min-h-screen flex flex-col">
+    <div class="flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col min-w-0">
 
-        <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+        <header class="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
             <div>
                 <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
@@ -900,7 +927,7 @@ if ($flash) {
             </a>
         </header>
 
-        <main class="p-8 space-y-6 flex-1">
+        <main class="p-4 sm:p-8 space-y-6 flex-1 min-w-0">
 
             <?php if ($error): ?>
                 <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3">

@@ -280,24 +280,38 @@ if ($selectedCategoryId && $groupRows && $tournamentPlayMode === 'team') {
             'losses' => (int) $row['losses'],
         ];
     }
-} elseif ($selectedCategoryId) {
-    $localMatchesStmt = $pdo->prepare("SELECT m.team1_id, m.team2_id, m.winner_team_id, m.status,
-            COALESCE(p1.display_name, u1.username, 'ผู้แข่งขัน') AS team1_name,
-            COALESCE(p2.display_name, u2.username, 'ผู้แข่งขัน') AS team2_name
+} elseif ($tournamentStatusLabels[$tournament['status'] ?? ''] ?? false) {
+    $participantNameExpression = $tournamentPlayMode === 'solo'
+        ? "COALESCE(p1.display_name, u1.username, 'ผู้แข่งขัน') AS team1_name,
+           COALESCE(p2.display_name, u2.username, 'ผู้แข่งขัน') AS team2_name"
+        : "COALESCE(t1.name, 'ผู้แข่งขัน') AS team1_name,
+           COALESCE(t2.name, 'ผู้แข่งขัน') AS team2_name";
+    $participantJoins = $tournamentPlayMode === 'solo'
+        ? "LEFT JOIN players p1 ON p1.player_id = m.team1_id
+           LEFT JOIN users u1 ON u1.user_id = p1.user_id
+           LEFT JOIN players p2 ON p2.player_id = m.team2_id
+           LEFT JOIN users u2 ON u2.user_id = p2.user_id"
+        : "LEFT JOIN teams t1 ON t1.team_id = m.team1_id
+           LEFT JOIN teams t2 ON t2.team_id = m.team2_id";
+    $localMatchesSql = "SELECT m.team1_id, m.team2_id, m.winner_team_id, m.status,
+            {$participantNameExpression}
         FROM matches m
-        LEFT JOIN players p1 ON p1.player_id = m.team1_id
-        LEFT JOIN users u1 ON u1.user_id = p1.user_id
-        LEFT JOIN players p2 ON p2.player_id = m.team2_id
-        LEFT JOIN users u2 ON u2.user_id = p2.user_id
-        WHERE m.tournament_id = :tournament_id AND m.tournament_category_id = :category_id
-            AND m.status IN ('completed', 'walkover')");
-    $localMatchesStmt->execute(['tournament_id' => $tournamentId, 'category_id' => $selectedCategoryId]);
+        {$participantJoins}
+        WHERE m.tournament_id = :tournament_id
+            AND m.status IN ('completed', 'walkover')";
+    $localMatchesParams = ['tournament_id' => $tournamentId];
+    if ($selectedCategoryId) {
+        $localMatchesSql .= ' AND m.tournament_category_id = :category_id';
+        $localMatchesParams['category_id'] = $selectedCategoryId;
+    }
+    $localMatchesStmt = $pdo->prepare($localMatchesSql);
+    $localMatchesStmt->execute($localMatchesParams);
     $localStandings = [];
     foreach ($localMatchesStmt->fetchAll(PDO::FETCH_ASSOC) as $match) {
         foreach ([['id' => $match['team1_id'], 'name' => $match['team1_name']], ['id' => $match['team2_id'], 'name' => $match['team2_name']]] as $participant) {
             $participantId = (int) ($participant['id'] ?? 0);
             if ($participantId <= 0) continue;
-            if (!isset($localStandings[$participantId])) $localStandings[$participantId] = ['participant_name' => $participant['name'], 'points' => 0, 'wins' => 0, 'losses' => 0];
+            if (!isset($localStandings[$participantId])) $localStandings[$participantId] = ['participant_id' => $participantId, 'participant_name' => $participant['name'], 'points' => 0, 'wins' => 0, 'losses' => 0];
             if ((int) $match['winner_team_id'] === $participantId) {
                 $localStandings[$participantId]['points'] += 3;
                 $localStandings[$participantId]['wins']++;
@@ -849,7 +863,11 @@ function roundName($roundNum, $totalRounds)
                                                     <div class="flex items-center gap-2 min-w-0">
                                                         <span class="text-xs font-bold truncate max-w-[170px] flex items-center gap-1.5">
                                                             <?php if ($isT1Winner): ?><i class="fa-solid fa-trophy text-amber-400 text-[10px]"></i><?php endif; ?>
-                                                            <?php echo htmlspecialchars($t1Name); ?>
+                                                            <?php if ($tournamentPlayMode !== 'solo' && !empty($m['team1_id'])): ?>
+                                                                <a href="team-profile.php?id=<?php echo (int) $m['team1_id']; ?>" class="hover:text-brand-orange hover:underline transition-colors" title="ดูโปรไฟล์ทีม"><?php echo htmlspecialchars($t1Name); ?></a>
+                                                            <?php else: ?>
+                                                                <?php echo htmlspecialchars($t1Name); ?>
+                                                            <?php endif; ?>
                                                         </span>
                                                         <?php if ($isT1Winner && !empty($m['winner_team_id'])): ?>
                                                             <span class="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-400/15 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-amber-200">
@@ -874,7 +892,11 @@ function roundName($roundNum, $totalRounds)
                                                     <div class="flex items-center gap-2 min-w-0">
                                                         <span class="text-xs font-bold truncate max-w-[170px] flex items-center gap-1.5">
                                                             <?php if ($isT2Winner): ?><i class="fa-solid fa-trophy text-amber-400 text-[10px]"></i><?php endif; ?>
-                                                            <?php echo htmlspecialchars($t2Name); ?>
+                                                            <?php if ($tournamentPlayMode !== 'solo' && !empty($m['team2_id'])): ?>
+                                                                <a href="team-profile.php?id=<?php echo (int) $m['team2_id']; ?>" class="hover:text-brand-orange hover:underline transition-colors" title="ดูโปรไฟล์ทีม"><?php echo htmlspecialchars($t2Name); ?></a>
+                                                            <?php else: ?>
+                                                                <?php echo htmlspecialchars($t2Name); ?>
+                                                            <?php endif; ?>
                                                         </span>
                                                         <?php if ($isT2Winner && !empty($m['winner_team_id'])): ?>
                                                             <span class="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-400/15 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-amber-200">
@@ -912,7 +934,7 @@ function roundName($roundNum, $totalRounds)
                 <div class="glass-panel rounded-2xl overflow-hidden border border-white/15">
                     <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับในรายการ</th><th class="p-3"><?php echo $tournamentPlayMode === 'solo' ? 'ผู้เล่น' : 'ผู้แข่งขัน'; ?></th><th class="p-3 text-center">คะแนนในรายการ</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
                     <?php if (!$rankingRows): ?><tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูลอันดับ</td></tr><?php endif; ?>
-                    <?php foreach ($rankingRows as $rankIndex => $ranking): ?><tr class="hover:bg-white/10"><td class="p-3 font-bold text-brand-orange">#<?php echo $rankIndex + 1; ?></td><td class="p-3 font-bold text-white"><?php echo htmlspecialchars($ranking['participant_name']); ?></td><td class="p-3 text-center font-display text-brand-orange"><?php echo (float) $ranking['points']; ?></td><td class="p-3 text-center text-emerald-300"><?php echo (int) $ranking['wins']; ?></td><td class="p-3 text-center text-rose-300"><?php echo (int) $ranking['losses']; ?></td></tr><?php endforeach; ?></tbody></table>
+                    <?php foreach ($rankingRows as $rankIndex => $ranking): ?><tr class="hover:bg-white/10"><td class="p-3 font-bold text-brand-orange">#<?php echo $rankIndex + 1; ?></td><td class="p-3 font-bold text-white"><?php if ($tournamentPlayMode !== 'solo' && !empty($ranking['participant_id'])): ?><a href="team-profile.php?id=<?php echo (int) $ranking['participant_id']; ?>" class="hover:text-brand-orange hover:underline transition-colors" title="ดูโปรไฟล์ทีม"><?php echo htmlspecialchars($ranking['participant_name']); ?></a><?php else: ?><?php echo htmlspecialchars($ranking['participant_name']); ?><?php endif; ?></td><td class="p-3 text-center font-display text-brand-orange"><?php echo (float) $ranking['points']; ?></td><td class="p-3 text-center text-emerald-300"><?php echo (int) $ranking['wins']; ?></td><td class="p-3 text-center text-rose-300"><?php echo (int) $ranking['losses']; ?></td></tr><?php endforeach; ?></tbody></table>
                 </div>
             </section>
 

@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                         $mimeType = mime_content_type($tmpName);
                         $mimeExt = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'][$mimeType] ?? null;
 
-                    if ($mimeExt && in_array(strtolower(pathinfo($_FILES['photos']['name'][$key], PATHINFO_EXTENSION)), $allowed, true)) {
+                    if ($mimeExt && (int) $_FILES['photos']['size'][$key] <= 5 * 1024 * 1024 && @getimagesize($tmpName) !== false) {
                         $fileName = 'img_' . bin2hex(random_bytes(8)) . '.' . $mimeExt;
                         $targetFile = $uploadDir . $fileName;
 
@@ -303,7 +303,7 @@ if ($flash) {
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
 
     <!-- ================= 1. SIDEBAR ด้านข้าง ================= -->
-    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
+    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl -translate-x-full transition-transform duration-200 lg:translate-x-0">
         <div class="p-6 border-b border-slate-800 flex items-center gap-3">
             <img src="../assets/img/logo.png" alt="Korat Esport" class="h-10 w-auto filter drop-shadow" onError="this.src='https://placehold.co/80x80/0F172A/FF5500?text=KE';">
             <div>
@@ -374,10 +374,10 @@ if ($flash) {
     </aside>
 
     <!-- ================= 2. MAIN CONTENT AREA ================= -->
-    <div class="flex-1 ml-64 min-h-screen flex flex-col">
+    <div class="flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col min-w-0">
 
         <!-- Header Panel -->
-        <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+        <header class="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
             <div>
                 <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
@@ -391,7 +391,7 @@ if ($flash) {
             </a>
         </header>
 
-        <main class="p-8 space-y-6 flex-1">
+        <main class="p-4 sm:p-8 space-y-6 flex-1 min-w-0">
 
             <!-- Alert Messages -->
             <?php if ($error): ?>

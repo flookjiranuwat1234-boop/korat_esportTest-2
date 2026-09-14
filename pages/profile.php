@@ -3,6 +3,7 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/team_roles.php';
+require_once '../includes/upload.php';
 requireLogin();
 
 // ดึงข้อมูล Player จาก user_id
@@ -34,27 +35,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
         $newAvatarPath = $avatarPath; // ใช้ค่าเดิมสำรองไว้ก่อน
 
         if (isset($_FILES['avatar']) && $_FILES['avatar']['error'] === UPLOAD_ERR_OK) {
-            $ext = strtolower(pathinfo($_FILES['avatar']['name'], PATHINFO_EXTENSION));
-            $allowed = ['jpg', 'jpeg', 'png', 'webp'];
-            
-            if (in_array($ext, $allowed)) {
-                $uploadDir = '../assets/uploads/players/';
-                if (!is_dir($uploadDir)) { 
-                    mkdir($uploadDir, 0777, true); 
-                }
-                
-                $fileName = 'player_' . $playerId . '_' . time() . '.' . $ext;
-                $targetFile = $uploadDir . $fileName;
-
-                if (move_uploaded_file($_FILES['avatar']['tmp_name'], $targetFile)) {
-                    $newAvatarPath = 'uploads/players/' . $fileName;
-                }
+            try {
+                $newAvatarPath = handleImageUpload($_FILES['avatar'], 'players');
+            } catch (Exception $exception) {
+                $error = $exception->getMessage();
             }
         }
 
         if (empty($displayNameInput)) {
             $error = 'กรุณากรอกชื่อแสดงผล';
-        } else {
+        } elseif (empty($error)) {
             // บังคับบันทึก avatar_path ลงฐานข้อมูลเสมอ
             $update = $pdo->prepare("
                 UPDATE players 
@@ -133,17 +123,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manag
             }
 
             if (isset($_FILES['team_logo']) && $_FILES['team_logo']['error'] === UPLOAD_ERR_OK) {
-                $ext = strtolower(pathinfo($_FILES['team_logo']['name'], PATHINFO_EXTENSION));
-                $allowed = ['jpg', 'jpeg', 'png', 'webp'];
-
-                if (in_array($ext, $allowed)) {
-                    $uploadDir = '../assets/uploads/teams/';
-                    if (!is_dir($uploadDir)) { mkdir($uploadDir, 0777, true); }
-
-                    $fileName = 'team_' . $teamId . '_' . time() . '.' . $ext;
-                    if (move_uploaded_file($_FILES['team_logo']['tmp_name'], $uploadDir . $fileName)) {
-                        $pdo->prepare("UPDATE teams SET logo_path = :logo WHERE team_id = :tid")->execute(['logo' => 'uploads/teams/' . $fileName, 'tid' => $teamId]);
+                try {
+                    $logoPath = handleImageUpload($_FILES['team_logo'], 'teams');
+                    if ($logoPath) {
+                        $pdo->prepare("UPDATE teams SET logo_path = :logo WHERE team_id = :tid")->execute(['logo' => $logoPath, 'tid' => $teamId]);
                     }
+                } catch (Exception $exception) {
+                    $error = $exception->getMessage();
                 }
             }
         }

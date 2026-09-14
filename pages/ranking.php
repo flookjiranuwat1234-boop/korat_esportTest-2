@@ -60,7 +60,10 @@ $topPlayers = $pdo->query("
     LIMIT 5
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-$gameId = isset($_GET['game_id']) ? (int)$_GET['game_id'] : (!empty($games) ? $games[0]['game_id'] : 0);
+$requestedGameId = filter_input(INPUT_GET, 'game_id', FILTER_VALIDATE_INT);
+$gameId = ($requestedGameId !== false && $requestedGameId !== null && $requestedGameId > 0)
+    ? $requestedGameId
+    : (!empty($games) ? (int) $games[0]['game_id'] : 0);
 $selectedGameName = '';
 $selectedGameStmt = $pdo->prepare('SELECT name FROM games WHERE game_id = :game_id LIMIT 1');
 $selectedGameStmt->execute(['game_id' => $gameId]);
@@ -72,7 +75,11 @@ if ($gameFamilyName !== '') {
     $familyStmt->execute(['family_name' => $gameFamilyName . '%']);
     $rankingGameIds = array_values(array_unique(array_map('intval', $familyStmt->fetchAll(PDO::FETCH_COLUMN))));
 }
-$rankingGameIdList = implode(', ', array_filter($rankingGameIds, static fn (int $id): bool => $id > 0));
+$rankingGameIds = array_values(array_filter($rankingGameIds, static fn (int $id): bool => $id > 0));
+if (!$rankingGameIds) {
+    $rankingGameIds = [0];
+}
+$rankingGameIdList = implode(', ', $rankingGameIds);
 $gamePlayMode = 'team';
 if ($gameId > 0) {
     $gameModeStmt = $pdo->prepare('SELECT play_mode FROM games WHERE game_id = :game_id LIMIT 1');
@@ -478,7 +485,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                     <nav class="hidden md:flex items-center gap-1 lg:gap-2">
                         <a href="index.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-house text-xs mr-1.5"></i> หน้าแรก</a>
                         <a href="tournaments.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-trophy text-xs mr-1.5"></i> ทัวร์นาเมนต์</a>
-                        <a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-bold text-white bg-brand-orange transition-all shadow-orange-glow"><i class="fa-solid fa-ranking-star text-xs mr-1.5"></i> อันดับสะสม</a>
+                        <a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-bold text-white bg-brand-orange transition-all shadow-orange-glow"><i class="fa-solid fa-ranking-star text-xs mr-1.5"></i> ตารางคะแนน</a>
                         <a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-newspaper text-xs mr-1.5"></i> ข่าวสาร</a>
                         <a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-images text-xs mr-1.5"></i> แกลเลอรี่</a>
                     </nav>

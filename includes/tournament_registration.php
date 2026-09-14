@@ -112,7 +112,6 @@ function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId
     if (!$category || (int) $category['tournament_id'] !== $tournamentId) {
         throw new InvalidArgumentException('ไม่พบรุ่นการแข่งขันของ Tournament นี้');
     }
-
     $playerStmt = $pdo->prepare('SELECT p.player_id, p.real_name, p.gender, p.birth_date, p.eligibility_status,
             u.status AS account_status
         FROM players p INNER JOIN users u ON u.user_id = p.user_id
@@ -140,6 +139,23 @@ function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId
     ensureRegistrationStatusHistoryTable($pdo);
     $pdo->beginTransaction();
     try {
+        $capacityStmt = $pdo->prepare('
+            SELECT tc.max_participants, COUNT(tr.tournament_registration_id) AS registered_count
+            FROM tournament_categories tc
+            LEFT JOIN tournament_registrations tr
+                ON tr.tournament_category_id = tc.tournament_category_id
+                AND tr.status IN ("pending", "approved")
+                AND tr.team_id IS NOT NULL
+            WHERE tc.tournament_category_id = :category_id
+            GROUP BY tc.tournament_category_id, tc.max_participants
+            FOR UPDATE
+        ');
+        $capacityStmt->execute(['category_id' => $categoryId]);
+        $capacity = $capacityStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$capacity || (int) $capacity['registered_count'] >= (int) $capacity['max_participants']) {
+            throw new InvalidArgumentException('รายการนี้เต็มจำนวนแล้ว');
+        }
+
         $teamId = 0;
         $duplicateRegistration = $pdo->prepare('SELECT tr.tournament_registration_id
             FROM tournament_registrations tr
@@ -244,17 +260,6 @@ function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId
         if ($starterCount !== $requiredStarters || $substituteCount !== $requiredSubs) {
             throw new InvalidArgumentException("ต้องมีตัวจริง {$requiredStarters} คน และตัวสำรอง {$requiredSubs} คน");
         }
-        foreach (['coach', 'manager'] as $requiredStaffRole) {
-            $staffCount = 0;
-            foreach ($normalized as $member) {
-                if (in_array($requiredStaffRole, $member['roles'], true)) $staffCount++;
-            }
-            if ($staffCount < 1) {
-                $staffLabel = $requiredStaffRole === 'coach' ? 'โค้ช' : 'ผู้จัดการทีม';
-                throw new InvalidArgumentException("ต้องเลือก{$staffLabel}อย่างน้อย 1 คน");
-            }
-        }
-
         $insert = $pdo->prepare('INSERT INTO tournament_registrations
             (tournament_id, tournament_category_id, team_id, player_id, category, status, participation_status)
             VALUES (:tournament_id, :category_id, :team_id, NULL, :category, "pending", "pending_admin_review")');

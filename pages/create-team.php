@@ -3,6 +3,7 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/team_roles.php';
+require_once '../includes/upload.php';
 requireLogin();
 
 // ดึงข้อมูล Player จาก user_id
@@ -35,21 +36,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             // เช็กการอัปโหลดรูปโลโก้ทีม (ถ้ามี)
             if (isset($_FILES['team_logo']) && $_FILES['team_logo']['error'] === UPLOAD_ERR_OK) {
-                $ext = strtolower(pathinfo($_FILES['team_logo']['name'], PATHINFO_EXTENSION));
-                $allowed = ['jpg', 'jpeg', 'png', 'webp'];
-
-                if (in_array($ext, $allowed)) {
-                    $uploadDir = '../assets/uploads/teams/';
-                    if (!is_dir($uploadDir)) {
-                        mkdir($uploadDir, 0777, true);
-                    }
-
-                    $fileName = 'team_' . time() . '_' . rand(100, 999) . '.' . $ext;
-                    if (move_uploaded_file($_FILES['team_logo']['tmp_name'], $uploadDir . $fileName)) {
-                        $logoPath = 'uploads/teams/' . $fileName;
-                    }
-                } else {
-                    $error = 'รูปโลโก้รองรับเฉพาะไฟล์ JPG, PNG และ WEBP';
+                try {
+                    $logoPath = handleImageUpload($_FILES['team_logo'], 'teams');
+                } catch (Exception $exception) {
+                    $error = $exception->getMessage();
                 }
             }
 

@@ -31,7 +31,7 @@ function uploadAccommodationImage($file) {
         $mimeType = mime_content_type($file['tmp_name']);
         $allowedTypes = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
         $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        if (isset($allowedTypes[$mimeType]) && in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+        if (isset($allowedTypes[$mimeType]) && $file['size'] <= 5 * 1024 * 1024 && @getimagesize($file['tmp_name']) !== false) {
             $fileName = 'hotel_' . bin2hex(random_bytes(8)) . '.' . $allowedTypes[$mimeType];
             $uploadDir = '../assets/uploads/';
             if (!is_dir($uploadDir)) {

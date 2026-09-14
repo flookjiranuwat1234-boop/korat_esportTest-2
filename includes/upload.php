@@ -25,16 +25,21 @@ function handleImageUpload($file, $subfolder)
     if (!in_array($mimeType, $ALLOWED_TYPES)) {
         throw new Exception('อัปโหลดได้แค่ไฟล์รูปภาพ (JPG, PNG, WEBP)');
     }
+    if (@getimagesize($file['tmp_name']) === false) {
+        throw new Exception('ไฟล์ที่อัปโหลดไม่ใช่รูปภาพที่ถูกต้อง');
+    }
 
     $ext = ($mimeType == 'image/png') ? 'png' : (($mimeType == 'image/webp') ? 'webp' : 'jpg');
-    $fileName = uniqid() . '_' . time() . '.' . $ext;
+    $fileName = bin2hex(random_bytes(16)) . '.' . $ext;
 
     $uploadDir = __DIR__ . '/../assets/uploads/' . $subfolder . '/';
     if (!is_dir($uploadDir)) {
         mkdir($uploadDir, 0755, true);
     }
 
-    move_uploaded_file($file['tmp_name'], $uploadDir . $fileName);
+    if (!move_uploaded_file($file['tmp_name'], $uploadDir . $fileName)) {
+        throw new Exception('ไม่สามารถบันทึกไฟล์อัปโหลดได้');
+    }
 
     return 'uploads/' . $subfolder . '/' . $fileName;
 }

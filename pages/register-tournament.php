@@ -45,33 +45,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($tournament['play_mode'] !== 'solo') {
                 $error = 'รายการนี้ไม่ใช่ประเภทเดี่ยว';
             } else {
-                $duplicate = $pdo->prepare('SELECT 1 FROM tournament_registrations WHERE tournament_id = :tournament AND tournament_category_id = :category AND player_id = :player AND status IN ("pending","approved") LIMIT 1');
-                $duplicate->execute(['tournament' => $tournamentId, 'category' => $categoryId, 'player' => (int) ($_SESSION['player_id'] ?? 0)]);
-                if ($duplicate->fetchColumn()) {
-                    $error = 'ผู้เล่นนี้สมัคร Category นี้แล้ว';
+                $categoryStmt = $pdo->prepare('SELECT * FROM tournament_categories WHERE tournament_category_id = :category AND tournament_id = :tournament AND is_active = 1 LIMIT 1');
+                $categoryStmt->execute(['category' => $categoryId, 'tournament' => $tournamentId]);
+                $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
+                if (!$category) {
+                    $error = 'ไม่พบรุ่นการแข่งขันของ Tournament นี้';
                 } else {
-                    $playerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user LIMIT 1');
+                    $playerStmt = $pdo->prepare('SELECT p.*, u.status AS account_status FROM players p INNER JOIN users u ON u.user_id = p.user_id WHERE p.user_id = :user LIMIT 1');
                     $playerStmt->execute(['user' => (int) $_SESSION['user_id']]);
-                    $playerId = (int) $playerStmt->fetchColumn();
-                    $categoryCodeStmt = $pdo->prepare('SELECT category_code FROM tournament_categories WHERE tournament_category_id = :category LIMIT 1');
-                    $categoryCodeStmt->execute(['category' => $categoryId]);
-                    $categoryCode = (string) ($categoryCodeStmt->fetchColumn() ?: 'open');
-                    if (!$playerId) {
+                    $player = $playerStmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$player) {
                         $error = 'ไม่พบ Player Profile ของบัญชีนี้';
+                    } elseif (($eligibilityError = tournamentCategoryAllowsPlayer($player, $category)) !== null) {
+                        $error = $eligibilityError;
                     } else {
-                        try {
-                            ensureRegistrationStatusHistoryTable($pdo);
-                            $pdo->beginTransaction();
-                            $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id,tournament_category_id,player_id,team_id,category,status,participation_status) VALUES (:tournament,:category,:player,NULL,:code,"pending","pending_admin_review")');
-                            $insert->execute(['tournament' => $tournamentId, 'category' => $categoryId, 'player' => $playerId, 'code' => $categoryCode]);
-                            $registrationId = (int) $pdo->lastInsertId();
-                            snapshotTournamentRoster($pdo, $registrationId, null, $playerId);
-                            recordRegistrationStatus($pdo, $registrationId, 'pending', (int) $_SESSION['user_id'], 'สมัครแข่งขันแบบเดี่ยว');
-                            $pdo->commit();
-                            $success = 'สมัครเข้าร่วมรายการเรียบร้อยแล้ว';
-                        } catch (Throwable $exception) {
-                            if ($pdo->inTransaction()) $pdo->rollBack();
-                            $error = 'สมัครแข่งขันไม่สำเร็จ';
+                        $duplicate = $pdo->prepare('SELECT 1 FROM tournament_registrations WHERE tournament_id = :tournament AND tournament_category_id = :category AND player_id = :player AND status IN ("pending","approved") LIMIT 1');
+                        $duplicate->execute(['tournament' => $tournamentId, 'category' => $categoryId, 'player' => (int) $player['player_id']]);
+                        if ($duplicate->fetchColumn()) {
+                            $error = 'ผู้เล่นนี้สมัคร Category นี้แล้ว';
+                        } else {
+                            $categoryCode = (string) ($category['category_code'] ?: 'open');
+                            try {
+                                $pdo->beginTransaction();
+                                $capacityStmt = $pdo->prepare('SELECT tc.max_participants, COUNT(tr.tournament_registration_id) AS registered_count
+                                    FROM tournament_categories tc
+                                    LEFT JOIN tournament_registrations tr
+                                        ON tr.tournament_category_id = tc.tournament_category_id
+                                        AND tr.status IN ("pending", "approved")
+                                    WHERE tc.tournament_category_id = :category_id
+                                    GROUP BY tc.tournament_category_id, tc.max_participants
+                                    FOR UPDATE');
+                                $capacityStmt->execute(['category_id' => $categoryId]);
+                                $capacity = $capacityStmt->fetch(PDO::FETCH_ASSOC);
+                                if (!$capacity || (int) $capacity['registered_count'] >= (int) $capacity['max_participants']) {
+                                    throw new InvalidArgumentException('รายการนี้เต็มจำนวนแล้ว');
+                                }
+                                    ensureRegistrationStatusHistoryTable($pdo);
+                                    $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id,tournament_category_id,player_id,team_id,category,status,participation_status) VALUES (:tournament,:category,:player,NULL,:code,"pending","pending_admin_review")');
+                                    $insert->execute(['tournament' => $tournamentId, 'category' => $categoryId, 'player' => (int) $player['player_id'], 'code' => $categoryCode]);
+                                    $registrationId = (int) $pdo->lastInsertId();
+                                    snapshotTournamentRoster($pdo, $registrationId, null, (int) $player['player_id']);
+                                    recordRegistrationStatus($pdo, $registrationId, 'pending', (int) $_SESSION['user_id'], 'สมัครแข่งขันแบบเดี่ยว');
+                                    $pdo->commit();
+                                    $success = 'สมัครเข้าร่วมรายการเรียบร้อยแล้ว';
+                                } catch (Throwable $exception) {
+                                    if ($pdo->inTransaction()) $pdo->rollBack();
+                                    $error = $exception instanceof InvalidArgumentException ? $exception->getMessage() : 'สมัครแข่งขันไม่สำเร็จ';
+                                }
                         }
                     }
                 }
@@ -233,7 +253,7 @@ if ($requestedTournamentId > 0 && !$tournaments) {
 document.querySelectorAll('.team-form').forEach((form) => {
     const category = form.querySelector('.category'), search = form.querySelector('.search'), results = form.querySelector('.search-results');
     const starters = form.querySelector('.starters'), subs = form.querySelector('.subs'), staff = form.querySelector('.staff');
-    let selected = new Map(), config = { starters: 0, subs: 0, required: ['coach', 'manager'] };
+    let selected = new Map(), config = { starters: 0, subs: 0, required: [] };
     const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
     const hidden = (name, value) => { const i=document.createElement('input'); i.type='hidden'; i.name=name; i.value=value; i.dataset.generated='1'; return i; };
     const render = () => {
@@ -242,7 +262,7 @@ document.querySelectorAll('.team-form').forEach((form) => {
         form.querySelector('.starter-count').textContent=`${si}/${config.starters}`; form.querySelector('.sub-count').textContent=`${ui}/${config.subs}`;
         const selectedRoles=[...selected.values()].map(v=>v.role); const requiredOk=config.required.every(role=>selectedRoles.indexOf(role==='player'?'starter':role==='substitute'?'substitute':role)>=0); form.querySelector('.submit-team').disabled=si!==config.starters||ui!==config.subs||!requiredOk;
     };
-    category.addEventListener('change', () => { const o=category.selectedOptions[0]; config={ starters:Number(o.dataset.starters||0),subs:Number(o.dataset.subs||0),required:['coach','manager']}; search.disabled=!category.value; form.querySelector('.category-info').textContent=`ผู้เล่นตัวจริง ${config.starters} คน · ตัวสำรอง ${config.subs} คน · ต้องมีโค้ชและผู้จัดการทีม`; selected.clear(); render(); });
+    category.addEventListener('change', () => { const o=category.selectedOptions[0]; config={ starters:Number(o.dataset.starters||0),subs:Number(o.dataset.subs||0),required:(o.dataset.required||'').split(',').map(role=>role.trim()).filter(Boolean)}; search.disabled=!category.value; form.querySelector('.category-info').textContent=`ผู้เล่นตัวจริง ${config.starters} คน · ตัวสำรอง ${config.subs} คน · โค้ช/ผู้จัดการทีมเป็นตัวเลือกเสริม`; selected.clear(); render(); });
     search.addEventListener('input', async () => { if(search.value.trim().length<1)return results.innerHTML=''; const p=new URLSearchParams({action:'search_players',tournament_id:form.dataset.tournament,category_id:category.value,q:search.value.trim()}); const r=await fetch(`register-tournament.php?${p}`); const players=await r.json(); results.innerHTML=players.length?players.map(x=>{const disabled=x.eligible?'':'disabled title="'+esc(x.eligibility_reason||'ผู้เล่นคนนี้ไม่ผ่านเงื่อนไขของรายการ')+'"';return `<div class="flex justify-between rounded-lg border border-white/10 p-3"><span>${esc(x.real_name||x.username)} (#${x.player_id}) ${x.age_at_tournament===null?'':'อายุ '+x.age_at_tournament+' ปี'}<small class="ml-2 text-red-300">${x.eligible?'':'ผู้เล่นคนนี้ไม่ผ่านเงื่อนไขของรายการ'}</small></span><span><button ${disabled} type="button" data-role="starter" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add mr-2 text-green-300">ตัวจริง</button><button ${disabled} type="button" data-role="substitute" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add mr-2 text-cyan-300">สำรอง</button><button ${disabled} type="button" data-role="coach" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add mr-2 text-purple-300">โค้ช</button><button ${disabled} type="button" data-role="manager" data-id="${x.player_id}" data-name="${esc(x.real_name||x.username)}" class="add text-purple-300">ผู้จัดการ</button></span></div>`}).join(''):'<div class="rounded-lg border border-white/10 p-3 text-sm text-slate-400">ยังไม่พบนักกีฬาที่ตรงกับคำค้น</div>'; });
     form.addEventListener('change',(e)=>{const select=e.target.closest('.change-role');if(!select)return;const item=selected.get(Number(select.dataset.id));if(item){const role=select.value;if(role==='starter'&&[...selected.values()].filter(v=>v.role==='starter').length>=config.starters)return render();if(role==='substitute'&&[...selected.values()].filter(v=>v.role==='substitute').length>=config.subs)return render();item.role=role;render();}});
     form.addEventListener('click',(e)=>{const b=e.target.closest('.add,.remove');if(!b)return;if(b.classList.contains('remove'))selected.delete(Number(b.dataset.id));else{const id=Number(b.dataset.id),role=b.dataset.role;if(selected.has(id))return;if(role==='starter'&&[...selected.values()].filter(v=>v.role==='starter').length>=config.starters)return;if(role==='substitute'&&[...selected.values()].filter(v=>v.role==='substitute').length>=config.subs)return;selected.set(id,{role,name:b.dataset.name,index:selected.size});}render();});

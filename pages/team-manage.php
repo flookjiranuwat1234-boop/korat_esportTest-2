@@ -27,10 +27,26 @@ $tStmt->execute(['id' => $teamId]);
 $team = $tStmt->fetch();
 
 if (!$team) {
-    die('ไม่พบทีมนี้');
+    http_response_code(404);
+    exit('ไม่พบทีมนี้');
 }
 
 $isCaptain = ($team['captain_player_id'] == $myPlayerId);
+$membershipStmt = $pdo->prepare('
+    SELECT 1
+    FROM team_members
+    WHERE team_id = :team_id AND player_id = :player_id AND is_active = 1
+    LIMIT 1
+');
+$membershipStmt->execute([
+    'team_id' => $teamId,
+    'player_id' => (int) $myPlayerId,
+]);
+if (!$isCaptain && !$membershipStmt->fetchColumn()) {
+    http_response_code(403);
+    exit('คุณไม่มีสิทธิ์เข้าถึงทีมนี้');
+}
+
 $rosterLockStmt = $pdo->prepare('SELECT tr.roster_locked_at, COALESCE(tour.roster_lock_at, tour.checkin_close_at) AS roster_lock_deadline
     FROM tournament_registrations tr
     JOIN tournaments tour ON tour.tournament_id = tr.tournament_id

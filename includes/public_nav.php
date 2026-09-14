@@ -1,4 +1,3 @@
-```php
 <?php
 // includes/public_nav.php
 // ต้อง include includes/auth.php มาก่อนแล้ว (เพื่อให้ session_start() ทำงานและเช็ค login ได้)
@@ -25,8 +24,6 @@
     <a href="/korat_esportTest-2/pages/news.php">ข่าวสาร</a>
     <a href="/korat_esportTest-2/pages/gallery.php">แกลลอรี่</a>
     <a href="/korat_esportTest-2/pages/lodging.php">ที่พักแนะนำ</a>
-    <a href="/korat_esportTest-2/pages/teams.php">ทีม</a>
-    <a href="/korat_esportTest-2/pages/players.php">นักกีฬา</a>
     <a href="/korat_esportTest-2/pages/ranking.php">อันดับ</a>
 
     <?php if (isLoggedIn()): ?>
@@ -41,5 +38,3 @@
 <?php endif; ?>
 </nav>
 <script src="/korat_esportTest-2/assets/js/main.js" defer></script>
-
-```

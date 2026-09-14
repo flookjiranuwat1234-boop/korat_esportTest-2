@@ -8,7 +8,6 @@ require_once __DIR__ . '/bracket.php';
 function resetTournamentGroupStage(PDO $pdo, int $tournamentId): void
 {
     $pdo->prepare('DELETE FROM bracket_edges WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
-    $pdo->prepare('DELETE FROM match_participants WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
     $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tid AND group_id IS NOT NULL')->execute(['tid' => $tournamentId]);
     $pdo->prepare('DELETE FROM group_teams WHERE group_id IN (SELECT tournament_group_id FROM tournament_groups WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
     $pdo->prepare('DELETE FROM tournament_groups WHERE tournament_id = :tid')->execute(['tid' => $tournamentId]);
@@ -27,7 +26,6 @@ function generateGroupStage(PDO $pdo, int $tournamentId): int
     $legacyMatchCheck->execute(['tid' => $tournamentId]);
     if ((int) $legacyMatchCheck->fetchColumn() > 0) {
         $pdo->prepare('DELETE FROM bracket_edges WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
-        $pdo->prepare('DELETE FROM match_participants WHERE match_id IN (SELECT match_id FROM matches WHERE tournament_id = :tid)')->execute(['tid' => $tournamentId]);
         $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tid')->execute(['tid' => $tournamentId]);
     }
 

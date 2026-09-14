@@ -168,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $playerId = (int) ($target['player_id'] ?? 0);
                         if ($playerId > 0) {
                             $history = $pdo->prepare('SELECT
-                                (SELECT COUNT(*) FROM player_checkin_history WHERE player_id = :pid) +
+                                (SELECT COUNT(*) FROM player_tournament_checkins WHERE player_id = :pid) +
                                 (SELECT COUNT(*) FROM tournament_registration_members WHERE player_id = :pid) +
                                 (SELECT COUNT(*) FROM player_rankings WHERE player_id = :pid)');
                             $history->execute(['pid' => $playerId]);
@@ -599,7 +599,7 @@ if ($flash) {
 </head>
 <body class="text-slate-800 font-sans min-h-screen antialiased">
 
-    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
+    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl -translate-x-full transition-transform duration-200 lg:translate-x-0">
         <div class="p-6 border-b border-slate-800 flex items-center gap-3">
             <img src="../assets/img/logo.png" alt="Korat Esport" class="h-10 w-auto filter drop-shadow" onError="this.src='https://placehold.co/80x80/0F172A/FF5500?text=KE';">
             <div>
@@ -669,9 +669,9 @@ if ($flash) {
         </div>
     </aside>
 
-    <div class="ml-64 min-h-screen flex flex-col min-w-0">
+    <div class="ml-0 lg:ml-64 min-h-screen flex flex-col min-w-0">
 
-        <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+        <header class="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
             <div>
                 <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
@@ -685,7 +685,7 @@ if ($flash) {
             </a>
         </header>
 
-        <main class="p-8 space-y-6 flex-1">
+        <main class="p-4 sm:p-8 space-y-6 flex-1 min-w-0">
 
             <?php if ($error): ?>
                 <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3">
