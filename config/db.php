@@ -11,7 +11,7 @@ if (!defined('ENABLE_TOURNAMENT_DEMO_MODE')) {
 }
 
 $host = 'localhost';
-$dbname = 'korat_esporttest1';
+$dbname = 'esport_korattest';
 $dbuser = 'root';
 $dbpass = ''; // แก้เป็นรหัสจริงตอนขึ้น production
 
