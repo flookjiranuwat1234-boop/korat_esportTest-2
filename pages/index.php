@@ -277,6 +277,55 @@ try {
         }
         .nav-link-item:hover::after, .nav-link-item.active::after { width: 100%; }
 
+        .mobile-public-nav {
+            scrollbar-width: none;
+        }
+
+        .mobile-public-nav::-webkit-scrollbar {
+            display: none;
+        }
+
+        .mobile-public-nav .nav-link-item {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 767px) {
+            #main-navbar {
+                background: transparent;
+                box-shadow: none;
+                backdrop-filter: none;
+            }
+
+            #main-navbar .max-w-7xl {
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+            }
+
+            #main-navbar .max-w-7xl > div {
+                min-height: 3.5rem;
+                height: 3.5rem;
+            }
+
+            .mobile-public-nav {
+                justify-content: flex-start;
+                gap: 0.15rem;
+            }
+
+            .mobile-public-nav .nav-link-item {
+                padding: 0.8rem 0.7rem;
+                font-size: 0.78rem;
+            }
+
+            #main-navbar .mobile-public-nav {
+                display: none;
+            }
+
+            #main-navbar .mobile-public-nav + #mobile-public-menu {
+                top: 3.75rem;
+            }
+        }
+
         /* ขยายขนาดโลโก้และวงแหวนรอบให้ใหญ่และเด่นชัดสะดุดตา */
         @keyframes logoFloat {
             0%, 100% { transform: translateY(0); }
@@ -426,12 +475,12 @@ try {
     <div class="relative z-10 flex flex-col min-h-screen">
 
         <!-- ================= 2. PUBLIC NAVIGATION BAR ================= -->
-        <header id="main-navbar" class="sticky top-0 z-50 glass-nav transition-all">
+        <header id="main-navbar" class="relative sticky top-0 z-50 glass-nav transition-all">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex items-center justify-between h-20 transition-all duration-300">
 
                     <!-- Logo & Brand Header -->
-                    <a href="index.php" class="flex items-center gap-3 group">
+                    <a href="index.php" class="hidden sm:flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport"
                             class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)] group-hover:scale-105 transition-transform"
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
@@ -445,8 +494,14 @@ try {
                         </div>
                     </a>
 
+                    <button id="mobile-menu-toggle" type="button"
+                        class="ml-auto flex h-10 w-10 items-center justify-center rounded-lg border border-white/20 text-white md:hidden"
+                        aria-controls="mobile-public-menu" aria-expanded="false" aria-label="เปิดเมนู">
+                        <i class="fa-solid fa-bars"></i>
+                    </button>
+
                     <!-- Public Menu Items with Smooth Underline Indicator -->
-                    <nav class="hidden md:flex items-center gap-1 lg:gap-3">
+                    <nav class="mobile-public-nav hidden items-center gap-1 md:flex md:w-auto md:justify-center lg:gap-3">
                         <a href="index.php"
                             class="nav-link-item px-4 py-2 text-sm font-bold text-white transition-all active">
                             <i class="fa-solid fa-house text-xs mr-1.5"></i> หน้าแรก
@@ -476,8 +531,45 @@ try {
                         <?php endif; ?>
                     </nav>
 
+                    <nav id="mobile-public-menu"
+                        class="absolute left-3 right-3 top-[4.25rem] hidden flex-col gap-1 rounded-xl border border-white/15 bg-[#121318]/95 p-2 shadow-2xl backdrop-blur-md md:hidden">
+                        <a href="index.php" class="rounded-lg px-4 py-3 text-sm font-bold text-white">
+                            <i class="fa-solid fa-house mr-2 text-xs"></i> หน้าแรก
+                        </a>
+                        <a href="tournaments.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                            <i class="fa-solid fa-trophy mr-2 text-xs"></i> ทัวร์นาเมนต์
+                        </a>
+                        <a href="ranking.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                            <i class="fa-solid fa-ranking-star mr-2 text-xs"></i> ตารางคะแนน
+                        </a>
+                        <a href="news.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                            <i class="fa-solid fa-newspaper mr-2 text-xs"></i> ข่าวสาร
+                        </a>
+                        <a href="gallery.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                            <i class="fa-solid fa-images mr-2 text-xs"></i> แกลเลอรี่
+                        </a>
+                        <?php if ($isLoggedIn): ?>
+                            <a href="lodging.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                                <i class="fa-solid fa-hotel mr-2 text-xs"></i> ที่พักแนะนำ
+                            </a>
+                            <a href="profile.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                                <i class="fa-solid fa-user mr-2 text-xs"></i> โปรไฟล์ของฉัน
+                            </a>
+                            <a href="../auth/logout.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-rose-300">
+                                <i class="fa-solid fa-right-from-bracket mr-2 text-xs"></i> ออกจากระบบ
+                            </a>
+                        <?php else: ?>
+                            <a href="../auth/login.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-brand-orange">
+                                <i class="fa-solid fa-right-to-bracket mr-2 text-xs"></i> เข้าสู่ระบบ
+                            </a>
+                            <a href="../auth/register.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-white">
+                                <i class="fa-solid fa-user-plus mr-2 text-xs"></i> สมัครสมาชิก
+                            </a>
+                        <?php endif; ?>
+                    </nav>
+
                     <!-- User Status / Auth Buttons -->
-                    <div class="flex items-center gap-4 text-base font-bold drop-shadow">
+                    <div class="hidden md:flex items-center gap-4 text-base font-bold drop-shadow">
                         <?php if ($isLoggedIn && !empty($currentUser['username'])): ?>
                             <div
                                 class="flex items-center gap-3 bg-white/10 border border-white/20 p-1.5 pl-3.5 rounded-2xl backdrop-blur-md">
@@ -520,6 +612,23 @@ try {
                 </div>
             </div>
         </header>
+
+        <script>
+            (function () {
+                const toggle = document.getElementById('mobile-menu-toggle');
+                const menu = document.getElementById('mobile-public-menu');
+                if (!toggle || !menu) return;
+
+                toggle.addEventListener('click', function () {
+                    const isOpen = !menu.classList.contains('hidden');
+                    menu.classList.toggle('hidden', isOpen);
+                    menu.classList.toggle('flex', !isOpen);
+                    toggle.setAttribute('aria-expanded', String(!isOpen));
+                    toggle.setAttribute('aria-label', isOpen ? 'เปิดเมนู' : 'ปิดเมนู');
+                    toggle.querySelector('i').className = isOpen ? 'fa-solid fa-bars' : 'fa-solid fa-xmark';
+                });
+            }());
+        </script>
 
         <!-- ================= 3. HERO SECTION ================= -->
         <section

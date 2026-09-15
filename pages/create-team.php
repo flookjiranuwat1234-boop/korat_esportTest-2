@@ -258,6 +258,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 
     </div>
 
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 
 </html>

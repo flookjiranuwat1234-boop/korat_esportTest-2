@@ -749,5 +749,6 @@ if ($flash) {
 
         document.addEventListener('DOMContentLoaded', () => { document.querySelectorAll('.gallery-action-menu').forEach(menu => menu.addEventListener('click', event => event.stopPropagation())); document.addEventListener('click', () => document.querySelectorAll('.gallery-action-menu').forEach(menu => menu.classList.add('hidden'))); document.querySelectorAll('[id$="Modal"]').forEach(modal => modal.addEventListener('click', event => { if (event.target === modal) hideModal(modal.id); })); document.addEventListener('keydown', event => { if (event.key === 'Escape') { document.querySelectorAll('.gallery-action-menu').forEach(menu => menu.classList.add('hidden')); document.querySelectorAll('[id$="Modal"]').forEach(modal => hideModal(modal.id)); } }); });
     </script>
+<script src="../assets/js/admin-mobile-nav.js" defer></script>
 </body>
 </html>

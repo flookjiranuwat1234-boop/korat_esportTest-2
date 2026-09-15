@@ -922,5 +922,6 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
             }
         }
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

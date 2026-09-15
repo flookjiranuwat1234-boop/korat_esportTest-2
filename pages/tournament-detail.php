@@ -1152,5 +1152,6 @@ function roundName($roundNum, $totalRounds)
             arenaBox.addEventListener('scroll', drawProportionalCenterLines);
         });
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

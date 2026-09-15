@@ -3245,5 +3245,6 @@ $csrfToken = generateCsrfToken();
         });
     });
 </script>
+<script src="../assets/js/admin-mobile-nav.js" defer></script>
 </body>
 </html>

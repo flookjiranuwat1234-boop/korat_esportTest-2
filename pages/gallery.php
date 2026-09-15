@@ -306,6 +306,36 @@ if ($selectedAlbumId > 0) {
             z-index: 10;
         }
 
+        @media (max-width: 639px) {
+            .masonry-wall {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+                column-count: unset;
+            }
+
+            .masonry-item {
+                aspect-ratio: 1 / 1;
+                margin-bottom: 0;
+                border-radius: 0.75rem;
+            }
+
+            .masonry-item img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
+
+            .masonry-item:hover {
+                transform: none;
+                box-shadow: none;
+            }
+
+            .masonry-item:hover img {
+                transform: none;
+            }
+        }
+
         /* Lightbox Smooth Transition */
         #imageModal {
             opacity: 0;
@@ -707,6 +737,7 @@ if ($selectedAlbumId > 0) {
 
         document.getElementById('imageModal').addEventListener('click', closeModal);
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 
 </html>

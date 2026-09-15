@@ -388,6 +388,7 @@ if (!$news) {
             progressBar.style.width = percentage + '%';
         });
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 
 </html>

@@ -457,6 +457,7 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
             });
         });
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>
 ```

@@ -472,6 +472,7 @@ try {
             AOS.init({ once: true, duration: 800, easing: 'ease-out-cubic' });
         });
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 
 </html>

@@ -157,5 +157,6 @@ $teams = $teamStmt->fetchAll(PDO::FETCH_ASSOC);
             <?php endif; ?>
         </main>
     </div>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

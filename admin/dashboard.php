@@ -841,5 +841,6 @@ $openTournaments = $pdo->query("
             }, 300);
         });
     </script>
+<script src="../assets/js/admin-mobile-nav.js" defer></script>
 </body>
 </html>

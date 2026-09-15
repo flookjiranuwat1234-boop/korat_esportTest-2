@@ -229,6 +229,28 @@ $questions = securityQuestionOptions();
             100% { transform: translateY(100%); }
         }
         .animate-scanline { animation: scanline 8s linear infinite; }
+
+        .auth-site-header {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+            display: flex; align-items: center; justify-content: space-between;
+            min-height: 4rem; padding: .5rem 1rem;
+            background: rgba(10, 10, 14, .9);
+            border-bottom: 1px solid rgba(255, 85, 0, .3);
+        }
+        .auth-site-header a { color: #fff; }
+        .auth-site-header nav { display: flex; gap: .75rem; align-items: center; }
+        .auth-site-header nav a { padding: .5rem .75rem; font-size: .85rem; font-weight: 700; }
+        .auth-back-button { display: none; }
+        @media (max-width: 767px) {
+            .auth-site-header { background: transparent; border-bottom: 0; }
+            .auth-site-header > a:first-child, .auth-site-header nav { display: none; }
+            .auth-site-header .auth-back-button {
+                display: flex; width: 2.5rem; height: 2.5rem;
+                align-items: center; justify-content: center;
+                border: 1px solid rgba(255,255,255,.25); border-radius: .5rem;
+                background: rgba(18,19,24,.75); color: #fff;
+            }
+        }
     </style>
 </head>
 
@@ -236,6 +258,18 @@ $questions = securityQuestionOptions();
 
     <div class="fixed inset-0 bg-esports-arena z-0"></div>
     <div class="fixed inset-0 grid-bg opacity-40 z-0 pointer-events-none"></div>
+
+    <header class="auth-site-header">
+        <a href="../pages/index.php" class="font-display font-black tracking-wider">KORAT <span class="text-brand-orange">ESPORT</span></a>
+        <nav class="hidden md:flex">
+            <a href="../pages/index.php">หน้าแรก</a>
+            <a href="../pages/tournaments.php">ทัวร์นาเมนต์</a>
+            <a href="../pages/ranking.php">ตารางคะแนน</a>
+            <a href="../pages/news.php">ข่าวสาร</a>
+            <a href="../pages/gallery.php">แกลเลอรี่</a>
+        </nav>
+        <button class="auth-back-button" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ"><i class="fa-solid fa-arrow-left"></i></button>
+    </header>
 
     <div class="relative z-10 min-h-screen flex flex-col lg:flex-row">
 
@@ -454,6 +488,15 @@ $questions = securityQuestionOptions();
                 };
                 updateCount();
             });
+        });
+    </script>
+    <script>
+        document.querySelector('.auth-back-button').addEventListener('click', function () {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = '../pages/index.php';
+            }
         });
     </script>
 </body>

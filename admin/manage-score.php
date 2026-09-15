@@ -424,5 +424,6 @@ if ($flash) {
         </main>
     </div>
 
+<script src="../assets/js/admin-mobile-nav.js" defer></script>
 </body>
 </html>

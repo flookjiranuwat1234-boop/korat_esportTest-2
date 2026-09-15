@@ -732,6 +732,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
             btnText.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> กำลังบันทึก...';
         }
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 
 </html>

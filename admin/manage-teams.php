@@ -1246,38 +1246,35 @@ if ($flash) {
     </div>
 
     <?php if ($tournament && in_array(($tournament['play_mode'] ?? 'team'), ['solo', 'team'], true)): ?>
-        <div id="addSoloPlayerModal" data-play-mode="<?= htmlspecialchars((string) $tournament['play_mode'], ENT_QUOTES) ?>" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4">
-            <div class="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-visible">
-                <div class="flex items-center justify-between rounded-t-2xl border-b border-slate-200 bg-slate-50 px-6 py-4">
+        <div id="addSoloPlayerModal" data-play-mode="<?= htmlspecialchars((string) $tournament['play_mode'], ENT_QUOTES) ?>" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4 sm:p-6">
+            <div class="flex max-h-[min(720px,calc(100vh-2rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div class="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
                     <div>
                         <p class="text-[10px] uppercase tracking-[0.2em] text-slate-500">เพิ่มผู้แข่งขัน</p>
                         <h3 id="addPlayerModalTitle" class="text-lg font-black text-slate-900">เพิ่ม<?= ($tournament['play_mode'] ?? 'team') === 'solo' ? 'ผู้แข่งขัน Solo' : 'ทีม' ?></h3>
                     </div>
                     <button type="button" id="closeAddSoloPlayerModal" class="text-slate-400 hover:text-slate-600 p-1" aria-label="ปิดหน้าต่างเพิ่มผู้แข่งขัน"><i class="fa-solid fa-xmark text-xl"></i></button>
                 </div>
-                <div class="p-6 space-y-4">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-[11px] font-bold text-slate-600">เพิ่มทีม</p>
-                        </div>
+                <div class="min-h-0 overflow-y-auto p-5 sm:p-6">
+                    <div class="mb-4">
+                        <p class="text-[11px] font-bold text-slate-700">เพิ่ม<?= ($tournament['play_mode'] ?? 'team') === 'solo' ? 'ผู้แข่งขัน' : 'ทีม' ?></p>
+                        <p class="mt-1 text-xs text-slate-500">ค้นหาแล้วเลือกผู้สมัครที่ต้องการเพิ่มเข้าสู่ทัวร์นาเมนต์</p>
                     </div>
-                    <form id="addPlayerSearchForm" method="GET" class="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <form id="addPlayerSearchForm" method="GET" class="space-y-2">
                         <input type="hidden" name="tournament_id" value="<?= (int) $tournamentId ?>">
                         <input type="hidden" name="category_id" value="<?= (int) $selectedCategoryId ?>">
-                        <div class="relative md:col-span-1">
-                            <label id="addPlayerSearchLabel" class="mb-1 block text-[10px] uppercase tracking-[0.2em] text-slate-500">ค้นหาทีมที่พร้อมสมัคร</label>
-                            <input id="addPlayerSearchInput" type="text" name="add_player_search" value="<?= htmlspecialchars($addPlayerSearch) ?>" placeholder="พิมพ์ชื่อเพื่อค้นหา..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="addPlayerSearchResultsList" class="w-full rounded-xl border border-orange-400 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-orange-500 focus:outline-none">
-                            <div id="addPlayerSearchResultsContainer" class="mt-2 overflow-hidden">
-                                <div id="addPlayerSearchEmptyState" class="hidden p-4 text-sm text-slate-600">ไม่พบผู้เล่นที่ตรงกับคำค้นหา</div>
-                                <div id="addPlayerSearchLoadingState" class="hidden p-4 text-sm text-sky-700">กำลังค้นหา...</div>
-                                <div id="addPlayerSearchErrorState" class="hidden p-4 text-sm text-red-700">ไม่สามารถค้นหาข้อมูลได้ กรุณาลองใหม่</div>
-                                <div id="addPlayerSearchResultsList" class="max-h-[320px] overflow-y-auto rounded-xl border border-slate-200 bg-white divide-y divide-slate-200 shadow-sm"></div>
-                            </div>
-                        </div>
-                        <div class="flex items-end">
-                            <button type="submit" class="rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow">ค้นหา</button>
+                        <label id="addPlayerSearchLabel" class="block text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">ค้นหาทีมที่พร้อมสมัคร</label>
+                        <div class="flex flex-col gap-2 sm:flex-row">
+                            <input id="addPlayerSearchInput" type="text" name="add_player_search" value="<?= htmlspecialchars($addPlayerSearch) ?>" placeholder="พิมพ์ชื่อทีมเพื่อค้นหา..." autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="addPlayerSearchResultsList" class="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100">
+                            <button type="submit" class="shrink-0 rounded-xl bg-brand-orange px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-brand-glow focus:outline-none focus:ring-2 focus:ring-orange-200">ค้นหา</button>
                         </div>
                     </form>
+                    <div id="addPlayerSearchResultsContainer" class="mt-3 overflow-hidden">
+                        <div id="addPlayerSearchEmptyState" class="hidden rounded-xl border border-dashed border-slate-200 bg-slate-50 p-5 text-center text-sm text-slate-600">ไม่พบผู้เล่นที่ตรงกับคำค้นหา</div>
+                        <div id="addPlayerSearchLoadingState" class="hidden rounded-xl border border-slate-200 bg-sky-50 p-5 text-center text-sm text-sky-700">กำลังค้นหา...</div>
+                        <div id="addPlayerSearchErrorState" class="hidden rounded-xl border border-slate-200 bg-red-50 p-5 text-center text-sm text-red-700">ไม่สามารถค้นหาข้อมูลได้ กรุณาลองใหม่</div>
+                        <div id="addPlayerSearchResultsList" class="max-h-[min(360px,45vh)] overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-200"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1639,10 +1636,10 @@ if ($flash) {
                 const isSolo = addSoloPlayerModal?.dataset.playMode === 'solo';
                 players.forEach(player => {
                     const row = document.createElement('div');
-                    row.className = 'player-search-result flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-4 py-3';
+                    row.className = 'player-search-result flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between';
 
                     const details = document.createElement('div');
-                    details.className = 'flex items-center gap-3';
+                    details.className = 'flex min-w-0 items-center gap-3';
                     const avatar = document.createElement('div');
                     avatar.className = 'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-orange-100 text-sm font-black text-brand-orange';
                     const imagePath = isSolo ? player.avatar_path : player.logo_path;
@@ -1664,6 +1661,9 @@ if ($flash) {
                         ? `${player.username || '-'} • ${player.email || '-'} • ${player.eligibility_status || 'ไม่ระบุสถานะ'}`
                         : `กัปตัน: ${player.captain_username || '-'} • สมาชิก ${player.active_member_count || 0}/${player.starters_count || 0} คน • ${player.status || 'ไม่ระบุสถานะ'}`;
                     const text = document.createElement('div');
+                    text.className = 'min-w-0';
+                    name.className += ' truncate';
+                    account.className += ' truncate';
                     text.append(name, account);
                     details.append(avatar, text);
                     row.append(details);
@@ -1681,7 +1681,7 @@ if ($flash) {
                         const participantField = isSolo ? 'player_id' : 'team_id';
                         const button = document.createElement('button');
                         button.type = 'button';
-                        button.className = 'rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700';
+                        button.className = 'shrink-0 self-start rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 sm:self-auto';
                         button.textContent = isSolo ? 'เพิ่มผู้แข่งขัน' : 'เพิ่มทีม';
                         button.addEventListener('click', event => {
                             if (!confirm(isSolo ? 'ยืนยันเพิ่มผู้เล่นรายนี้เข้าสู่ Tournament นี้หรือไม่?' : 'ยืนยันเพิ่มทีมนี้เข้าสู่ Tournament หรือไม่?')) event.preventDefault();
@@ -1783,5 +1783,6 @@ if ($flash) {
             });
         });
     </script>
+<script src="../assets/js/admin-mobile-nav.js" defer></script>
 </body>
 </html>

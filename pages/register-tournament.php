@@ -269,5 +269,6 @@ document.querySelectorAll('.team-form').forEach((form) => {
     if (category.value) category.dispatchEvent(new Event('change'));
 });
 </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

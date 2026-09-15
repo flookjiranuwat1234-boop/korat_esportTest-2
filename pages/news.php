@@ -264,18 +264,66 @@ html, body {
         @media (max-width: 768px) {
             .slider-container {
                 flex-direction: column;
-                height: auto;
+                height: auto !important;
+                overflow: visible;
+                gap: 1rem;
+                padding-bottom: 0;
             }
             .slide-card {
+                display: flex;
+                flex-direction: column;
                 min-width: 100%;
-                height: 320px;
+                width: 100%;
+                height: auto !important;
+                min-height: 0;
+                flex: none !important;
+                border-radius: 1rem;
+                background: rgba(18, 19, 24, 0.92);
+                overflow: hidden;
             }
-            .slide-collapsed-title {
-                display: none;
+            .slide-card img {
+                position: relative;
+                width: 100%;
+                height: 180px;
+                object-fit: cover;
+                filter: brightness(0.72);
+                transform: none;
+            }
+            .slide-card.active img,
+            .slide-card:hover img {
+                transform: none;
+                filter: brightness(0.72);
+            }
+            .slide-content {
+                position: relative;
+                inset: auto;
+                padding: 1rem;
+                background: rgba(18, 19, 24, 0.92);
+                text-align: left;
             }
             .slide-content > * {
                 opacity: 1;
-                transform: translateY(0);
+                transform: none;
+            }
+            .slide-content h2 {
+                font-size: 1.25rem;
+                margin: 0.75rem 0;
+            }
+            .slide-content p {
+                margin-bottom: 0.75rem;
+            }
+            .slide-content a {
+                display: inline-flex;
+                padding: 0.65rem 1rem;
+            }
+            .slide-card.active,
+            .slide-card:hover {
+                flex: none;
+                border-color: rgba(255, 85, 0, 0.55);
+                box-shadow: 0 0 20px rgba(255, 85, 0, 0.18);
+            }
+            .slide-collapsed-title {
+                display: none;
             }
             .slide-progress-bar {
                 display: none;
@@ -511,5 +559,6 @@ html, body {
             startAutoplay();
         }
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

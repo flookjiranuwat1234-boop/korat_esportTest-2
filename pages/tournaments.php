@@ -693,6 +693,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
             }
         });
     </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 
 </html>
