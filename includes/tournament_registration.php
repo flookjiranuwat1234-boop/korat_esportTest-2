@@ -64,7 +64,7 @@ function searchTournamentPlayers(PDO $pdo, int $tournamentId, int $categoryId, s
     $term = trim($term);
     if ($term === '') return [];
     $like = '%' . $term . '%';
-    $stmt = $pdo->prepare('SELECT p.player_id, p.user_id, p.real_name, p.gender, p.birth_date,
+    $stmt = $pdo->prepare('SELECT p.player_id, p.user_id, p.display_name, p.real_name, p.gender, p.birth_date,
             p.eligibility_status, u.username, u.status AS account_status
         FROM players p
         INNER JOIN users u ON u.user_id = p.user_id
@@ -98,10 +98,13 @@ function searchTournamentPlayers(PDO $pdo, int $tournamentId, int $categoryId, s
     $results = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $player) {
         $reason = tournamentCategoryAllowsPlayer($player, $category);
-        $player['eligible'] = $reason === null;
-        $player['eligibility_reason'] = $reason;
-        $player['age_at_tournament'] = tournamentPlayerAge($player['birth_date'], $category['start_date']);
-        $results[] = $player;
+        $results[] = [
+            'player_id' => (int) $player['player_id'],
+            'real_name' => (string) ($player['display_name'] ?: $player['real_name'] ?: $player['username']),
+            'eligible' => $reason === null,
+            'eligibility_reason' => $reason,
+            'age_at_tournament' => tournamentPlayerAge($player['birth_date'], $category['start_date']),
+        ];
     }
     return $results;
 }

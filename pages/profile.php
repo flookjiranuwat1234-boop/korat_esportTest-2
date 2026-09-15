@@ -176,9 +176,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'accep
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) { $error = 'คำขอไม่ถูกต้อง'; }
     $invId = (int) ($_POST['team_member_id'] ?? 0);
     if (!$error) {
-    $pdo->prepare("UPDATE team_members SET is_active = 1 WHERE team_member_id = :id AND player_id = :pid")
-        ->execute(['id' => $invId, 'pid' => $playerId]);
-    $success = 'ตอบรับคำเชิญเข้าร่วมทีมเรียบร้อยแล้ว!';
+    $inviteUpdate = $pdo->prepare("UPDATE team_members tm
+        INNER JOIN teams t ON t.team_id = tm.team_id
+        SET tm.is_active = 1, tm.left_at = NULL
+        WHERE tm.team_member_id = :id
+          AND tm.player_id = :pid
+          AND tm.is_active = 0
+          AND tm.left_at IS NULL
+          AND t.status = 'active'");
+    $inviteUpdate->execute(['id' => $invId, 'pid' => $playerId]);
+    if ($inviteUpdate->rowCount() !== 1) {
+        $error = 'ไม่พบคำเชิญที่ยังใช้งานได้';
+    } else {
+        $success = 'ตอบรับคำเชิญเข้าร่วมทีมเรียบร้อยแล้ว!';
+    }
     }
 }
 
@@ -216,7 +227,7 @@ $invitesStmt = $pdo->prepare("
     SELECT tm.team_member_id, t.name AS team_name, tm.in_game_role
     FROM team_members tm
     JOIN teams t ON t.team_id = tm.team_id
-    WHERE tm.player_id = :pid AND tm.is_active = 0
+    WHERE tm.player_id = :pid AND tm.is_active = 0 AND tm.left_at IS NULL AND t.status = 'active'
 ");
 $invitesStmt->execute(['pid' => $playerId]);
 $myInvites = $invitesStmt->fetchAll();
