@@ -136,6 +136,7 @@ if ($flash) {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/admin-responsive.css">
     
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -425,5 +426,6 @@ if ($flash) {
     </div>
 
 <script src="../assets/js/admin-mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

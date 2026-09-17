@@ -223,6 +223,80 @@ if ($isDoubleBracket) {
     $bracketSections[] = ['key' => 'single', 'label' => '', 'rounds' => $roundsGrouped];
 }
 
+// Tournament 140 stores the winners and losers paths with an empty bracket_type.
+// Split those paths visually so matches are not interleaved in the same round column.
+if ($tournamentId === 140 && !$isDoubleBracket) {
+    $matchesById = [];
+    foreach ($playoffMatches as $match) {
+        $matchesById[(int) $match['match_id']] = $match;
+    }
+
+    $winnerIds = [];
+    foreach ($playoffMatches as $match) {
+        $matchId = (int) $match['match_id'];
+        $edge = $bracketEdgesByMatch[$matchId] ?? [];
+        if (!empty($edge['loser_next_match_id'])) {
+            $winnerIds[$matchId] = true;
+        }
+    }
+
+    $winnerExitIds = [];
+    foreach (array_keys($winnerIds) as $winnerId) {
+        $nextId = (int) ($bracketEdgesByMatch[$winnerId]['next_match_id'] ?? 0);
+        if ($nextId > 0 && !isset($winnerIds[$nextId])) {
+            $winnerExitIds[$nextId] = true;
+        }
+    }
+
+    $finalIds = $winnerExitIds;
+    foreach ($playoffMatches as $match) {
+        $matchId = (int) $match['match_id'];
+        $edge = $bracketEdgesByMatch[$matchId] ?? [];
+        if (isset($winnerExitIds[(int) ($edge['next_match_id'] ?? 0)])
+            || isset($winnerExitIds[(int) ($edge['loser_next_match_id'] ?? 0)])) {
+            $finalIds[$matchId] = true;
+        }
+    }
+    foreach ($playoffMatches as $match) {
+        $matchId = (int) $match['match_id'];
+        $edge = $bracketEdgesByMatch[$matchId] ?? [];
+        if (empty($edge['next_match_id']) && empty($edge['loser_next_match_id'])) {
+            $finalIds[$matchId] = true;
+        }
+    }
+    foreach (array_keys($winnerIds) as $winnerId) {
+        unset($finalIds[$winnerId]);
+    }
+
+    $buildSpecialSection = static function (array $ids, string $key, string $label) use ($matchesById): ?array {
+        $rounds = [];
+        foreach ($ids as $matchId) {
+            if (!isset($matchesById[$matchId])) {
+                continue;
+            }
+            $match = $matchesById[$matchId];
+            $rounds[(int) ($match['round_number'] ?? 0)][] = $match;
+        }
+        if (!$rounds) {
+            return null;
+        }
+        ksort($rounds);
+        return ['key' => $key, 'label' => $label, 'rounds' => $rounds];
+    };
+
+    $winnerSection = $buildSpecialSection(array_keys($winnerIds), 'special_winners', 'สายผู้ชนะ');
+    $loserIds = [];
+    foreach ($matchesById as $matchId => $match) {
+        if (!isset($winnerIds[$matchId]) && !isset($finalIds[$matchId])) {
+            $loserIds[] = $matchId;
+        }
+    }
+    $loserSection = $buildSpecialSection($loserIds, 'special_losers', 'สายผู้แพ้');
+    $finalSection = $buildSpecialSection(array_keys($finalIds), 'special_final', 'รอบชิงชนะเลิศ');
+
+    $bracketSections = array_values(array_filter([$winnerSection, $loserSection, $finalSection]));
+}
+
 // ตารางคะแนนกลุ่ม (ถ้ามี)
 $groups = $pdo->prepare("
     SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id,
@@ -335,23 +409,10 @@ $accommodations = $accommodations->fetchAll();
 
 function roundName($roundNum, $totalRounds)
 {
-    if ($totalRounds === 1) {
-        return 'รอบก่อนรองชนะเลิศ';
-    }
-
-    if ($totalRounds >= 3) {
-        if ($roundNum === 1) return 'รอบก่อนรองชนะเลิศ';
-        if ($roundNum === 2) return 'รอบรองชนะเลิศ';
-        if ($roundNum === 3) return 'รอบชิงชนะเลิศ';
-    }
-
     $fromEnd = $totalRounds - $roundNum;
-    if ($fromEnd == 0)
-        return 'รอบชิงชนะเลิศ';
-    if ($fromEnd == 1)
-        return 'รอบรองชนะเลิศ';
-    if ($fromEnd == 2)
-        return 'รอบก่อนรองชนะเลิศ';
+    if ($fromEnd === 0) return 'รอบชิงชนะเลิศ';
+    if ($fromEnd === 1) return 'รอบรองชนะเลิศ';
+    if ($fromEnd === 2) return 'รอบก่อนรองชนะเลิศ';
     return "รอบที่ {$roundNum}";
 }
 ?>
@@ -601,7 +662,26 @@ function roundName($roundNum, $totalRounds)
             .bracket-svg-lines { pointer-events: none; }
             .bracket-path-base { stroke-width: 2.5; }
             .bracket-path-decided { stroke-width: 3; }
-            table { min-width: 38rem; }
+            .ranking-table-scroll,
+            .group-standing-table-scroll {
+                max-width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding-bottom: .5rem;
+            }
+            .ranking-table-scroll table {
+                min-width: 36rem;
+            }
+            .group-standing-table-scroll table {
+                min-width: 34rem;
+            }
+            #ranking h2 {
+                font-size: .95rem;
+                line-height: 1.35;
+            }
+            #ranking h2 + p {
+                line-height: 1.4;
+            }
             section { scroll-margin-top: 5rem; }
         }
     </style>
@@ -648,7 +728,7 @@ function roundName($roundNum, $totalRounds)
                                     <span class="text-[10px] font-semibold text-brand-orange uppercase tracking-wider"><?= htmlspecialchars($currentUser['role'] ?? 'Player') ?></span>
                                 </div>
                                 <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md"><i class="fa-solid fa-user-shield text-sm"></i></a>
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" data-mobile-label="ระบบแอดมิน" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md"><i class="fa-solid fa-user-shield text-sm"></i></a>
                                 <?php else: ?>
                                     <a href="profile.php" title="จัดการโปรไฟล์/ทีม" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md"><i class="fa-solid fa-user-gear text-sm"></i></a>
                                 <?php endif; ?>
@@ -732,7 +812,7 @@ function roundName($roundNum, $totalRounds)
                                         <i class="fa-solid fa-layer-group"></i> <?php echo htmlspecialchars($groupName); ?>
                                     </h3>
                                 </div>
-                                <div class="overflow-x-auto">
+                                <div class="group-standing-table-scroll overflow-x-auto">
                                     <table class="w-full text-left text-xs text-gray-200">
                                         <thead class="bg-white/5 uppercase font-bold text-gray-400 border-b border-white/10 font-display">
                                             <tr>
@@ -818,7 +898,7 @@ function roundName($roundNum, $totalRounds)
                                     <?php if ($section['label'] !== ''): ?>
                                         <div class="bracket-stage-title"><?php echo htmlspecialchars($section['label']); ?></div>
                                     <?php endif; ?>
-                                    <div class="bracket-container relative z-10" data-bracket-container>
+                                    <div class="bracket-container relative z-10" data-bracket-container<?php echo $tournamentId === 140 ? ' data-eight-round-fix="1"' : ''; ?>>
                                 <svg class="bracket-svg-lines" data-bracket-svg></svg>
                                 <?php foreach ($section['rounds'] as $roundNum => $roundMatches): ?>
                                     <div class="bracket-round">
@@ -932,9 +1012,11 @@ function roundName($roundNum, $totalRounds)
                             <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider"><?php echo $tournamentPlayMode === 'solo' ? 'อันดับผู้เล่นในรายการ' : 'อันดับในรายการ'; ?><?php echo $hasOpenCategory ? ' OPEN' : ' ' . htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?> ใช้ข้อมูลรวมทุกประเภทสำหรับรายการ Open</p></div>
                 </div>
                 <div class="glass-panel rounded-2xl overflow-hidden border border-white/15">
+                    <div class="ranking-table-scroll overflow-x-auto">
                     <table class="w-full text-left text-xs text-gray-200"><thead class="bg-black/40 text-gray-400"><tr><th class="p-3">อันดับในรายการ</th><th class="p-3"><?php echo $tournamentPlayMode === 'solo' ? 'ผู้เล่น' : 'ผู้แข่งขัน'; ?></th><th class="p-3 text-center">คะแนนในรายการ</th><th class="p-3 text-center">ชนะ</th><th class="p-3 text-center">แพ้</th></tr></thead><tbody class="divide-y divide-white/10">
                     <?php if (!$rankingRows): ?><tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูลอันดับ</td></tr><?php endif; ?>
                     <?php foreach ($rankingRows as $rankIndex => $ranking): ?><tr class="hover:bg-white/10"><td class="p-3 font-bold text-brand-orange">#<?php echo $rankIndex + 1; ?></td><td class="p-3 font-bold text-white"><?php if ($tournamentPlayMode !== 'solo' && !empty($ranking['participant_id'])): ?><a href="team-profile.php?id=<?php echo (int) $ranking['participant_id']; ?>" class="hover:text-brand-orange hover:underline transition-colors" title="ดูโปรไฟล์ทีม"><?php echo htmlspecialchars($ranking['participant_name']); ?></a><?php else: ?><?php echo htmlspecialchars($ranking['participant_name']); ?><?php endif; ?></td><td class="p-3 text-center font-display text-brand-orange"><?php echo (float) $ranking['points']; ?></td><td class="p-3 text-center text-emerald-300"><?php echo (int) $ranking['wins']; ?></td><td class="p-3 text-center text-rose-300"><?php echo (int) $ranking['losses']; ?></td></tr><?php endforeach; ?></tbody></table>
+                    </div>
                 </div>
             </section>
 
@@ -1087,6 +1169,56 @@ function roundName($roundNum, $totalRounds)
                 const matchesById = new Map([...container.querySelectorAll('.bracket-match')]
                     .map(match => [match.dataset.matchId, match]));
 
+                const useEightRoundFix = container.dataset.eightRoundFix === '1';
+                const connectionsByTarget = new Map();
+                if (useEightRoundFix) {
+                    container.querySelectorAll('.bracket-match').forEach(source => {
+                        [source.dataset.nextMatchId]
+                            .filter(targetId => targetId && targetId !== '0')
+                            .forEach(targetId => {
+                                const target = matchesById.get(targetId);
+                                if (!target) return;
+                                if (!connectionsByTarget.has(targetId)) connectionsByTarget.set(targetId, []);
+                                const connection = { source, target };
+                                connectionsByTarget.get(targetId).push(connection);
+                            });
+                    });
+                    connectionsByTarget.forEach(connections => {
+                        connections.sort((left, right) => {
+                            return left.source.getBoundingClientRect().top - right.source.getBoundingClientRect().top;
+                        });
+                    });
+                }
+
+                if (useEightRoundFix) {
+                    connectionsByTarget.forEach(connections => {
+                        if (!connections.length) return;
+                        const target = connections[0].target;
+                        const targetRect = target.getBoundingClientRect();
+                        const targetX = targetRect.left - containerRect.left + container.scrollLeft;
+                        const targetY = targetRect.top + targetRect.height / 2 - containerRect.top + container.scrollTop;
+                        const sourceRects = connections.map(connection => ({
+                            source: connection.source,
+                            rect: connection.source.getBoundingClientRect()
+                        }));
+                        const sourceX = Math.max(...sourceRects.map(item => item.rect.right - containerRect.left + container.scrollLeft));
+                        const sourceYs = sourceRects.map(item => item.rect.top + item.rect.height / 2 - containerRect.top + container.scrollTop);
+                        const laneX = sourceX + (targetX - sourceX) * .5;
+                        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                        const segments = sourceRects.map(item => {
+                            const y = item.rect.top + item.rect.height / 2 - containerRect.top + container.scrollTop;
+                            return `M ${item.rect.right - containerRect.left + container.scrollLeft} ${y} L ${laneX} ${y}`;
+                        });
+                        const minY = Math.min(...sourceYs);
+                        const maxY = Math.max(...sourceYs);
+                        segments.push(`M ${laneX} ${minY} L ${laneX} ${maxY} L ${laneX} ${targetY} L ${targetX} ${targetY}`);
+                        path.setAttribute('d', segments.join(' '));
+                        path.setAttribute('class', 'bracket-path-base');
+                        svg.appendChild(path);
+                    });
+                    return;
+                }
+
                 container.querySelectorAll('.bracket-match').forEach(source => {
                     [source.dataset.nextMatchId, source.dataset.loserNextMatchId]
                         .filter(targetId => targetId && targetId !== '0')
@@ -1099,7 +1231,13 @@ function roundName($roundNum, $totalRounds)
                             const y1 = sourceRect.top + sourceRect.height / 2 - containerRect.top + container.scrollTop;
                             const x2 = targetRect.left - containerRect.left + container.scrollLeft;
                             const y2 = targetRect.top + targetRect.height / 2 - containerRect.top + container.scrollTop;
-                            const midX = x1 + (x2 - x1) / 2;
+                            let midX = x1 + (x2 - x1) / 2;
+                            if (useEightRoundFix) {
+                                const targetConnections = connectionsByTarget.get(targetId) || [];
+                                const connectionIndex = targetConnections.findIndex(connection => connection.source === source);
+                                const laneOffset = (connectionIndex - (targetConnections.length - 1) / 2) * 14;
+                                midX += laneOffset;
+                            }
                             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                             path.setAttribute('d', `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`);
                             path.setAttribute('class', 'bracket-path-base' + (source.dataset.decided === '1' ? ' bracket-path-decided' : ''));
@@ -1153,5 +1291,6 @@ function roundName($roundNum, $totalRounds)
         });
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

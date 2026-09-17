@@ -140,8 +140,6 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Vanilla Tilt JS (เอฟเฟกต์การ์ดเอียง 3D ตามตำแหน่งเมาส์) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.1/vanilla-tilt.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -169,6 +167,8 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
             }
         }
     </script>
+    <!-- Vanilla Tilt JS (เอฟเฟกต์การ์ดเอียง 3D ตามตำแหน่งเมาส์) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.1/vanilla-tilt.min.js"></script>
 
     <style>
         ::-webkit-scrollbar {
@@ -403,6 +403,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
 
                                 <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
                                     <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin"
+                                        data-mobile-label="ระบบแอดมิน"
                                         class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
                                         <i class="fa-solid fa-user-shield text-sm"></i>
                                     </a>
@@ -694,6 +695,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
         });
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 
 </html>

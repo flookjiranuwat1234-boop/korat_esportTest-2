@@ -109,7 +109,7 @@ function searchTournamentPlayers(PDO $pdo, int $tournamentId, int $categoryId, s
     return $results;
 }
 
-function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId, int $categoryId, string $teamName, array $roster, string $teamTag = '', ?string $logoPath = null): int
+function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId, int $categoryId, string $teamName, array $roster, string $teamTag = '', ?string $logoPath = null, ?int $existingTeamId = null): int
 {
     $category = tournamentRegistrationCategory($pdo, $categoryId);
     if (!$category || (int) $category['tournament_id'] !== $tournamentId) {
@@ -123,10 +123,23 @@ function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId
     $captain = $playerStmt->fetch(PDO::FETCH_ASSOC);
     if (!$captain) throw new InvalidArgumentException('บัญชีนี้ยังไม่มี Player Profile');
 
+    $existingTeam = null;
+    if ($existingTeamId !== null && $existingTeamId > 0) {
+        $existingTeamStmt = $pdo->prepare('SELECT team_id, name, tag, logo_path FROM teams WHERE team_id = :team_id AND captain_player_id = :captain AND status = "active" LIMIT 1');
+        $existingTeamStmt->execute(['team_id' => $existingTeamId, 'captain' => (int) $captain['player_id']]);
+        $existingTeam = $existingTeamStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$existingTeam) {
+            throw new InvalidArgumentException('ไม่พบทีมเดิมหรือคุณไม่มีสิทธิ์สมัครแข่งขันในนามทีมนี้');
+        }
+        $teamName = (string) $existingTeam['name'];
+        $teamTag = (string) $existingTeam['tag'];
+        $logoPath = $existingTeam['logo_path'] ?: null;
+    }
+
     $teamName = trim($teamName);
-    if ($teamName === '') throw new InvalidArgumentException('กรุณากรอกชื่อทีม');
+    if ($teamName === '' && $existingTeam === null) throw new InvalidArgumentException('กรุณากรอกชื่อทีม');
     $teamTag = strtoupper(trim($teamTag));
-    if ($teamTag === '' || !preg_match('/^[A-Z0-9_-]{2,10}$/', $teamTag)) {
+    if ($existingTeam === null && ($teamTag === '' || !preg_match('/^[A-Z0-9_-]{2,10}$/', $teamTag))) {
         throw new InvalidArgumentException('กรุณากรอกตัวย่อทีม 2-10 ตัวอักษรภาษาอังกฤษหรือตัวเลข');
     }
     if (!$roster) throw new InvalidArgumentException('กรุณาเลือกนักกีฬาอย่างน้อยหนึ่งคน');
@@ -196,17 +209,21 @@ function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId
                 throw new InvalidArgumentException('ผู้เล่นคนเดียวกันลงทะเบียนซ้ำใน Tournament/Category นี้ไม่ได้');
             }
         }
-        $duplicateTeam = $pdo->prepare('SELECT team_id FROM teams
-            WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name)) OR UPPER(TRIM(tag)) = UPPER(TRIM(:tag))
-            LIMIT 1 FOR UPDATE');
-        $duplicateTeam->execute(['name' => $teamName, 'tag' => $teamTag]);
-        if ($duplicateTeam->fetchColumn()) {
-            throw new InvalidArgumentException('ชื่อทีม หรือตัวย่อทีมนี้ถูกใช้แล้ว');
+        if ($existingTeam !== null) {
+            $teamId = (int) $existingTeam['team_id'];
+        } else {
+            $duplicateTeam = $pdo->prepare('SELECT team_id FROM teams
+                WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name)) OR UPPER(TRIM(tag)) = UPPER(TRIM(:tag))
+                LIMIT 1 FOR UPDATE');
+            $duplicateTeam->execute(['name' => $teamName, 'tag' => $teamTag]);
+            if ($duplicateTeam->fetchColumn()) {
+                throw new InvalidArgumentException('ชื่อทีม หรือตัวย่อทีมนี้ถูกใช้แล้ว');
+            }
+            $insertTeam = $pdo->prepare('INSERT INTO teams (name, tag, logo_path, captain_player_id, game_id, is_solo_wrapper, status)
+                VALUES (:name, :tag, :logo, :captain, NULL, 0, "active")');
+            $insertTeam->execute(['name' => $teamName, 'tag' => $teamTag, 'logo' => $logoPath, 'captain' => $captain['player_id']]);
+            $teamId = (int) $pdo->lastInsertId();
         }
-        $insertTeam = $pdo->prepare('INSERT INTO teams (name, tag, logo_path, captain_player_id, game_id, is_solo_wrapper, status)
-            VALUES (:name, :tag, :logo, :captain, NULL, 0, "active")');
-        $insertTeam->execute(['name' => $teamName, 'tag' => $teamTag, 'logo' => $logoPath, 'captain' => $captain['player_id']]);
-        $teamId = (int) $pdo->lastInsertId();
 
         $duplicate = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations
             WHERE tournament_category_id = :category_id AND team_id = :team_id

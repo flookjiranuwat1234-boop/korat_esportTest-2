@@ -23,26 +23,30 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         .shared-mobile-header .shared-desktop-nav { display: none !important; }
         .shared-mobile-menu-toggle {
-            display: flex; position: absolute; top: .5rem; right: .75rem; z-index: 3;
-            width: 2.5rem; height: 2.5rem; align-items: center; justify-content: center;
-            border: 1px solid rgba(255,255,255,.2); border-radius: .5rem;
-            background: rgba(18,19,24,.65); color: #fff; font-size: 1rem;
+            display: flex; position: absolute; top: .75rem; right: .75rem; z-index: 6;
+            width: 3rem; height: 3rem; align-items: center; justify-content: center;
+            border: 1px solid rgba(255,255,255,.25); border-radius: .75rem;
+            background: rgba(18,19,24,.72); color: #fff; font-size: 1.15rem;
         }
         .shared-mobile-menu {
-            display: none; position: absolute; top: 3.75rem; left: .75rem; right: .75rem;
-            z-index: 4; flex-direction: column; gap: .25rem; padding: .5rem;
-            border: 1px solid rgba(255,255,255,.15); border-radius: .75rem;
-            background: rgba(18,19,24,.96); box-shadow: 0 1rem 2rem rgba(0,0,0,.35);
+            display: none; position: absolute; top: 4.5rem; left: 1rem; right: 1rem;
+            z-index: 5; flex-direction: column; gap: .35rem; padding: .85rem .75rem;
+            border: 1px solid rgba(255,255,255,.18); border-radius: 1rem;
+            background: rgba(18,19,24,.97); box-shadow: 0 1rem 2rem rgba(0,0,0,.45);
             backdrop-filter: blur(12px);
         }
         .shared-mobile-menu.is-open { display: flex; }
         .shared-mobile-menu-link {
-            display: block; padding: .75rem 1rem; border-radius: .5rem;
-            color: #e5e7eb !important; font-size: .875rem !important; font-weight: 600;
+            display: flex; align-items: center; min-height: 3.25rem;
+            padding: .75rem 1rem; border-radius: .65rem;
+            color: #e5e7eb !important; font-size: .95rem !important; font-weight: 700;
         }
         .shared-mobile-menu-link:hover, .shared-mobile-menu-link:focus-visible {
             background: rgba(255,85,0,.2); color: #ff7733 !important;
         }
+        .shared-mobile-menu-link i { width: 1.25rem; margin-right: .65rem; text-align: center; }
+        .shared-mobile-menu-link.shared-mobile-admin-link { color: #ff5500 !important; }
+        .shared-mobile-menu-link.shared-mobile-logout-link { color: #fda4af !important; }
     `;
     document.head.appendChild(styles);
 
@@ -70,12 +74,54 @@ document.addEventListener('DOMContentLoaded', function () {
             mobileMenu.appendChild(item);
         });
 
-        var userLinks = header.querySelectorAll('.max-w-7xl > div > div:last-child a');
-        Array.prototype.forEach.call(userLinks, function (link) {
+        var userLinks = Array.prototype.filter.call(header.querySelectorAll('a[href]'), function (link) {
+            var href = link.getAttribute('href') || '';
+            return href.indexOf('profile.php') !== -1
+                || href.indexOf('logout') !== -1
+                || href.indexOf('../admin/') !== -1
+                || href.indexOf('/admin/') !== -1;
+        });
+        userLinks.forEach(function (link) {
             var item = link.cloneNode(true);
             item.className = 'shared-mobile-menu-link';
+            var mobileLabel = link.getAttribute('data-mobile-label');
+            var href = link.getAttribute('href') || '';
+            if (!mobileLabel && (href.indexOf('../admin/') !== -1 || href.indexOf('/admin/') !== -1)) {
+                mobileLabel = 'ระบบแอดมิน';
+            } else if (!mobileLabel && href.indexOf('logout') !== -1) {
+                mobileLabel = 'ออกจากระบบ';
+            } else if (!mobileLabel && href.indexOf('profile.php') !== -1) {
+                mobileLabel = 'โปรไฟล์ของฉัน';
+            }
+            if (mobileLabel) {
+                if (mobileLabel === 'ระบบแอดมิน') {
+                    item.classList.add('shared-mobile-admin-link');
+                } else if (mobileLabel === 'ออกจากระบบ') {
+                    item.classList.add('shared-mobile-logout-link');
+                }
+                item.appendChild(document.createTextNode(' ' + mobileLabel));
+            }
             mobileMenu.appendChild(item);
         });
+
+        var hasProfileLink = userLinks.some(function (link) {
+            return (link.getAttribute('href') || '').indexOf('profile.php') !== -1;
+        });
+        var hasLogoutLink = userLinks.some(function (link) {
+            return (link.getAttribute('href') || '').indexOf('logout') !== -1;
+        });
+        if (!hasProfileLink && hasLogoutLink) {
+            var profileItem = document.createElement('a');
+            profileItem.href = 'profile.php';
+            profileItem.className = 'shared-mobile-menu-link';
+            profileItem.innerHTML = '<i class="fa-solid fa-user"></i> โปรไฟล์ของฉัน';
+            var logoutItem = mobileMenu.querySelector('.shared-mobile-logout-link');
+            if (logoutItem) {
+                mobileMenu.insertBefore(profileItem, logoutItem);
+            } else {
+                mobileMenu.appendChild(profileItem);
+            }
+        }
 
         desktopNav.classList.add('shared-desktop-nav');
         header.classList.add('shared-mobile-header');
@@ -89,6 +135,15 @@ document.addEventListener('DOMContentLoaded', function () {
             toggle.innerHTML = open
                 ? '<i class="fa-solid fa-xmark"></i>'
                 : '<i class="fa-solid fa-bars"></i>';
+        });
+
+        mobileMenu.querySelectorAll('a').forEach(function (link) {
+            link.addEventListener('click', function () {
+                mobileMenu.classList.remove('is-open');
+                toggle.setAttribute('aria-expanded', 'false');
+                toggle.setAttribute('aria-label', 'เปิดเมนู');
+                toggle.innerHTML = '<i class="fa-solid fa-bars"></i>';
+            });
         });
     });
 });

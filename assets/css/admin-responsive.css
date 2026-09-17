@@ -1,0 +1,325 @@
+/* Shared mobile text and layout rules for admin pages. */
+html {
+    scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.members-table {
+    table-layout: fixed;
+}
+
+.members-table td:nth-child(6) > span {
+    display: inline-flex !important;
+    min-width: max-content;
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+}
+
+.members-table th:nth-child(6),
+.members-table td:nth-child(6) {
+    min-width: 7rem;
+}
+
+@media (max-width: 639px) {
+    body {
+        overflow-x: hidden;
+    }
+
+    main,
+    main > *,
+    main section,
+    main article,
+    main form {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    main .flex > *,
+    main .grid > * {
+        min-width: 0;
+    }
+
+    header {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 0.75rem;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+
+    header > div:first-child {
+        min-width: 0;
+    }
+
+    header > a,
+    header > button {
+        align-self: flex-start;
+    }
+
+    header h1 {
+        display: block !important;
+        max-width: 100%;
+        font-size: 1.15rem !important;
+        line-height: 1.4 !important;
+        letter-spacing: 0.01em !important;
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+
+    header h1 > span:first-child {
+        display: inline-block;
+        width: 0.35rem !important;
+        height: 1.35rem !important;
+        margin-right: 0.45rem;
+        vertical-align: -0.15rem;
+    }
+
+    header h1 > span:not(:first-child) {
+        display: inline;
+        font-size: 0.95em;
+        line-height: inherit;
+        white-space: normal;
+    }
+
+    header p {
+        max-width: 100%;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+    }
+
+    header a,
+    header button {
+        max-width: 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    main h2,
+    main h3,
+    main h4,
+    main p,
+    main label,
+    main button,
+    main a {
+        overflow-wrap: anywhere;
+    }
+
+    main th,
+    main td {
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+
+    main table {
+        max-width: none;
+    }
+
+    .admin-table-scroll {
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .admin-table-scroll table {
+        min-width: 44rem;
+    }
+
+    main .overflow-x-auto:not(.dashboard-table-wrap) {
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    main .overflow-x-auto:not(.dashboard-table-wrap) > table {
+        min-width: 42rem;
+    }
+
+    .members-table-scroll {
+        max-width: 100%;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .members-table-scroll .members-table {
+        min-width: 64rem !important;
+        table-layout: auto;
+    }
+
+    .members-table-scroll .members-table th,
+    .members-table-scroll .members-table td {
+        white-space: normal;
+        word-break: normal;
+        overflow-wrap: normal;
+    }
+
+    .members-table-scroll .members-table th:first-child,
+    .members-table-scroll .members-table td:first-child {
+        min-width: 13rem;
+    }
+
+    .members-table-scroll .members-table th:nth-child(2),
+    .members-table-scroll .members-table td:nth-child(2) {
+        min-width: 13rem;
+    }
+
+    .members-table-scroll .members-table td:first-child > div,
+    .members-table-scroll .members-table td:first-child a,
+    .members-table-scroll .members-table td:nth-child(2) > div,
+    .members-table-scroll .members-table td:nth-child(4) > div,
+    .members-table-scroll .members-table td:nth-child(5) > div,
+    .members-table-scroll .members-table td:last-child > div {
+        min-width: max-content;
+    }
+
+    .members-table-scroll .members-table td:first-child span,
+    .members-table-scroll .members-table td:nth-child(2),
+    .members-table-scroll .members-table td:nth-child(4),
+    .members-table-scroll .members-table td:nth-child(5),
+    .members-table-scroll .members-table td:nth-child(6),
+    .members-table-scroll .members-table td:nth-child(7),
+    .members-table-scroll .members-table td:nth-child(8),
+    .members-table-scroll .members-table td:last-child {
+        white-space: nowrap;
+        word-break: keep-all;
+        overflow-wrap: normal;
+    }
+
+    .members-table-scroll .members-table td:last-child {
+        min-width: 14rem;
+    }
+
+    .members-table-scroll .members-table td:last-child > div {
+        display: inline-flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+    }
+
+    .news-table-scroll {
+        max-width: 100%;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .news-table-scroll .news-table {
+        min-width: 54rem !important;
+        table-layout: auto;
+    }
+
+    .news-table-scroll .news-table th,
+    .news-table-scroll .news-table td {
+        white-space: normal;
+        word-break: normal;
+        overflow-wrap: normal;
+        vertical-align: middle;
+    }
+
+    .news-table-scroll .news-table th:nth-child(2),
+    .news-table-scroll .news-table td:nth-child(2) {
+        min-width: 20rem;
+    }
+
+    .news-table-scroll .news-table td:nth-child(2) .truncate {
+        max-width: 19rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .news-table-scroll .news-table td:nth-child(3),
+    .news-table-scroll .news-table td:nth-child(4),
+    .news-table-scroll .news-table td:nth-child(5),
+    .news-table-scroll .news-table td:last-child {
+        white-space: nowrap;
+        word-break: keep-all;
+        overflow-wrap: normal;
+    }
+
+    .news-table-scroll .news-table td:last-child {
+        min-width: 14rem;
+    }
+
+    .news-table-scroll .news-table td:last-child > div {
+        display: inline-flex;
+        min-width: max-content;
+        gap: 0.5rem;
+    }
+
+    .admin-table-scroll th,
+    .admin-table-scroll td {
+        white-space: normal;
+        overflow-wrap: normal;
+        word-break: normal;
+        vertical-align: middle;
+    }
+
+    .admin-table-scroll .registration-table {
+        min-width: 58rem !important;
+        table-layout: auto;
+    }
+
+    .admin-table-scroll .registration-table th,
+    .admin-table-scroll .registration-table td {
+        white-space: normal;
+        word-break: normal;
+        overflow-wrap: normal;
+    }
+
+    .admin-table-scroll .registration-table td:nth-child(5),
+    .admin-table-scroll .registration-table td:nth-child(6),
+    .admin-table-scroll .registration-table td:nth-child(7) {
+        min-width: 8.5rem;
+    }
+
+    .registration-status-badge,
+    .registration-table td:last-child a,
+    .registration-table td:last-child button {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        overflow-wrap: normal !important;
+        flex-shrink: 0;
+    }
+
+    .registration-table td:last-child > div {
+        min-width: max-content;
+    }
+
+    main select,
+    main input,
+    main textarea {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    main .truncate {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        text-overflow: clip;
+    }
+
+    main .whitespace-nowrap {
+        white-space: normal;
+    }
+
+    main .break-words,
+    main .break-all {
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+
+    main .rounded-xl,
+    main .rounded-2xl {
+        max-width: 100%;
+    }
+
+    main .font-display {
+        letter-spacing: 0.02em;
+    }
+
+}

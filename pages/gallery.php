@@ -12,6 +12,8 @@ $currentUser = [
 
 $viewMode = trim($_GET['view'] ?? 'all'); // 'all' หรือ 'albums'
 $selectedAlbumId = (int) ($_GET['album_id'] ?? 0);
+$galleryPage = max(1, (int) ($_GET['page'] ?? 1));
+$galleryPerPage = 10;
 
 if ($selectedAlbumId > 0) {
     // โหมดดูรูปภาพเฉพาะภายในอัลบั้มที่เลือก (ดึงชื่อจากตาราง gallery_albums คอลัมน์ title)
@@ -46,6 +48,16 @@ if ($selectedAlbumId > 0) {
         ORDER BY a.created_at DESC
     ")->fetchAll();
 }
+
+$galleryTotalImages = isset($images) ? count($images) : 0;
+$galleryTotalPages = max(1, (int) ceil($galleryTotalImages / $galleryPerPage));
+$galleryPage = min($galleryPage, $galleryTotalPages);
+if (isset($images)) {
+    $images = array_slice($images, ($galleryPage - 1) * $galleryPerPage, $galleryPerPage);
+}
+$galleryPageParams = $selectedAlbumId > 0
+    ? ['album_id' => $selectedAlbumId]
+    : ['view' => 'all'];
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
@@ -137,6 +149,25 @@ if ($selectedAlbumId > 0) {
         .grid-bg {
             background-image: radial-gradient(rgba(255, 85, 0, 0.15) 1px, transparent 0);
             background-size: 24px 24px;
+        }
+        @media (max-width: 639px) {
+            .gallery-page-title {
+                max-width: 100%;
+                margin-left: auto;
+                margin-right: auto;
+                font-size: clamp(1rem, 4.8vw, 1.25rem) !important;
+                line-height: 1.3 !important;
+                letter-spacing: 0 !important;
+                overflow-wrap: anywhere;
+                filter: none !important;
+                text-shadow: 0 2px 4px rgba(0, 0, 0, .95);
+            }
+            .gallery-page-title .gallery-album-name {
+                display: inline;
+                color: #ff9a5c !important;
+                text-shadow: 0 2px 5px rgba(0, 0, 0, .95);
+                overflow-wrap: anywhere;
+            }
         }
 
         /* Keyframe Animations */
@@ -433,7 +464,7 @@ if ($selectedAlbumId > 0) {
                                 </div>
 
                                 <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin"
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" data-mobile-label="ระบบแอดมิน"
                                         class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
                                         <i class="fa-solid fa-user-shield text-sm"></i>
                                     </a>
@@ -469,9 +500,9 @@ if ($selectedAlbumId > 0) {
             </div>
 
             <h1
-                class="text-4xl sm:text-6xl font-black font-display text-white tracking-wider uppercase leading-none drop-shadow-[0_0_35px_rgba(255,85,0,0.8)] animate-fade-down">
+                class="gallery-page-title text-4xl sm:text-6xl font-black font-display text-white tracking-wider uppercase leading-none drop-shadow-[0_0_35px_rgba(255,85,0,0.8)] animate-fade-down">
                 <?php if ($selectedAlbumId > 0): ?>
-                    อัลบั้ม: <span class="text-brand-orange"><?php echo htmlspecialchars($currentAlbumName); ?></span>
+                    อัลบั้ม: <span class="gallery-album-name text-brand-orange"><?php echo htmlspecialchars($currentAlbumName); ?></span>
                 <?php else: ?>
                     แกลเลอรี่กิจกรรม
                 <?php endif; ?>
@@ -539,6 +570,23 @@ if ($selectedAlbumId > 0) {
                             </div>
                         <?php endforeach; ?>
                     </div>
+                    <?php if ($galleryTotalPages > 1): ?>
+                        <nav class="mt-8 flex items-center justify-center gap-3" aria-label="เปลี่ยนหน้ารูปภาพ">
+                            <?php if ($galleryPage > 1): ?>
+                                <a href="gallery.php?<?= http_build_query($galleryPageParams + ['page' => $galleryPage - 1]) ?>" class="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-orange">
+                                    <i class="fa-solid fa-arrow-left"></i> ก่อนหน้า
+                                </a>
+                            <?php endif; ?>
+                            <span class="rounded-xl border border-white/15 bg-black/30 px-4 py-2.5 text-xs font-bold text-gray-300">
+                                หน้า <?= $galleryPage ?> / <?= $galleryTotalPages ?>
+                            </span>
+                            <?php if ($galleryPage < $galleryTotalPages): ?>
+                                <a href="gallery.php?<?= http_build_query($galleryPageParams + ['page' => $galleryPage + 1]) ?>" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-glow">
+                                    ถัดไป <i class="fa-solid fa-arrow-right"></i>
+                                </a>
+                            <?php endif; ?>
+                        </nav>
+                    <?php endif; ?>
                 <?php endif; ?>
 
             <?php elseif ($viewMode === 'albums'): ?>
@@ -607,6 +655,23 @@ if ($selectedAlbumId > 0) {
                             </div>
                         <?php endforeach; ?>
                     </div>
+                    <?php if ($galleryTotalPages > 1): ?>
+                        <nav class="mt-8 flex items-center justify-center gap-3" aria-label="เปลี่ยนหน้ารูปภาพ">
+                            <?php if ($galleryPage > 1): ?>
+                                <a href="gallery.php?<?= http_build_query($galleryPageParams + ['page' => $galleryPage - 1]) ?>" class="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-orange">
+                                    <i class="fa-solid fa-arrow-left"></i> ก่อนหน้า
+                                </a>
+                            <?php endif; ?>
+                            <span class="rounded-xl border border-white/15 bg-black/30 px-4 py-2.5 text-xs font-bold text-gray-300">
+                                หน้า <?= $galleryPage ?> / <?= $galleryTotalPages ?>
+                            </span>
+                            <?php if ($galleryPage < $galleryTotalPages): ?>
+                                <a href="gallery.php?<?= http_build_query($galleryPageParams + ['page' => $galleryPage + 1]) ?>" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-glow">
+                                    ถัดไป <i class="fa-solid fa-arrow-right"></i>
+                                </a>
+                            <?php endif; ?>
+                        </nav>
+                    <?php endif; ?>
                 <?php endif; ?>
             <?php endif; ?>
         </section>
@@ -738,6 +803,7 @@ if ($selectedAlbumId > 0) {
         document.getElementById('imageModal').addEventListener('click', closeModal);
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 
 </html>

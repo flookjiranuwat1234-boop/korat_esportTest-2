@@ -535,14 +535,6 @@ if ($flash) {
 <!DOCTYPE html>
 <html lang="th" class="h-full">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>จัดการข้อมูลสมาชิก - Korat Esport</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -563,7 +555,14 @@ if ($flash) {
                 }
             }
         }
-    </script>
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>จัดการข้อมูลสมาชิก - Korat Esport</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/admin-responsive.css">
     <style>
         html, body, * {
             scrollbar-width: none;
@@ -799,8 +798,8 @@ if ($flash) {
                     </h2>
                 </div>
 
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left text-sm text-slate-600">
+                <div class="members-table-scroll overflow-x-auto">
+                    <table class="members-table w-full text-left text-sm text-slate-600">
                         <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                             <tr>
                                 <th class="p-4">สมาชิก</th>
@@ -1395,5 +1394,6 @@ if ($flash) {
     </script>
 
 <script src="../assets/js/admin-mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

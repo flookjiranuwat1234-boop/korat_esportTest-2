@@ -27,7 +27,6 @@
     <a href="/korat_esportTest-2/pages/ranking.php">อันดับ</a>
 
     <?php if (isLoggedIn()): ?>
-        <a href="/korat_esportTest-2/pages/my-team.php">ทีมของฉัน</a>
         <a href="/korat_esportTest-2/pages/my-checkin.php">เช็กอินด้วย QR</a>
         <a href="/korat_esportTest-2/pages/profile.php">โปรไฟล์ของฉัน</a>
         <a href="/korat_esportTest-2/auth/logout.php">ออกจากระบบ</a>

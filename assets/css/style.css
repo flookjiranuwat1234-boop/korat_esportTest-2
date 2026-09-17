@@ -30,7 +30,17 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    html { scroll-behavior: smooth; }
+    html {
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+    }
+
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
+    }
 
     body {
         background: var(--bg);

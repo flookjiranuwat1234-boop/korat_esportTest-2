@@ -62,17 +62,16 @@ $teams = $teamStmt->fetchAll(PDO::FETCH_ASSOC);
 <!DOCTYPE html>
 <html lang="th" class="h-full">
 <head>
-    <meta charset="UTF-8">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { theme: { extend: { colors: { brand: { orange: '#FF5500', glow: '#FF7700', cyber: '#00F0FF', dark: '#0A0A0C', panel: '#121318' } }, fontFamily: { sans: ['Kanit', 'sans-serif'], display: ['Orbitron', 'sans-serif'], mono: ['Share Tech Mono', 'monospace'] } } } };
+    </script>    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ทีมและนักกีฬา - Korat Esport</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = { theme: { extend: { colors: { brand: { orange: '#FF5500', glow: '#FF7700', dark: '#08090C', panel: '#121318' } }, fontFamily: { sans: ['Kanit', 'sans-serif'], display: ['Orbitron', 'sans-serif'] }, boxShadow: { orange: '0 0 30px rgba(255,85,0,.35)' } } } };
-    </script>
     <style>
         body { background: #08090C; color: #f3f4f6; }
         .arena-bg { background: linear-gradient(180deg, rgba(8,9,12,.72), #08090C 75%), url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop') center/cover fixed; }
@@ -158,5 +157,6 @@ $teams = $teamStmt->fetchAll(PDO::FETCH_ASSOC);
         </main>
     </div>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

@@ -1411,22 +1411,7 @@ $csrfToken = generateCsrfToken();
 <!DOCTYPE html>
 <html lang="th" class="h-full">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>จัดการทัวร์นาเมนต์ - Korat Esport</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- ...existing code... -->
-    <script src="https://cdn.tailwindcss.com"></script>
-
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js"></script>
-<!-- ...existing code... -->
     <script>
         tailwind.config = {
             theme: {
@@ -1446,7 +1431,18 @@ $csrfToken = generateCsrfToken();
                 }
             }
         }
-    </script>
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>จัดการทัวร์นาเมนต์ - Korat Esport</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/admin-responsive.css">
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js"></script>
     <style>
         ::-webkit-scrollbar { display: none; }
         html, body {
@@ -1493,7 +1489,20 @@ $csrfToken = generateCsrfToken();
         @media (prefers-reduced-motion: reduce) { .tournament-workflow-card { transition: none; } .tournament-workflow-card:hover { transform: none; } }
         @media (max-width: 1023px) { .tournament-workflow-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
         @media (max-width: 639px) { .tournament-workflow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-        @media (max-width: 420px) { .tournament-workflow-grid { grid-template-columns: minmax(0, 1fr); } }
+        @media (max-width: 639px) {
+            .tournament-workflow-grid { gap: 0.75rem; }
+            .tournament-workflow-card { padding: 0.875rem; border-radius: 1rem; }
+            .tournament-workflow-card > span:first-child {
+                min-height: 2.25rem;
+                align-items: flex-start;
+                line-height: 1.35;
+            }
+            .tournament-workflow-card strong {
+                margin-top: 0.35rem;
+                font-size: 1.75rem;
+                line-height: 1.1;
+            }
+        }
     </style>
     <script>
         const tournamentsList = <?php echo json_encode($tournaments, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE); ?>;
@@ -2432,15 +2441,15 @@ $csrfToken = generateCsrfToken();
     </aside>
 
     <div class="flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col min-w-0">
-        <header class="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
-            <div>
-                <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
+        <header class="dashboard-header bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sticky top-0 z-40 shadow-sm">
+            <div class="min-w-0">
+                <h1 class="dashboard-title text-lg sm:text-xl font-extrabold text-slate-900 tracking-wide uppercase flex items-start gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
-                    จัดการทัวร์นาเมนต์ <span class="text-brand-orange">(TOURNAMENT MANAGEMENT)</span>
+                    <span class="min-w-0">จัดการทัวร์นาเมนต์ <span class="font-display text-brand-orange">(<span class="sm:hidden">ADMIN</span><span class="hidden sm:inline">TOURNAMENT MANAGEMENT</span>)</span></span>
                 </h1>
                 <p class="text-xs text-slate-500 mt-0.5">สร้าง ปิดรับสมัคร แก้ไข และจัดตารางการแข่งขัน</p>
             </div>
-            <a href="../pages/index.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">
+            <a href="../pages/index.php" target="_blank" class="self-start sm:self-auto text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg whitespace-nowrap">
                 <i class="fa-solid fa-globe"></i> หน้าหลักเว็บไซต์
             </a>
         </header>
@@ -3246,5 +3255,6 @@ $csrfToken = generateCsrfToken();
     });
 </script>
 <script src="../assets/js/admin-mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

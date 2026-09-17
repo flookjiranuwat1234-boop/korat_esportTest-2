@@ -86,7 +86,7 @@ function statusBadge(string $status, string $type = 'approval'): string
 
     $map = $type === 'checkin' ? $checkinMap : ($type === 'participation' ? $participationMap : $approvedMap);
     $info = $map[$status] ?? ['label' => ucfirst($status), 'class' => 'bg-slate-100 text-slate-700'];
-    return '<span class="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ' . $info['class'] . '">' . $info['label'] . '</span>';
+    return '<span class="registration-status-badge inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ' . $info['class'] . '">' . $info['label'] . '</span>';
 }
 
 function getCheckinCompletion(PDO $pdo, int $registrationId): array
@@ -895,13 +895,6 @@ if ($flash) {
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>จัดการผู้สมัคร/ทีมแข่งขัน</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -922,7 +915,14 @@ if ($flash) {
                 }
             }
         };
-    </script>
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>จัดการผู้สมัคร/ทีมแข่งขัน</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/admin-responsive.css">
     <style>
         body {
             background: #F4F6F9;
@@ -952,6 +952,32 @@ if ($flash) {
             min-width: 0;
             width: 100%;
             max-width: 100%;
+        }
+        @media (max-width: 639px) {
+            .main-content {
+                padding: 1rem;
+            }
+            .registration-summary-grid {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 0.75rem;
+            }
+            .registration-summary-card {
+                min-width: 0;
+                padding: 0.875rem;
+                border-radius: 1rem;
+            }
+            .registration-summary-card-label {
+                min-height: 2.25rem;
+                font-size: 0.625rem;
+                line-height: 1.35;
+                letter-spacing: 0.08em;
+            }
+            .registration-summary-card-value {
+                margin-top: 0.35rem;
+                font-size: 1.75rem;
+                line-height: 1.1;
+            }
         }
     </style>
 </head>
@@ -1070,7 +1096,7 @@ if ($flash) {
                     </div>
                 </section>
 
-                <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
+                <section class="registration-summary-grid grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-6 gap-4">
                     <?php
                     $summaryCards = [
                         ['label' => 'สมัครทั้งหมด', 'value' => $summary['total'], 'style' => 'bg-slate-100 text-slate-700 border-slate-200'],
@@ -1082,9 +1108,9 @@ if ($flash) {
                     ];
                     ?>
                     <?php foreach ($summaryCards as $card): ?>
-                        <div class="rounded-2xl border p-4 <?= $card['style'] ?> shadow-sm">
-                            <div class="text-[10px] uppercase tracking-[0.2em] font-bold"><?= $card['label'] ?></div>
-                            <div class="mt-2 text-2xl font-black"><?= (int) $card['value'] ?></div>
+                        <div class="registration-summary-card rounded-2xl border p-4 <?= $card['style'] ?> shadow-sm">
+                            <div class="registration-summary-card-label text-[10px] uppercase tracking-[0.2em] font-bold"><?= $card['label'] ?></div>
+                            <div class="registration-summary-card-value mt-2 text-2xl font-black"><?= (int) $card['value'] ?></div>
                         </div>
                     <?php endforeach; ?>
                 </section>
@@ -1149,8 +1175,8 @@ if ($flash) {
                             <p class="text-sm mt-1">เพิ่มทีม/ผู้แข่งขันเพื่อเริ่มจัดการ Tournament</p>
                         </div>
                     <?php else: ?>
-                        <div class="overflow-x-auto overflow-y-visible">
-                            <table class="min-w-full text-left text-sm">
+                        <div class="admin-table-scroll overflow-x-auto overflow-y-visible">
+                            <table class="registration-table min-w-full text-left text-sm">
                                 <thead class="bg-slate-100 text-slate-600 text-[10px] uppercase tracking-[0.2em]">
                                     <tr>
                                         <th class="px-4 py-3">ทีม/ผู้แข่งขัน</th>
@@ -1784,5 +1810,6 @@ if ($flash) {
         });
     </script>
 <script src="../assets/js/admin-mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

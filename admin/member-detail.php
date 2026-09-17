@@ -132,13 +132,90 @@ if ($flash) {
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>รายละเอียดสมาชิก - Korat Esport</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { theme: { extend: { colors: { brand: { orange: '#FF5500', glow: '#FF7700', cyber: '#00F0FF', dark: '#0A0A0C', panel: '#121318' } }, fontFamily: { sans: ['Kanit', 'sans-serif'], display: ['Orbitron', 'sans-serif'], mono: ['Share Tech Mono', 'monospace'] } } } };
+    </script>    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>รายละเอียดสมาชิก - Korat Esport</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/admin-responsive.css">
+    <style>
+        @media (max-width: 639px) {
+            .member-detail-page {
+                padding: 1rem;
+            }
+
+            .member-detail-page > div:first-child {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .member-detail-page > div:first-child > div {
+                width: 100%;
+            }
+
+            .member-detail-page > div:first-child > a:last-child {
+                width: 100%;
+                text-align: center;
+            }
+
+            .member-detail-page section {
+                padding: 1rem;
+            }
+
+            .member-detail-table-wrap {
+                margin: 0 -1rem;
+                padding: 0 1rem .35rem;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .member-detail-table {
+                min-width: 700px;
+                table-layout: fixed;
+            }
+
+            .member-detail-table th,
+            .member-detail-table td {
+                padding: .7rem .65rem;
+                vertical-align: middle;
+                line-height: 1.45;
+                overflow-wrap: normal;
+                word-break: normal;
+            }
+
+            .member-detail-table--teams th:nth-child(1),
+            .member-detail-table--teams td:nth-child(1) { width: 28%; }
+            .member-detail-table--teams th:nth-child(2),
+            .member-detail-table--teams td:nth-child(2) { width: 20%; }
+            .member-detail-table--teams th:nth-child(3),
+            .member-detail-table--teams td:nth-child(3) { width: 16%; }
+            .member-detail-table--teams th:nth-child(4),
+            .member-detail-table--teams td:nth-child(4) { width: 18%; }
+            .member-detail-table--teams th:nth-child(5),
+            .member-detail-table--teams td:nth-child(5) { width: 18%; }
+
+            .member-detail-table--roster {
+                min-width: 820px;
+            }
+
+            .member-detail-table--roster th:nth-child(1),
+            .member-detail-table--roster td:nth-child(1) { width: 28%; }
+            .member-detail-table--roster th:nth-child(2),
+            .member-detail-table--roster td:nth-child(2) { width: 22%; }
+            .member-detail-table--roster th:nth-child(3),
+            .member-detail-table--roster td:nth-child(3) { width: 16%; }
+            .member-detail-table--roster th:nth-child(4),
+            .member-detail-table--roster td:nth-child(4) { width: 14%; }
+            .member-detail-table--roster th:nth-child(5),
+            .member-detail-table--roster td:nth-child(5),
+            .member-detail-table--roster th:nth-child(6),
+            .member-detail-table--roster td:nth-child(6) { width: 10%; }
+        }
+    </style>
 </head>
 <body class="bg-slate-100 text-slate-800">
-<main class="max-w-7xl mx-auto p-6 space-y-6">
+<main class="member-detail-page max-w-7xl mx-auto p-6 space-y-6">
     <div class="flex items-center justify-between gap-4">
         <div><a href="manage-members.php" class="text-sm text-orange-600 hover:underline"><i class="fa-solid fa-arrow-left"></i> กลับหน้าสมาชิก</a>
             <h1 class="text-2xl font-bold mt-2">รายละเอียดสมาชิก: <?= h($member['username']); ?></h1>
@@ -170,13 +247,13 @@ if ($flash) {
     </section>
 
     <section class="bg-white rounded-2xl shadow-sm border overflow-hidden"><div class="p-5 border-b"><h2 class="font-bold text-lg">ทีมและบทบาท</h2></div>
-        <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-slate-50"><tr><th class="p-3 text-left">ทีม</th><th class="p-3 text-left">เกม</th><th class="p-3 text-left">บทบาท</th><th class="p-3">ช่วงเวลา</th><th class="p-3">สถานะ</th></tr></thead><tbody>
+        <div class="member-detail-table-wrap"><table class="member-detail-table member-detail-table--teams w-full text-sm"><thead class="bg-slate-50"><tr><th class="p-3 text-left">ทีม</th><th class="p-3 text-left">เกม</th><th class="p-3 text-left">บทบาท</th><th class="p-3">ช่วงเวลา</th><th class="p-3">สถานะ</th></tr></thead><tbody>
         <?php foreach ($teams as $team): ?><tr class="border-t"><td class="p-3 font-semibold text-orange-600"><?= h($team['team_name']); ?></td><td class="p-3"><?= h($team['game_name'] ?: '-'); ?></td><td class="p-3"><?= h($team['member_roles']); ?><?= (int)$team['captain_player_id'] === (int)$member['player_id'] ? ', captain' : ''; ?></td><td class="p-3 text-center"><?= h($team['joined_at']); ?> – <?= h($team['left_at'] ?: 'ปัจจุบัน'); ?></td><td class="p-3 text-center"><?= $team['is_active'] ? 'สมาชิกปัจจุบัน' : 'อดีตสมาชิก'; ?></td></tr><?php endforeach; ?>
         <?php if (!$teams): ?><tr><td colspan="5" class="p-6 text-center text-slate-400">ยังไม่มีข้อมูลทีม</td></tr><?php endif; ?>
         </tbody></table></div></section>
 
     <section class="bg-white rounded-2xl shadow-sm border overflow-hidden"><div class="p-5 border-b"><h2 class="font-bold text-lg">Tournament Roster และประวัติการแข่งขัน</h2>    <p class="text-xs text-slate-500">อ้างอิงไลน์อัปของรายการ ไม่เปลี่ยนตามทีมปัจจุบัน</p></div>
-        <div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-slate-50"><tr><th class="p-3 text-left">Tournament</th><th class="p-3 text-left">ทีมตอนสมัคร</th><th class="p-3">ประเภท</th><th class="p-3">บทบาท</th><th class="p-3">อนุมัติ</th>        <th class="p-3">เช็กอิน</th></tr></thead><tbody>
+        <div class="member-detail-table-wrap"><table class="member-detail-table member-detail-table--roster w-full text-sm"><thead class="bg-slate-50"><tr><th class="p-3 text-left">Tournament</th><th class="p-3 text-left">ทีมตอนสมัคร</th><th class="p-3">ประเภท</th><th class="p-3">บทบาท</th><th class="p-3">อนุมัติ</th>        <th class="p-3">เช็กอิน</th></tr></thead><tbody>
         <?php foreach ($registrations as $reg): ?><tr class="border-t"><td class="p-3 font-semibold"><?= h($reg['tournament_name']); ?></td><td class="p-3"><?= h($reg['team_name'] ?: 'ผู้เล่นเดี่ยว'); ?></td><td class="p-3 text-center"><?= h($reg['category_name'] ?: 'Open'); ?></td><td class="p-3 text-center"><?= h($reg['member_roles']); ?></td><td class="p-3 text-center"><?= h($reg['status']); ?></td><td class="p-3 text-center"><?= h($reg['checkin_status']); ?></td></tr><?php endforeach; ?>
         <?php if (!$registrations): ?><tr><td colspan="6" class="p-6 text-center text-slate-400">ยังไม่มีไลน์อัปการแข่งขัน</td></tr><?php endif; ?>
         </tbody></table></div></section>
@@ -185,4 +262,7 @@ if ($flash) {
         <?php foreach ($rankings as $rank): ?><div class="border rounded-xl p-4"><div class="font-semibold"><?= h($rank['game_name']); ?></div><div class="text-2xl font-bold text-orange-600 mt-2"><?= number_format((float)$rank['points']); ?> คะแนน</div><div class="text-xs text-slate-500 mt-1">ชนะ <?= (int)$rank['wins']; ?> / แพ้ <?= (int)$rank['losses']; ?> · <?= h($rank['category']); ?></div></div><?php endforeach; ?>
         <?php if (!$rankings): ?><p class="text-slate-400">ยังไม่มีข้อมูล Ranking</p><?php endif; ?>
     </div></section>
-</main></body></html>
+</main>
+<script src="../assets/js/admin-mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
+</body></html>

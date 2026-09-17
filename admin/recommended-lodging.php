@@ -156,6 +156,7 @@ if ($flash) {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/admin-responsive.css">
     
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -180,7 +181,36 @@ if ($flash) {
         }
     </script>
     <style>
-        body { background-color: #F4F6F9; }
+        body { background-color: #F4F6F9; overflow-x: hidden; }
+        .lodging-page-content { min-width: 0; }
+        .lodging-stat-card { min-width: 0; }
+        .lodging-stat-label { min-height: 2.25rem; line-height: 1.35; }
+        @media (max-width: 639px) {
+            .lodging-page-content > main { padding: 1rem; }
+            .lodging-stats-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 0.75rem;
+            }
+            .lodging-stat-card {
+                padding: 0.875rem;
+                border-radius: 1rem;
+            }
+            .lodging-stat-label {
+                font-size: 0.625rem;
+                letter-spacing: 0.08em;
+            }
+            .lodging-stat-value {
+                margin-top: 0.35rem;
+                font-size: 1.75rem;
+                line-height: 1.1;
+            }
+            .lodging-list-heading { align-items: flex-start; }
+            .lodging-list-heading button {
+                flex-shrink: 0;
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+            }
+        }
         .nav-item { transition: all 0.2s ease; }
         .nav-item:hover, .nav-item.active {
             background: rgba(255, 85, 0, 0.12);
@@ -202,7 +232,7 @@ if ($flash) {
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
 
     <!-- ================= 1. SIDEBAR ด้านข้าง ================= -->
-    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
+    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl -translate-x-full transition-transform duration-200 lg:translate-x-0">
         <div class="p-6 border-b border-slate-800 flex items-center gap-3">
             <img src="../assets/img/logo.png" alt="Korat Esport" class="h-10 w-auto filter drop-shadow" onError="this.src='https://placehold.co/80x80/0F172A/FF5500?text=KE';">
             <div>
@@ -273,24 +303,24 @@ if ($flash) {
     </aside>
 
     <!-- ================= 2. MAIN CONTENT AREA ================= -->
-    <div class="flex-1 ml-64 min-h-screen flex flex-col">
+    <div class="lodging-page-content flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col min-w-0">
 
         <!-- Header Panel -->
-        <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
-            <div>
-                <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
+        <header class="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sticky top-0 z-40 shadow-sm">
+            <div class="min-w-0">
+                <h1 class="text-lg sm:text-xl font-extrabold text-slate-900 tracking-wide uppercase flex items-start gap-2 leading-tight">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
-                    จัดการที่พักแนะนำ <span class="text-brand-orange">(RECOMMENDED LODGING)</span>
+                    <span class="min-w-0">จัดการที่พักแนะนำ <span class="font-display text-brand-orange">(<span class="sm:hidden">ADMIN</span><span class="hidden sm:inline">RECOMMENDED LODGING</span>)</span></span>
                 </h1>
                 <p class="text-xs text-slate-500 mt-0.5">เพิ่มและจัดการที่พักใกล้สถานที่แข่งขัน</p>
             </div>
             
-            <a href="../pages/lodging.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">
+            <a href="../pages/lodging.php" target="_blank" class="self-start sm:self-auto text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg whitespace-nowrap">
                 <i class="fa-solid fa-globe"></i> ดูหน้าเว็บที่พัก
             </a>
         </header>
 
-        <main class="p-8 space-y-8 flex-1">
+        <main class="p-4 sm:p-8 space-y-8 flex-1 min-w-0">
 
             <!-- Alert Messages -->
             <?php if ($error): ?>
@@ -309,17 +339,17 @@ if ($flash) {
                 </div>
             <?php endif; ?>
 
-            <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">ที่พักทั้งหมด</div><div class="mt-2 text-2xl font-black text-slate-900"><?= $allAccommodationCount ?></div></div>
-                <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">กำลังแสดงบนเว็บไซต์</div><div class="mt-2 text-2xl font-black text-emerald-700"><?= $activeAccommodationCount ?></div><div class="mt-1 text-[10px] text-emerald-700">ระบบยังไม่มี Field status</div></div>
-                <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Tournament ที่มีที่พัก</div><div class="mt-2 text-2xl font-black text-slate-900"><?= $tournamentAccommodationCount ?></div></div>
+            <section class="lodging-stats-grid grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <div class="lodging-stat-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="lodging-stat-label text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">ที่พักทั้งหมด</div><div class="lodging-stat-value mt-2 text-2xl font-black text-slate-900"><?= $allAccommodationCount ?></div></div>
+                <div class="lodging-stat-card rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm"><div class="lodging-stat-label text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">กำลังแสดงบนเว็บไซต์</div><div class="lodging-stat-value mt-2 text-2xl font-black text-emerald-700"><?= $activeAccommodationCount ?></div><div class="mt-1 text-[10px] text-emerald-700">ระบบยังไม่มี Field status</div></div>
+                <div class="lodging-stat-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div class="lodging-stat-label text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Tournament ที่มีที่พัก</div><div class="lodging-stat-value mt-2 text-2xl font-black text-slate-900"><?= $tournamentAccommodationCount ?></div></div>
             </section>
 
             <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <form method="GET" class="flex flex-col gap-3 xl:flex-row"><input type="text" name="q" value="<?= htmlspecialchars($search) ?>" placeholder="ค้นหาชื่อที่พักหรือที่อยู่" class="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-brand-orange focus:bg-white focus:outline-none"><select name="tournament_id" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="">ทุก Tournament</option><?php foreach ($tournaments as $tournament): ?><option value="<?= (int) $tournament['tournament_id'] ?>" <?= $tournamentFilter === (int) $tournament['tournament_id'] ? 'selected' : '' ?>><?= htmlspecialchars($tournament['name']) ?></option><?php endforeach; ?></select><select name="sort" class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"><option value="latest" <?= $sort === 'latest' ? 'selected' : '' ?>>ล่าสุด</option><option value="distance_asc" <?= $sort === 'distance_asc' ? 'selected' : '' ?>>ใกล้ที่สุด</option><option value="distance_desc" <?= $sort === 'distance_desc' ? 'selected' : '' ?>>ไกลที่สุด</option></select><button type="submit" class="rounded-xl bg-brand-orange px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-glow">ค้นหา</button><a href="recommended-lodging.php" class="rounded-xl bg-slate-100 px-5 py-2.5 text-center text-sm font-bold text-slate-600 hover:bg-slate-200">ล้างตัวกรอง</a></form>
             </section>
 
-            <div class="flex items-center justify-between gap-3"><div><h2 class="text-base font-bold font-display text-slate-900"><i class="fa-solid fa-hotel mr-2 text-brand-orange"></i>รายการที่พักแนะนำ</h2><p class="mt-1 text-xs text-slate-500">ระยะทางอ้างอิงจากสถานที่แข่งขันของ Tournament ที่เลือก</p></div><button type="button" onclick="openLodgingForm()" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-plus"></i>เพิ่มที่พักแนะนำ</button></div>
+            <div class="lodging-list-heading flex items-center justify-between gap-3"><div><h2 class="text-base font-bold font-display text-slate-900"><i class="fa-solid fa-hotel mr-2 text-brand-orange"></i>รายการที่พักแนะนำ</h2><p class="mt-1 text-xs text-slate-500">ระยะทางอ้างอิงจากสถานที่แข่งขันของ Tournament ที่เลือก</p></div><button type="button" onclick="openLodgingForm()" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-plus"></i>เพิ่มที่พักแนะนำ</button></div>
 
             <?php if (!$accommodations): ?><div class="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500"><?= ($search !== '' || $tournamentFilter > 0) ? 'ไม่พบที่พักตามเงื่อนไขที่ค้นหา' : 'ยังไม่มีข้อมูลที่พักแนะนำ' ?><div class="mt-4"><button type="button" onclick="openLodgingForm()" class="rounded-xl bg-brand-orange px-4 py-2.5 text-xs font-bold text-white">+ เพิ่มที่พักแนะนำ</button></div></div><?php else: ?>
                 <div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -681,5 +711,6 @@ if ($flash) {
         });
     </script>
 <script src="../assets/js/admin-mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

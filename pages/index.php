@@ -110,9 +110,6 @@ try {
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Vanilla Tilt JS (เอฟเฟกต์การ์ด 3D ตามเมาส์) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.1/vanilla-tilt.min.js"></script>
-
     <script>
         tailwind.config = {
             theme: {
@@ -139,6 +136,8 @@ try {
             }
         }
     </script>
+    <!-- Vanilla Tilt JS (เอฟเฟกต์การ์ด 3D ตามเมาส์) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.1/vanilla-tilt.min.js"></script>
 
     <style>
         ::-webkit-scrollbar {
@@ -445,7 +444,7 @@ try {
                 <div class="absolute inset-12 rounded-full border border-brand-orange/80 animate-ping-slow"></div>
                 
                 <img src="../assets/img/logo.png" alt="Korat Esport"
-                    class="relative z-10 h-56 sm:h-72 mx-auto drop-shadow-[0_0_65px_rgba(255,85,0,1)] animate-logo-float"
+                    class="relative z-10 h-56 sm:h-72 w-auto mx-auto drop-shadow-[0_0_65px_rgba(255,85,0,1)] animate-logo-float"
                     onError="this.src='https://placehold.co/150x150/121318/FF5500?text=KE';">
             </div>
 
@@ -552,6 +551,11 @@ try {
                             <a href="lodging.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
                                 <i class="fa-solid fa-hotel mr-2 text-xs"></i> ที่พักแนะนำ
                             </a>
+                            <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
+                                <a href="../admin/dashboard.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-brand-orange">
+                                    <i class="fa-solid fa-user-shield mr-2 text-xs"></i> ระบบแอดมิน
+                                </a>
+                            <?php endif; ?>
                             <a href="profile.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
                                 <i class="fa-solid fa-user mr-2 text-xs"></i> โปรไฟล์ของฉัน
                             </a>
@@ -1154,6 +1158,7 @@ try {
             }
         }
     </script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 
 </html>

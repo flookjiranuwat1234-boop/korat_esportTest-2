@@ -238,14 +238,6 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
 <html lang="th" class="h-full scroll-smooth">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ตารางคะแนนและอันดับสะสม - Korat Esport</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -272,7 +264,13 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                 }
             }
         }
-    </script>
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ตารางคะแนนและอันดับสะสม - Korat Esport</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
     <style>
         ::-webkit-scrollbar { display: none; }
@@ -341,6 +339,61 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
             border: 1px solid rgba(255, 255, 255, 0.15);
             transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
             position: relative; overflow: hidden; text-decoration: none; display: block;
+        }
+        .ranking-stats,
+        .ranking-score {
+            white-space: nowrap;
+        }
+        .ranking-stats-values {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 4.25rem;
+            white-space: nowrap;
+        }
+        @media (max-width: 639px) {
+            #rankingTable {
+                table-layout: fixed;
+                min-width: 0;
+            }
+            #rankingTable th,
+            #rankingTable td {
+                padding: 0.9rem 0.45rem;
+                vertical-align: middle;
+            }
+            #rankingTable th:nth-child(1),
+            #rankingTable td:nth-child(1) {
+                width: 14%;
+            }
+            #rankingTable th:nth-child(2),
+            #rankingTable td:nth-child(2) {
+                width: 36%;
+            }
+            #rankingTable th:nth-last-child(3),
+            #rankingTable td:nth-last-child(3) {
+                width: 19%;
+            }
+            #rankingTable th:nth-last-child(2),
+            #rankingTable td:nth-last-child(2) {
+                width: 14%;
+            }
+            #rankingTable th:last-child,
+            #rankingTable td:last-child {
+                width: 17%;
+            }
+            .ranking-name {
+                min-width: 0;
+                overflow-wrap: anywhere;
+                line-height: 1.25;
+            }
+            .ranking-stats-values {
+                min-width: 0;
+                gap: 0.1rem;
+            }
+            .ranking-score {
+                text-align: center !important;
+                font-size: 1.05rem !important;
+            }
         }
         .podium-card:hover {
             transform: translateY(-8px) scale(1.02);
@@ -498,7 +551,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                     <span class="text-[10px] font-semibold text-brand-orange uppercase tracking-wider"><?= htmlspecialchars($currentUser['role'] ?? 'Player') ?></span>
                                 </div>
                                 <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" data-mobile-label="ระบบแอดมิน" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
                                         <i class="fa-solid fa-user-shield text-sm"></i>
                                     </a>
                                 <?php else: ?>
@@ -779,7 +832,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                                         <i class="fa-solid fa-user text-xs"></i>
                                                     </div>
                                                 <?php endif; ?>
-                                                <span class="hover:text-brand-orange transition-colors"><?php echo htmlspecialchars($name); ?></span>
+                                                <span class="ranking-name hover:text-brand-orange transition-colors"><?php echo htmlspecialchars($name); ?></span>
                                             </div>
                                         </td>
                                         <?php if ($type === 'team'): ?>
@@ -793,10 +846,12 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                             </td>
                                         <?php endif; ?>
                                         <td class="p-5 text-center font-mono font-bold text-gray-300"><?php echo $r['matches_played']; ?></td>
-                                        <td class="p-5 text-center font-mono text-sm">
-                                            <span class="text-emerald-400 font-bold"><?php echo $r['wins']; ?>W</span>
+                                        <td class="ranking-stats p-5 text-center font-mono text-sm">
+                                            <span class="ranking-stats-values">
+                                                <span class="text-emerald-400 font-bold"><?php echo $r['wins']; ?>W</span>
                                             <span class="text-gray-500 mx-1">-</span>
-                                            <span class="text-rose-400 font-bold"><?php echo $r['losses']; ?>L</span>
+                                                <span class="text-rose-400 font-bold"><?php echo $r['losses']; ?>L</span>
+                                            </span>
                                         </td>
                                         <td class="p-5 text-center">
                                             <div class="flex items-center justify-center gap-2">
@@ -806,7 +861,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                                 <span class="font-mono text-xs font-bold text-gray-300"><?php echo $winRate; ?>%</span>
                                             </div>
                                         </td>
-                                        <td class="p-5 text-right font-display font-black text-brand-orange text-xl">
+                                        <td class="ranking-score p-5 text-right font-display font-black text-brand-orange text-xl">
                                             <?php echo number_format($r['total_points']); ?> <span class="text-xs text-gray-400 font-normal font-sans">คะแนน</span>
                                         </td>
                                     </tr>
@@ -923,5 +978,6 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
         }
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

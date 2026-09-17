@@ -26,7 +26,11 @@ $teams = $stmt->fetchAll();
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { theme: { extend: { colors: { brand: { orange: '#FF5500', glow: '#FF7700', cyber: '#00F0FF', dark: '#0A0A0C', panel: '#121318' } }, fontFamily: { sans: ['Kanit', 'sans-serif'], display: ['Orbitron', 'sans-serif'], mono: ['Share Tech Mono', 'monospace'] } } } };
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ทีมทั้งหมด - Korat Esport</title>
     <link rel="stylesheet" href="../assets/css/style.css">
 </head>
@@ -64,5 +68,6 @@ $teams = $stmt->fetchAll();
             <?php endforeach; ?>
         </div>
     </section>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

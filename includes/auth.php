@@ -21,6 +21,57 @@ function consumeFlashMessage(): ?array
     return is_array($flash) && isset($flash['type'], $flash['message']) ? $flash : null;
 }
 
+function flashAlertClass(string $type): array
+{
+    return match ($type) {
+        'success' => [
+            'container' => 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100',
+            'icon' => 'fa-circle-check text-emerald-300',
+            'role' => 'status',
+            'autoHide' => '4500',
+        ],
+        'warning' => [
+            'container' => 'border-amber-400/40 bg-amber-500/15 text-amber-100',
+            'icon' => 'fa-triangle-exclamation text-amber-300',
+            'role' => 'alert',
+            'autoHide' => '',
+        ],
+        'info' => [
+            'container' => 'border-cyan-400/40 bg-cyan-500/15 text-cyan-100',
+            'icon' => 'fa-circle-info text-cyan-300',
+            'role' => 'status',
+            'autoHide' => '4500',
+        ],
+        default => [
+            'container' => 'border-rose-400/40 bg-rose-500/15 text-rose-100',
+            'icon' => 'fa-circle-xmark text-rose-300',
+            'role' => 'alert',
+            'autoHide' => '',
+        ],
+    };
+}
+
+function renderFlashAlert(?array $flash): string
+{
+    if (!$flash || empty($flash['message'])) {
+        return '';
+    }
+
+    $type = in_array($flash['type'] ?? '', ['success', 'error', 'warning', 'info'], true)
+        ? $flash['type']
+        : 'info';
+    $style = flashAlertClass($type);
+    $message = htmlspecialchars((string) $flash['message'], ENT_QUOTES, 'UTF-8');
+    $autoHide = $style['autoHide'] !== '' ? ' data-auto-hide="' . $style['autoHide'] . '"' : '';
+
+    return '<div class="flash-alert flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm shadow-lg backdrop-blur-sm ' .
+        $style['container'] . '" role="' . $style['role'] . '" aria-live="polite"' . $autoHide . '>' .
+        '<i class="fa-solid ' . $style['icon'] . ' mt-0.5 text-lg" aria-hidden="true"></i>' .
+        '<span class="min-w-0 flex-1">' . $message . '</span>' .
+        '<button type="button" class="flash-alert-close shrink-0 text-current/70 hover:text-current" aria-label="ปิดการแจ้งเตือน">&times;</button>' .
+        '</div>';
+}
+
 // สมัครสมาชิกใหม่ ค่าเริ่มต้น role = athlete (แอดมินสร้างเองแยกต่างหาก ไม่เปิดให้สมัครผ่านหน้าเว็บ)
 // $securityQuestion / $securityAnswer ใช้สำหรับฟีเจอร์ "ลืมรหัสผ่าน"
 // (ระบบไม่มีการส่งอีเมลจริง จึงใช้คำถามกันลืมแทนลิงก์รีเซ็ตทางอีเมล)

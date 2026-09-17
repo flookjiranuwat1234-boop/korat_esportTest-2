@@ -258,12 +258,15 @@ $winRate = $totalMatches > 0 ? round(($totalWins / $totalMatches) * 100, 1) : 0;
 
 // ดึงรายการสมัครทัวร์นาเมนต์
 $registrations = $pdo->prepare("
-    SELECT DISTINCT tr.*, t.name AS tournament_name, t.venue_address, tm.name AS team_name, g.name AS game_name,
+    SELECT DISTINCT tr.*, t.name AS tournament_name, t.venue_address, t.start_date, t.end_date,
+        t.checkin_open_at, t.checkin_close_at,
+        tm.name AS team_name, g.name AS game_name, tc.label AS category_label, tc.name AS category_name,
         trm.member_roles, trm.is_starter, trm.is_required_for_checkin, trm.checkin_status AS roster_checkin_status,
         trm.checkin_at AS roster_checkin_at
     FROM tournament_registrations tr
     JOIN tournaments t ON t.tournament_id = tr.tournament_id
     JOIN games g ON g.game_id = t.game_id
+    LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
     LEFT JOIN teams tm ON tm.team_id = tr.team_id
     JOIN tournament_registration_members trm ON trm.tournament_registration_id = tr.tournament_registration_id
     WHERE trm.player_id = :pid AND trm.roster_status = 'active'
@@ -271,6 +274,55 @@ $registrations = $pdo->prepare("
 ");
 $registrations->execute(['pid' => $playerId]);
 $myRegistrations = $registrations->fetchAll();
+
+$upcomingMatchesStmt = $pdo->prepare("
+    SELECT DISTINCT m.match_id, m.tournament_id, m.round_number, m.scheduled_at, m.venue_area, m.status AS match_status,
+        m.team1_id, m.team2_id, tour.name AS tournament_name, tour.venue_address,
+        own.name AS own_team_name, opp.name AS opponent_name,
+        trm.checkin_status AS player_checkin_status
+    FROM tournament_registration_members trm
+    JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+    JOIN matches m ON m.tournament_id = tr.tournament_id
+        AND (m.team1_id = tr.team_id OR m.team2_id = tr.team_id OR m.team1_id = tr.player_id OR m.team2_id = tr.player_id)
+    JOIN tournaments tour ON tour.tournament_id = m.tournament_id
+    LEFT JOIN teams own ON own.team_id = tr.team_id
+    LEFT JOIN teams opp ON opp.team_id = CASE
+        WHEN m.team1_id = tr.team_id OR m.team1_id = tr.player_id THEN m.team2_id
+        ELSE m.team1_id
+    END
+    WHERE trm.player_id = :pid AND tr.status = 'approved'
+      AND m.status IN ('scheduled', 'ongoing')
+      AND (m.scheduled_at IS NULL OR m.scheduled_at >= NOW())
+    ORDER BY m.scheduled_at IS NULL, m.scheduled_at ASC
+");
+$upcomingMatchesStmt->execute(['pid' => $playerId]);
+$upcomingMatches = $upcomingMatchesStmt->fetchAll();
+
+$importantNotifications = [];
+$nowTimestamp = time();
+foreach ($myRegistrations as $registration) {
+    if ($registration['status'] !== 'approved') {
+        continue;
+    }
+    $closeTimestamp = !empty($registration['checkin_close_at']) ? strtotime($registration['checkin_close_at']) : false;
+    $openTimestamp = !empty($registration['checkin_open_at']) ? strtotime($registration['checkin_open_at']) : false;
+    if ($openTimestamp && $closeTimestamp && $nowTimestamp >= $openTimestamp && $nowTimestamp < $closeTimestamp && empty($registration['checked_in'])) {
+        $minutesLeft = max(1, (int) ceil(($closeTimestamp - $nowTimestamp) / 60));
+        $importantNotifications[] = ['type' => 'warning', 'icon' => 'fa-hourglass-half', 'message' => 'เหลือเวลาเช็กอิน ' . $minutesLeft . ' นาที · ' . $registration['tournament_name']];
+    }
+}
+foreach ($upcomingMatches as $upcomingMatch) {
+    if (!empty($upcomingMatch['scheduled_at']) && date('Y-m-d', strtotime($upcomingMatch['scheduled_at'])) === date('Y-m-d')) {
+        $importantNotifications[] = ['type' => 'info', 'icon' => 'fa-calendar-day', 'message' => 'มีแมตช์แข่งวันนี้ · ' . $upcomingMatch['tournament_name']];
+        break;
+    }
+}
+foreach ($myRegistrations as $registration) {
+    if ($registration['status'] === 'approved' && count($importantNotifications) < 3) {
+        $importantNotifications[] = ['type' => 'success', 'icon' => 'fa-circle-check', 'message' => 'การสมัครได้รับอนุมัติแล้ว · ' . $registration['tournament_name']];
+        break;
+    }
+}
 
 // ดึงทีมที่สังกัด (ใช้ LEFT JOIN กับ games เพื่อป้องกันกรณีทีมกลางที่ไม่ได้ผูกเกมถูกซ่อน)
 $teamsStmt = $pdo->prepare("
@@ -296,19 +348,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 $flash = consumeFlashMessage();
-if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
+$error = '';
+$success = '';
+$flashAlert = renderFlashAlert($flash);
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>โปรไฟล์ของฉัน - Korat Esport</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -320,7 +366,13 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                 }
             }
         }
-    </script>
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>โปรไฟล์ของฉัน - Korat Esport</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         ::-webkit-scrollbar { display: none; }
         html, body { -ms-overflow-style: none; scrollbar-width: none; }
@@ -337,6 +389,34 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
         
         #particles-canvas {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1;
+        }
+        @media (max-width: 639px) {
+            .profile-match-history-table {
+                table-layout: fixed;
+            }
+            .profile-match-history-table th,
+            .profile-match-history-table td {
+                padding: .65rem .35rem !important;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                vertical-align: middle;
+            }
+            .profile-match-history-table th:nth-child(1),
+            .profile-match-history-table td:nth-child(1) { width: 34%; }
+            .profile-match-history-table th:nth-child(2),
+            .profile-match-history-table td:nth-child(2) { width: 37%; }
+            .profile-match-history-table th:nth-child(3),
+            .profile-match-history-table td:nth-child(3) { width: 29%; }
+            .profile-match-history-table td > span {
+                display: inline-block;
+                max-width: 100%;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                padding-left: .35rem;
+                padding-right: .35rem;
+            }
         }
     </style>
 </head>
@@ -379,17 +459,36 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-10">
 
-            <?php if ($error): ?>
-                <div class="p-4 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-sm flex items-center gap-3">
-                    <i class="fa-solid fa-triangle-exclamation text-xl text-rose-400"></i>
-                    <span><?= htmlspecialchars($error) ?></span>
-                </div>
-            <?php endif; ?>
+            <?php echo $flashAlert; ?>
 
-            <?php if ($success): ?>
-                <div class="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-sm flex items-center gap-3">
-                    <i class="fa-solid fa-circle-check text-xl text-emerald-400"></i>
-                    <span><?= htmlspecialchars($success) ?></span>
+            <?php if ($importantNotifications): ?>
+                <div class="relative flex justify-end">
+                    <button type="button" id="notification-toggle" aria-expanded="false" aria-controls="important-notifications" class="relative px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold transition-all">
+                        <i class="fa-solid fa-bell text-brand-orange mr-1.5" aria-hidden="true"></i>
+                        ดูการแจ้งเตือน
+                        <span id="notification-count" class="ml-1 inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-brand-orange px-1.5 text-[10px]"><?= count($importantNotifications) ?></span>
+                    </button>
+                <section id="important-notifications" class="hidden absolute right-0 top-full z-40 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border border-white/15 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl" aria-hidden="true">
+                    <h2 class="mb-3 text-xs font-bold uppercase tracking-wider text-brand-orange flex items-center gap-2">
+                        <i class="fa-solid fa-bell"></i> แจ้งเตือนสำคัญ
+                    </h2>
+                    <div class="grid grid-cols-1 gap-3">
+                        <?php foreach ($importantNotifications as $notification): ?>
+                            <?php
+                                $notificationStyle = [
+                                    'success' => ['box' => 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100', 'icon' => 'text-emerald-300'],
+                                    'warning' => ['box' => 'border-amber-400/40 bg-amber-500/15 text-amber-100', 'icon' => 'text-amber-300'],
+                                    'error' => ['box' => 'border-rose-400/40 bg-rose-500/15 text-rose-100', 'icon' => 'text-rose-300'],
+                                    'info' => ['box' => 'border-cyan-400/40 bg-cyan-500/15 text-cyan-100', 'icon' => 'text-cyan-300'],
+                                ][$notification['type']];
+                            ?>
+                            <div class="rounded-2xl border px-4 py-3 text-xs font-bold <?= $notificationStyle['box'] ?>">
+                                <i class="fa-solid <?= $notification['icon'] ?> <?= $notificationStyle['icon'] ?> mr-1.5" aria-hidden="true"></i>
+                                <?= htmlspecialchars($notification['message']) ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </section>
                 </div>
             <?php endif; ?>
 
@@ -543,7 +642,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                     </div>
                 <?php else: ?>
                     <div class="glass-panel rounded-2xl overflow-hidden border border-white/15 shadow-xl">
-                        <table class="w-full text-left text-xs text-gray-200">
+                        <table class="profile-match-history-table w-full text-left text-xs text-gray-200">
                             <thead class="bg-white/5 uppercase font-bold text-gray-400 border-b border-white/10">
                                 <tr>
                                     <th class="p-3">ทัวร์นาเมนต์</th>
@@ -604,12 +703,21 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                         <div class="text-xs text-gray-300 mt-1">
                                             ทีมสโมสร: <strong class="text-brand-orange"><?= htmlspecialchars($reg['team_name']) ?></strong>
                                         </div>
+                                        <div class="text-xs text-gray-400 mt-1">
+                                            รุ่น: <strong class="text-gray-200"><?= htmlspecialchars($reg['category_label'] ?: ($reg['category_name'] ?: 'ทั่วไป')) ?></strong>
+                                            <span class="mx-1">·</span>
+                                            แข่งขัน: <strong class="text-gray-200"><?= !empty($reg['start_date']) ? htmlspecialchars(date('d/m/Y H:i', strtotime($reg['start_date']))) : 'รอกำหนดการ' ?></strong>
+                                        </div>
                                     </div>
                                     
                                     <div class="flex items-center gap-2">
                                         <?php if ($reg['status'] === 'approved'): ?>
                                             <span class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/40 flex items-center gap-1.5">
                                                 <i class="fa-solid fa-circle-check"></i> ผ่านการอนุมัติ
+                                            </span>
+                                        <?php elseif (in_array($reg['status'], ['rejected', 'cancelled'], true)): ?>
+                                            <span class="px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-bold border border-rose-500/40 flex items-center gap-1.5">
+                                                <i class="fa-solid fa-circle-xmark"></i> <?= $reg['status'] === 'rejected' ? 'ไม่ผ่านการอนุมัติ' : 'ยกเลิก' ?>
                                             </span>
                                         <?php else: ?>
                                             <span class="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold border border-amber-500/40 flex items-center gap-1.5">
@@ -618,6 +726,39 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                         <?php endif; ?>
                                     </div>
                                 </div>
+
+                                <?php foreach ($upcomingMatches as $upcoming): ?>
+                                    <?php if ((int) $upcoming['match_id'] === 0 || (int) $upcoming['tournament_id'] !== (int) $reg['tournament_id']) continue; ?>
+                                    <div class="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4">
+                                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                            <div>
+                                                <p class="text-[10px] font-bold uppercase tracking-wider text-cyan-300">การแข่งขันถัดไป</p>
+                                                <p class="mt-1 text-sm font-bold text-white">
+                                                    <?= htmlspecialchars($upcoming['own_team_name'] ?: 'ทีมของฉัน') ?>
+                                                    <span class="mx-1 text-brand-orange">VS</span>
+                                                    <?= htmlspecialchars($upcoming['opponent_name'] ?: 'รอคู่แข่ง') ?>
+                                                </p>
+                                                <p class="mt-1 text-xs text-gray-300">
+                                                    รอบ <?= (int) ($upcoming['round_number'] ?? 0) > 0 ? (int) $upcoming['round_number'] : 'รอกำหนด' ?>
+                                                </p>
+                                                <p class="mt-1 text-xs text-gray-300">
+                                                    <i class="fa-regular fa-clock text-brand-orange mr-1"></i>
+                                                    <?= !empty($upcoming['scheduled_at']) ? htmlspecialchars(date('d/m/Y H:i', strtotime($upcoming['scheduled_at']))) : 'รอกำหนดเวลา' ?>
+                                                    <span class="mx-1">·</span>
+                                                    <i class="fa-solid fa-location-dot text-brand-orange mr-1"></i>
+                                                    <?= htmlspecialchars($upcoming['venue_area'] ?: ($upcoming['venue_address'] ?: 'รอกำหนดสนาม')) ?>
+                                                </p>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="<?= $upcoming['player_checkin_status'] === 'checked_in' ? 'text-emerald-300' : 'text-amber-300' ?> text-xs font-bold">
+                                                    <i class="fa-solid <?= $upcoming['player_checkin_status'] === 'checked_in' ? 'fa-circle-check' : 'fa-clock' ?> mr-1"></i>
+                                                    <?= $upcoming['player_checkin_status'] === 'checked_in' ? 'เช็กอินแล้ว' : 'ยังไม่ได้เช็กอิน' ?>
+                                                </span>
+                                                <a href="tournament-detail.php?id=<?= (int) $upcoming['tournament_id'] ?>#match-<?= (int) $upcoming['match_id'] ?>" class="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold">ดูผังสายของฉัน</a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
 
                                 <?php if ($reg['status'] === 'approved' && !empty($reg['qr_code_token'])): ?>
                                     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
@@ -717,10 +858,6 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                         </div>
                     </div>
 
-                    <a href="create-team.php" class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-bold text-white transition-all flex items-center gap-1.5">
-                        <i class="fa-solid fa-plus text-brand-orange"></i>
-                        <span>สร้างทีมใหม่</span>
-                    </a>
                 </div>
 
                 <?php if (count($myTeams) == 0): ?>
@@ -1141,6 +1278,26 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
             animateParticles();
         });
     </script>
+<script>
+const notificationToggle = document.getElementById('notification-toggle');
+const importantNotifications = document.getElementById('important-notifications');
+if (notificationToggle && importantNotifications) {
+    notificationToggle.addEventListener('click', () => {
+        const isHidden = importantNotifications.classList.toggle('hidden');
+        notificationToggle.setAttribute('aria-expanded', String(!isHidden));
+        importantNotifications.setAttribute('aria-hidden', String(isHidden));
+        if (!isHidden) {
+            const notificationCount = document.getElementById('notification-count');
+            if (notificationCount) {
+                notificationCount.textContent = '0';
+                notificationCount.classList.remove('bg-brand-orange');
+                notificationCount.classList.add('bg-slate-600');
+            }
+        }
+    });
+}
+</script>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

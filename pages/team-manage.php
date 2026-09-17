@@ -177,12 +177,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 $flash = consumeFlashMessage();
-if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
+$flashAlert = renderFlashAlert($flash ?: ($error
+    ? ['type' => 'error', 'message' => $error]
+    : ($success ? ['type' => 'success', 'message' => $success] : null)));
 ?>
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { theme: { extend: { colors: { brand: { orange: '#FF5500', glow: '#FF7700', cyber: '#00F0FF', dark: '#0A0A0C', panel: '#121318' } }, fontFamily: { sans: ['Kanit', 'sans-serif'], display: ['Orbitron', 'sans-serif'], mono: ['Share Tech Mono', 'monospace'] } } } };
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>จัดการทีม - <?php echo htmlspecialchars($team['name']); ?></title>
     <link rel="stylesheet" href="../assets/css/style.css">
 </head>
@@ -199,8 +205,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
             </div>
         </div>
 
-        <?php if ($error): ?><p class="error"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
-        <?php if ($success): ?><p class="success"><?php echo htmlspecialchars($success); ?></p><?php endif; ?>
+        <?php echo $flashAlert; ?>
         <?php if ($rosterLocked): ?>
             <p class="error">ไลน์อัปการแข่งขันถูกล็อกแล้ว การแก้สมาชิกทีมปัจจุบันจะไม่กระทบรายชื่อที่อนุมัติแล้ว และต้องให้ผู้ดูแลปลดล็อกก่อน</p>
         <?php else: ?>
@@ -280,7 +285,8 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
             <p><em>เฉพาะกัปตันทีมเท่านั้นที่แก้ไขสมาชิกได้</em></p>
         <?php endif; ?>
 
-        <p><a href="my-team.php">&larr; กลับไปหน้าทีมของฉัน</a></p>
+        <p><a href="profile.php">&larr; กลับไปหน้าโปรไฟล์</a></p>
     </section>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

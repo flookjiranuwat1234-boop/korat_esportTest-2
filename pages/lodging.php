@@ -315,7 +315,7 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
                                 </div>
 
                                 <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" data-mobile-label="ระบบแอดมิน" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
                                         <i class="fa-solid fa-user-shield text-sm"></i>
                                     </a>
                                 <?php else: ?>
@@ -458,6 +458,7 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
         });
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>
 ```

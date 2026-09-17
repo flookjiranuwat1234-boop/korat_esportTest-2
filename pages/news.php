@@ -392,7 +392,7 @@ html, body {
                                 </div>
 
                                 <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" data-mobile-label="ระบบแอดมิน" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
                                         <i class="fa-solid fa-user-shield text-sm"></i>
                                     </a>
                                 <?php else: ?>
@@ -450,7 +450,7 @@ html, body {
                     ?>
                         <div class="slide-card <?php echo $index === 0 ? 'active' : ''; ?>" data-index="<?php echo $index; ?>">
                             
-                            <img src="<?php echo $bgImg; ?>" alt="<?php echo htmlspecialchars($n['title']); ?>">
+                            <img src="<?php echo $bgImg; ?>" alt="<?php echo htmlspecialchars($n['title']); ?>"
 
                             <!-- เส้น Progress Bar วิ่งระหว่าง Auto-play -->
                             <div class="slide-progress-bar"></div>
@@ -560,5 +560,6 @@ html, body {
         }
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>

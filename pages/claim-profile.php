@@ -99,7 +99,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 $flash = consumeFlashMessage();
-if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
+$flashAlert = renderFlashAlert($flash ?: ($error
+    ? ['type' => 'error', 'message' => $error]
+    : ($success ? ['type' => 'success', 'message' => $success] : null)));
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
@@ -237,7 +239,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                                     </span>
                                 </div>
                                 <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
-                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
+                                    <a href="../admin/dashboard.php" title="ระบบหลังบ้าน Admin" data-mobile-label="ระบบแอดมิน" class="w-9 h-9 rounded-xl bg-brand-orange hover:bg-brand-glow text-white flex items-center justify-center transition-all shadow-md">
                                         <i class="fa-solid fa-user-shield text-sm"></i>
                                     </a>
                                 <?php endif; ?>
@@ -272,12 +274,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                 </p>
             </div>
 
-            <?php if ($error): ?>
-                <div class="p-4 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-sm font-semibold flex items-center gap-3">
-                    <i class="fa-solid fa-triangle-exclamation text-lg shrink-0"></i>
-                    <span><?php echo htmlspecialchars($error); ?></span>
-                </div>
-            <?php endif; ?>
+            <?php echo $flashAlert; ?>
 
             <!-- Search Card -->
             <div class="glass-panel p-6 sm:p-8 rounded-3xl border border-white/20 shadow-xl space-y-5">
@@ -380,6 +377,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
 
     </div>
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 </html>
 ```

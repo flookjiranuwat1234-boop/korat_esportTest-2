@@ -191,6 +191,7 @@ foreach ($tournamentsByYear as &$tournament) {
     $tournament['category_labels'] = displayDashboardCategoryLabels($tournament['category_labels'] ?? '');
 }
 unset($tournament);
+$dashboardTournamentPreview = array_slice($tournamentsByYear, 0, 5);
 
 $pendingRegs = $pdo->query("
     SELECT tr.tournament_registration_id AS reg_id, COALESCE(t.name, u.username, 'ผู้สมัครเดี่ยว') AS team_name, tour.tournament_id AS tournament_id, tour.name AS tournament_name, tr.registered_at
@@ -245,6 +246,7 @@ $openTournaments = $pdo->query("
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,500;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/admin-responsive.css">
     
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -276,6 +278,183 @@ $openTournaments = $pdo->query("
             scrollbar-width: none;
             background-color: #F4F6F9;
         }
+        body { overflow-x: hidden; }
+
+        .dashboard-title {
+            min-width: 0;
+            line-height: 1.25;
+        }
+        .dashboard-title-accent {
+            font-family: 'Orbitron', sans-serif;
+        }
+        .dashboard-header > div,
+        .dashboard-header .dashboard-controls {
+            min-width: 0;
+        }
+        .dashboard-table-wrap {
+            max-width: 100%;
+            overflow-x: auto;
+            overscroll-behavior-x: contain;
+        }
+        .dashboard-table td,
+        .dashboard-table th {
+            overflow-wrap: anywhere;
+        }
+        .dashboard-section-title {
+            min-width: 0;
+        }
+
+        @media (min-width: 1024px) and (max-width: 1279px) {
+            .dashboard-header {
+                padding-left: 1.25rem;
+                padding-right: 1.25rem;
+            }
+            .dashboard-header .dashboard-controls {
+                gap: 0.5rem;
+            }
+            main {
+                padding: 1.25rem;
+                gap: 1.5rem;
+            }
+            .dashboard-stat-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 1rem;
+            }
+            .stat-card-light {
+                padding: 1rem;
+            }
+            .dashboard-table th,
+            .dashboard-table td {
+                padding: 0.75rem;
+            }
+        }
+
+        @media (max-width: 639px) {
+            .dashboard-stat-grid {
+                gap: 0.75rem;
+            }
+            .dashboard-stat-grid .stat-card-light {
+                min-width: 0;
+                padding: 0.875rem;
+                border-radius: 1rem;
+            }
+            .dashboard-stat-grid .stat-card-light > div > div:first-child {
+                gap: 0.35rem;
+            }
+            .dashboard-stat-grid .stat-card-light h3 {
+                font-size: 1.75rem;
+                line-height: 1.1;
+            }
+            .dashboard-stat-grid .stat-card-light p {
+                font-size: 0.625rem;
+                line-height: 1.35;
+            }
+            .dashboard-stat-grid .stat-card-light .w-9 {
+                width: 2rem;
+                height: 2rem;
+                font-size: 0.875rem;
+                flex-shrink: 0;
+            }
+            .dashboard-stat-grid .stat-card-light > div > div:last-child {
+                gap: 0.35rem;
+            }
+            .dashboard-stat-grid .stat-card-light > div > div:last-child > span {
+                display: none;
+            }
+            .dashboard-section-title {
+                align-items: flex-start;
+                font-size: 0.9rem;
+                line-height: 1.35;
+            }
+            .dashboard-section-title a {
+                flex-shrink: 0;
+            }
+            .dashboard-table-wrap {
+                overflow-x: hidden;
+            }
+            .dashboard-table {
+                table-layout: fixed;
+                width: 100%;
+                font-size: 0.75rem;
+            }
+            .dashboard-table th,
+            .dashboard-table td {
+                padding: 0.75rem 0.5rem;
+                vertical-align: middle;
+                word-break: normal;
+                overflow-wrap: anywhere;
+            }
+            .dashboard-table .dashboard-table-name {
+                min-width: 0;
+                line-height: 1.45;
+            }
+            .dashboard-table .dashboard-table-name-content {
+                display: flex;
+                align-items: flex-start;
+                gap: 0.5rem;
+            }
+            .dashboard-table .dashboard-table-name-content img {
+                flex: 0 0 auto;
+                margin: 0 !important;
+            }
+            .dashboard-table .dashboard-table-name-text {
+                min-width: 0;
+                overflow-wrap: normal;
+                word-break: normal;
+            }
+            .dashboard-table .dashboard-table-game {
+                display: inline-block;
+                padding: 0.125rem 0.25rem;
+                line-height: 1.45;
+                white-space: normal;
+                word-break: keep-all;
+                overflow-wrap: normal;
+            }
+            .dashboard-table-yearly th:nth-child(n+4),
+            .dashboard-table-yearly td:nth-child(n+4) {
+                display: none;
+            }
+            .dashboard-table-yearly th:nth-child(1),
+            .dashboard-table-yearly td:nth-child(1) { width: 44%; }
+            .dashboard-table-yearly th:nth-child(2),
+            .dashboard-table-yearly td:nth-child(2) { width: 32%; }
+            .dashboard-table-yearly th:nth-child(3),
+            .dashboard-table-yearly td:nth-child(3) { width: 24%; }
+            .dashboard-table-yearly td:nth-child(2),
+            .dashboard-table-yearly td:nth-child(3) {
+                line-height: 1.4;
+            }
+            .dashboard-table-pending th:nth-child(3),
+            .dashboard-table-pending td:nth-child(3) { display: none; }
+            .dashboard-table-pending th:nth-child(1),
+            .dashboard-table-pending td:nth-child(1) { width: 34%; }
+            .dashboard-table-pending th:nth-child(2),
+            .dashboard-table-pending td:nth-child(2) { width: 44%; }
+            .dashboard-table-pending th:nth-child(4),
+            .dashboard-table-pending td:nth-child(4) { width: 22%; }
+            .dashboard-table-open th:nth-child(1),
+            .dashboard-table-open td:nth-child(1) { width: 42%; }
+            .dashboard-table-open th:nth-child(2),
+            .dashboard-table-open td:nth-child(2) { width: 32%; }
+            .dashboard-table-open th:nth-child(3),
+            .dashboard-table-open td:nth-child(3) { width: 26%; }
+            .dashboard-table-open th:nth-child(4),
+            .dashboard-table-open td:nth-child(4) { display: none; }
+            .dashboard-table-recent th:nth-child(1),
+            .dashboard-table-recent td:nth-child(1) { display: none; }
+            .dashboard-table-recent th:nth-child(2),
+            .dashboard-table-recent td:nth-child(2) { width: 48%; }
+            .dashboard-table-recent th:nth-child(3),
+            .dashboard-table-recent td:nth-child(3) { width: 22%; }
+            .dashboard-table-recent th:nth-child(4),
+            .dashboard-table-recent td:nth-child(4) { width: 30%; }
+            .dashboard-table-recent .dashboard-score {
+                display: inline-block;
+                white-space: nowrap;
+                padding-left: 0.35rem;
+                padding-right: 0.35rem;
+            }
+        }
 
         .stat-card-light {
             background: #FFFFFF;
@@ -303,7 +482,7 @@ $openTournaments = $pdo->query("
 <body class="text-slate-800 font-sans min-h-screen flex antialiased">
 
     <!-- ================= 1. SIDEBAR ด้านข้าง ================= -->
-    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl">
+    <aside class="w-64 bg-brand-sidebar text-slate-300 flex flex-col fixed inset-y-0 left-0 z-50 shadow-xl -translate-x-full transition-transform duration-200 lg:translate-x-0">
         <div class="p-6 border-b border-slate-800 flex items-center gap-3">
             <img src="../assets/img/logo.png" alt="Korat Esport" class="h-10 w-auto filter drop-shadow" onError="this.src='https://placehold.co/80x80/0F172A/FF5500?text=KE';">
             <div>
@@ -374,20 +553,20 @@ $openTournaments = $pdo->query("
     </aside>
 
     <!-- ================= 2. MAIN CONTENT AREA ================= -->
-    <div class="flex-1 ml-64 min-h-screen flex flex-col">
+    <div class="flex-1 ml-0 lg:ml-64 min-h-screen flex flex-col min-w-0">
 
         <!-- Top Header Panel -->
-        <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
-            <div>
-                <h1 class="text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-center gap-2">
+        <header class="dashboard-header bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sticky top-0 z-40 shadow-sm">
+            <div class="min-w-0">
+                <h1 class="dashboard-title text-lg sm:text-xl font-extrabold text-slate-900 tracking-wide uppercase flex items-start gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
-                    ภาพรวมระบบ <span class="text-brand-orange">(ADMIN DASHBOARD)</span>
+                    <span class="min-w-0">ภาพรวมระบบ <span class="dashboard-title-accent text-brand-orange">(<span class="sm:hidden">ADMIN</span><span class="hidden sm:inline">ADMIN DASHBOARD</span>)</span></span>
                 </h1>
                 <p class="text-xs text-slate-500 mt-0.5">ศูนย์ควบคุมและสรุปสถิติระบบ Korat Esport</p>
             </div>
             
-            <div class="flex items-center gap-3">
-                <form method="GET" class="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg">
+            <div class="dashboard-controls flex items-center justify-between sm:justify-end gap-2 sm:gap-3">
+                <form method="GET" class="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg min-w-0">
                     <i class="fa-solid fa-calendar-days text-brand-orange text-xs"></i>
                     <select name="year" onchange="this.form.submit()"
                             class="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer">
@@ -399,17 +578,17 @@ $openTournaments = $pdo->query("
                     </select>
                 </form>
 
-                <a href="../pages/index.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">
+                <a href="../pages/index.php" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-brand-orange transition-colors flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg whitespace-nowrap">
                     <i class="fa-solid fa-globe"></i> หน้าหลักเว็บไซต์
                 </a>
             </div>
         </header>
 
         <!-- Main Body Content -->
-        <main class="p-8 space-y-8 flex-1">
+        <main class="p-4 sm:p-8 space-y-8 flex-1 min-w-0">
 
             <!-- STAT CARDS -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div class="dashboard-stat-grid grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 
                 <!-- Card 1: สมาชิกทั้งหมด -->
                 <a href="manage-members.php" class="stat-card-light p-5 rounded-2xl relative block group">
@@ -539,13 +718,20 @@ $openTournaments = $pdo->query("
             <!-- ทัวร์นาเมนต์แยกรายปี -->
             <div class="space-y-4">
                 <div class="flex items-center justify-between">
-                    <h2 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
+                    <h2 class="dashboard-section-title text-base font-bold font-display text-slate-900 flex items-center gap-2">
                         <i class="fa-solid fa-calendar-days text-brand-orange"></i>
                         ทัวร์นาเมนต์ทั้งหมดของปี <?php echo $selectedYear; ?>
                     </h2>
-                    <a href="manage-tournament.php" class="text-xs text-brand-orange hover:underline font-semibold flex items-center gap-1">
-                        <i class="fa-solid fa-plus"></i> สร้างใหม่
-                    </a>
+                    <div class="flex items-center gap-3">
+                        <?php if (count($tournamentsByYear) > 5): ?>
+                            <a href="manage-tournament.php" class="text-xs text-brand-orange hover:underline font-semibold flex items-center gap-1">
+                                <i class="fa-solid fa-list"></i> ดูทั้งหมด (<?php echo count($tournamentsByYear); ?>)
+                            </a>
+                        <?php endif; ?>
+                        <a href="manage-tournament.php" class="text-xs text-brand-orange hover:underline font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-plus"></i> สร้างใหม่
+                        </a>
+                    </div>
                 </div>
 
                 <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -555,8 +741,8 @@ $openTournaments = $pdo->query("
                             ไม่มีทัวร์นาเมนต์ในปี <?php echo $selectedYear; ?>
                         </div>
                     <?php else: ?>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left text-sm text-slate-600">
+                        <div class="dashboard-table-wrap">
+                            <table class="dashboard-table dashboard-table-yearly w-full text-left text-sm text-slate-600">
                                 <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                                     <tr>
                                         <th class="p-4">ทัวร์นาเมนต์</th>
@@ -571,11 +757,11 @@ $openTournaments = $pdo->query("
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100">
-                                    <?php foreach ($tournamentsByYear as $t): ?>
+                                    <?php foreach ($dashboardTournamentPreview as $t): ?>
                                     <tr class="hover:bg-slate-50/80 transition-colors">
-                                        <td class="p-4 font-bold text-slate-900 min-w-[180px]"><?php if (!empty($t['image_path'])): ?><img src="../assets/<?php echo htmlspecialchars($t['image_path']); ?>" class="w-12 h-8 object-cover rounded inline-block mr-2" alt=""><?php endif; ?><?php echo htmlspecialchars($t['name']); ?></td>
+                                        <td class="dashboard-table-name p-4 font-bold text-slate-900 min-w-[180px]"><span class="dashboard-table-name-content"><?php if (!empty($t['image_path'])): ?><img src="../assets/<?php echo htmlspecialchars($t['image_path']); ?>" class="w-12 h-8 object-cover rounded" alt=""><?php endif; ?><span class="dashboard-table-name-text"><?php echo htmlspecialchars($t['name']); ?></span></span></td>
                                         <td class="p-4 text-xs text-slate-500">
-                                            <span class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
+                                            <span class="dashboard-table-game px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
                                         </td>
                                         <td class="p-4 text-xs"><div class="flex flex-wrap gap-1.5"><?php echo $t['category_badges'] ?: '<span class="px-2 py-1 rounded bg-slate-50 text-slate-500 border border-slate-200">ยังไม่กำหนด</span>'; ?></div></td>
                                         <td class="p-4 text-center text-xs font-bold"><?php echo (int) $t['registered_count']; ?> / <?php echo (int) $t['approved_count']; ?></td>
@@ -653,8 +839,8 @@ $openTournaments = $pdo->query("
                                     คำขอสมัครทีมที่รออนุมัติ (<?php echo count($pendingRegs); ?>)
                                 </h3>
                             </div>
-                            <div class="overflow-x-auto">
-                                <table class="w-full text-left text-sm text-slate-600">
+                            <div class="dashboard-table-wrap">
+                                <table class="dashboard-table dashboard-table-pending w-full text-left text-sm text-slate-600">
                                     <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
                                             <th class="p-4">ทีม</th>
@@ -713,8 +899,8 @@ $openTournaments = $pdo->query("
                                 ไม่มีทัวร์นาเมนต์ที่เปิดรับสมัครอยู่ตอนนี้
                             </div>
                         <?php else: ?>
-                            <div class="overflow-x-auto">
-                                <table class="w-full text-left text-sm text-slate-600">
+                            <div class="dashboard-table-wrap">
+                                <table class="dashboard-table dashboard-table-open w-full text-left text-sm text-slate-600">
                                     <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
                                             <th class="p-4">ชื่อ</th>
@@ -726,9 +912,9 @@ $openTournaments = $pdo->query("
                                     <tbody class="divide-y divide-slate-100">
                                         <?php foreach ($openTournaments as $t): ?>
                                         <tr class="hover:bg-slate-50/80 transition-colors">
-                                            <td class="p-4 font-bold text-slate-900"><?php echo htmlspecialchars($t['name']); ?></td>
+                                            <td class="dashboard-table-name p-4 font-bold text-slate-900"><?php echo htmlspecialchars($t['name']); ?></td>
                                             <td class="p-4 text-xs text-slate-500">
-                                                <span class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
+                                                <span class="dashboard-table-game px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-semibold"><?php echo htmlspecialchars($t['game_name']); ?></span>
                                             </td>
                                             <td class="p-4 text-center font-bold font-display text-brand-orange text-base"><?php echo $t['team_count']; ?></td>
                                             <td class="p-4 text-right">
@@ -761,8 +947,8 @@ $openTournaments = $pdo->query("
                                 ยังไม่มีแมตช์ที่บันทึกผลแล้ว
                             </div>
                         <?php else: ?>
-                            <div class="overflow-x-auto">
-                                <table class="w-full text-left text-sm text-slate-600">
+                            <div class="dashboard-table-wrap">
+                                <table class="dashboard-table dashboard-table-recent w-full text-left text-sm text-slate-600">
                                     <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
                                             <th class="p-4">รายการ</th>
@@ -782,9 +968,9 @@ $openTournaments = $pdo->query("
                                             </td>
                                             <td class="p-4 text-center">
                                                 <?php if ($m['status'] == 'walkover'): ?>
-                                                    <span class="px-2 py-0.5 rounded bg-rose-100 text-rose-700 text-[10px] font-bold uppercase">Walkover</span>
+                                                    <span class="dashboard-score px-2 py-0.5 rounded bg-rose-100 text-rose-700 text-[10px] font-bold uppercase">Walkover</span>
                                                 <?php else: ?>
-                                                    <span class="font-display font-bold text-slate-900 px-2 py-0.5 rounded bg-slate-100 border border-slate-200">
+                                                    <span class="dashboard-score font-display font-bold text-slate-900 px-2 py-0.5 rounded bg-slate-100 border border-slate-200">
                                                         <?php echo $m['team1_score']; ?> - <?php echo $m['team2_score']; ?>
                                                     </span>
                                                 <?php endif; ?>
@@ -842,5 +1028,5 @@ $openTournaments = $pdo->query("
         });
     </script>
 <script src="../assets/js/admin-mobile-nav.js" defer></script>
-</body>
+<script src="../assets/js/flash-messages.js" defer></script></body>
 </html>

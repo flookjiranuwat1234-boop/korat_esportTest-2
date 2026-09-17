@@ -610,6 +610,7 @@ $csrfToken = generateCsrfToken();
             animateParticles();
         });
     </script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 
 </html>

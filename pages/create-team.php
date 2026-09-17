@@ -72,22 +72,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 $flash = consumeFlashMessage();
-if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success = $flash['message']);
+$flashAlert = renderFlashAlert($flash ?: ($error
+    ? ['type' => 'error', 'message' => $error]
+    : ($success ? ['type' => 'success', 'message' => $success] : null)));
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>สร้างทีมใหม่ - Korat Esport</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -101,7 +93,15 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                 }
             }
         }
-    </script>
+    </script>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>สร้างทีมใหม่ - Korat Esport</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         ::-webkit-scrollbar { display: none; }
         html, body { -ms-overflow-style: none; scrollbar-width: none; }
@@ -190,13 +190,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
                 </div>
 
                 <!-- ALERT ERROR -->
-                <?php if ($error): ?>
-                    <div
-                        class="p-4 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-bold flex items-center gap-3">
-                        <i class="fa-solid fa-circle-exclamation text-lg text-rose-400"></i>
-                        <span><?= htmlspecialchars($error) ?></span>
-                    </div>
-                <?php endif; ?>
+                <?php echo $flashAlert; ?>
 
                 <form method="POST" enctype="multipart/form-data" class="space-y-5">
                     <input type="hidden" name="csrf_token" value="<?= $csrfToken ?>">
@@ -259,6 +253,7 @@ if ($flash) $error = $flash['type'] === 'error' ? $flash['message'] : ($success 
     </div>
 
 <script src="../assets/js/mobile-nav.js" defer></script>
+<script src="../assets/js/flash-messages.js" defer></script>
 </body>
 
 </html>
