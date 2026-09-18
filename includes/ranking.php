@@ -8,6 +8,18 @@ define('POINTS_WIN', 3);
 define('POINTS_DRAW', 1);
 define('POINTS_LOSS', 0);
 
+function playerPerformancePoints(string $level, bool $isMvp = false): int
+{
+    $pointsByLevel = [
+        'normal' => 1,
+        'outstanding' => 3,
+        'participation' => 1,
+        'absent' => 0,
+    ];
+
+    return ($pointsByLevel[$level] ?? 0) + ($isMvp ? 2 : 0);
+}
+
 function ensureRankingHistoryTable(PDO $pdo): void
 {
     static $ready = false;

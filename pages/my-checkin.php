@@ -3,6 +3,7 @@
 // หน้าให้กัปตันทีมดู QR code ของทีมตัวเอง เอาไปโชว์ตอนเช็คอินหน้างาน
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_demo.php';
 require_once '../includes/tournament_roster.php';
 require_once '../includes/tournament_categories.php';
 require_once '../includes/tournament_workflow.php';
@@ -24,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'playe
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
         $registrationId = (int) ($_POST['registration_id'] ?? 0);
-        $verify = $pdo->prepare('SELECT tr.tournament_registration_id,
+        $verify = $pdo->prepare('SELECT tr.tournament_registration_id, tr.tournament_id,
                 COALESCE(tc.checkin_open_at, tour.checkin_open_at) AS checkin_open_at,
                 COALESCE(tc.checkin_deadline, tour.checkin_close_at) AS checkin_close_at
             FROM tournament_registration_members trm
@@ -37,15 +38,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'playe
         $verify->execute(['registration_id' => $registrationId, 'player_id' => $myPlayerId]);
         $verifiedRegistration = $verify->fetch();
         $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
-        $checkinWindowOpen = $verifiedRegistration && $verifiedRegistration['checkin_open_at'] && $verifiedRegistration['checkin_close_at']
+        $checkinWindowOpen = $verifiedRegistration && (isDemoTournamentById($pdo, (int) ($verifiedRegistration['tournament_id'] ?? 0)) || ($verifiedRegistration['checkin_open_at'] && $verifiedRegistration['checkin_close_at']
             && $now >= new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok'))
-            && $now <= new DateTimeImmutable($verifiedRegistration['checkin_close_at'], new DateTimeZone('Asia/Bangkok'));
+            && $now <= new DateTimeImmutable($verifiedRegistration['checkin_close_at'], new DateTimeZone('Asia/Bangkok'))));
         if (!$verifiedRegistration) {
             $error = 'คุณไม่มีสิทธิ์เช็คอินในรายการนี้';
-        } elseif (!$verifiedRegistration['checkin_open_at'] || !$verifiedRegistration['checkin_close_at']) {
+        } elseif (!isDemoTournamentById($pdo, (int) $verifiedRegistration['tournament_id'])
+            && (!$verifiedRegistration['checkin_open_at'] || !$verifiedRegistration['checkin_close_at'])) {
             $error = 'ยังไม่ได้กำหนดเวลาเช็กอิน';
         } elseif (!$checkinWindowOpen || !canCheckinRegistration($pdo, $registrationId, $now)) {
-            $error = $now < new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok')) ? 'ยังไม่เปิดเช็กอิน' : 'ขณะนี้อยู่นอกช่วงเวลาเช็กอิน';
+            $error = (!empty($verifiedRegistration['checkin_open_at']) && $now < new DateTimeImmutable($verifiedRegistration['checkin_open_at'], new DateTimeZone('Asia/Bangkok')))
+                ? 'ยังไม่เปิดเช็กอิน'
+                : 'ขณะนี้อยู่นอกช่วงเวลาเช็กอิน';
         } else {
             markRosterPlayerCheckedIn($pdo, $registrationId, (int) $myPlayerId, (int) $_SESSION['user_id']);
             $success = 'เช็คอินเรียบร้อยแล้ว';

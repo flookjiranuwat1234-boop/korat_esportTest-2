@@ -69,7 +69,7 @@ function searchTournamentPlayers(PDO $pdo, int $tournamentId, int $categoryId, s
         FROM players p
         INNER JOIN users u ON u.user_id = p.user_id
         WHERE (u.status = "active" OR u.status IS NULL)
-          AND (p.real_name LIKE :term OR u.username LIKE :term OR CAST(p.player_id AS CHAR) = :exact)
+          AND (p.display_name LIKE :term OR p.real_name LIKE :term OR u.username LIKE :term OR CAST(p.player_id AS CHAR) = :exact)
           AND NOT EXISTS (
               SELECT 1 FROM tournament_registrations conflict
               WHERE conflict.tournament_id = :tournament_id
@@ -77,11 +77,11 @@ function searchTournamentPlayers(PDO $pdo, int $tournamentId, int $categoryId, s
                 AND conflict.status IN ("pending", "approved")
                 AND conflict.team_id IS NOT NULL
                 AND (:exclude_team_id IS NULL OR conflict.team_id <> :conflict_team_id)
-                AND EXISTS (
+                  AND EXISTS (
                     SELECT 1 FROM tournament_registration_members conflict_member
                     WHERE conflict_member.tournament_registration_id = conflict.tournament_registration_id
                       AND conflict_member.player_id = p.player_id
-                      AND conflict_member.roster_status = "active"
+                        AND conflict_member.roster_status = "active"
                 )
           )
         ORDER BY p.real_name, u.username
@@ -102,6 +102,7 @@ function searchTournamentPlayers(PDO $pdo, int $tournamentId, int $categoryId, s
             'player_id' => (int) $player['player_id'],
             'real_name' => (string) ($player['display_name'] ?: $player['real_name'] ?: $player['username']),
             'eligible' => $reason === null,
+            'staff_eligible' => ($player['account_status'] ?? '') === 'active',
             'eligibility_reason' => $reason,
             'age_at_tournament' => tournamentPlayerAge($player['birth_date'], $category['start_date']),
         ];
@@ -252,10 +253,15 @@ function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId
             $playerCheck->execute(['player_id' => $member['player_id']]);
             $selectedPlayer = $playerCheck->fetch(PDO::FETCH_ASSOC);
             if (!$selectedPlayer) throw new InvalidArgumentException('ไม่พบผู้เล่นที่เลือก');
-            $reason = tournamentCategoryAllowsPlayer($selectedPlayer, $category);
-            if ($reason !== null) throw new InvalidArgumentException($selectedPlayer['real_name'] . ': ' . $reason);
-
             $roles = $member['roles'];
+            $isStaff = !in_array('player', $roles, true) && !in_array('substitute', $roles, true);
+            $reason = tournamentCategoryAllowsPlayer($selectedPlayer, $category);
+            if (($selectedPlayer['account_status'] ?? '') !== 'active') {
+                throw new InvalidArgumentException($selectedPlayer['real_name'] . ': บัญชีผู้เล่นไม่ได้เปิดใช้งาน');
+            }
+            if (!$isStaff && $reason !== null) {
+                throw new InvalidArgumentException($selectedPlayer['real_name'] . ': ' . $reason);
+            }
             $primaryRole = in_array('player', $roles, true) ? 'player' : (in_array('substitute', $roles, true) ? 'substitute' : $roles[0]);
             if (in_array('player', $roles, true)) $starterCount++;
             if (in_array('substitute', $roles, true)) $substituteCount++;

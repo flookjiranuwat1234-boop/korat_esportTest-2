@@ -2,6 +2,10 @@
 // pages/player-profile.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/ranking.php';
+
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 
 // ตรวจสอบสถานะการเข้าสู่ระบบ
 $isLoggedIn = isLoggedIn();
@@ -152,10 +156,61 @@ $rankings = $pdo->prepare("
 ");
 $rankings->execute(['player_id' => $playerId]);
 $rankings = $rankings->fetchAll();
+
+$rankingGameIds = array_values(array_unique(array_map(
+    static fn(array $ranking): int => (int) $ranking['game_id'],
+    $rankings
+)));
+$calculatedRankingPoints = [];
+if ($rankingGameIds) {
+    $rankingGameIdList = implode(', ', $rankingGameIds);
+    $historyColumns = $pdo->query('SHOW COLUMNS FROM ranking_history')->fetchAll(PDO::FETCH_COLUMN);
+    $performanceReasonColumn = in_array('reason', $historyColumns, true) ? 'rh.reason' : 'rh.result_code';
+    $performanceStmt = $pdo->query("
+        SELECT rh.game_id, rh.player_id,
+               SUM(CASE
+                   WHEN LOWER(TRIM($performanceReasonColumn)) = 'outstanding' THEN 3
+                   WHEN LOWER(TRIM($performanceReasonColumn)) IN ('normal', 'participation') THEN 1
+                   WHEN LOWER(TRIM($performanceReasonColumn)) = 'mvp' THEN 2
+                   ELSE 0
+               END) AS performance_points
+        FROM ranking_history rh
+        WHERE rh.player_id IS NOT NULL
+          AND rh.game_id IN ($rankingGameIdList)
+        GROUP BY rh.game_id, rh.player_id
+    ");
+    foreach ($performanceStmt->fetchAll(PDO::FETCH_ASSOC) as $performance) {
+        $calculatedRankingPoints[(int) $performance['game_id']][(int) $performance['player_id']] =
+            (int) $performance['performance_points'];
+    }
+}
+
 foreach ($rankings as &$ranking) {
-    $rankStmt = $pdo->prepare('SELECT COUNT(*) + 1 FROM player_rankings WHERE game_id = :game_id AND points > :points');
-    $rankStmt->execute(['game_id' => (int) $ranking['game_id'], 'points' => (int) ($ranking['points'] ?? 0)]);
-    $ranking['rank_position'] = (int) $rankStmt->fetchColumn();
+    $matchesPlayed = max(0, (int) ($ranking['matches_played'] ?? 0));
+    $wins = max(0, (int) ($ranking['wins'] ?? 0));
+    $losses = max(0, (int) ($ranking['losses'] ?? 0));
+    $inferredDraws = max(0, $matchesPlayed - $wins - $losses);
+    $basePoints = ($wins * POINTS_WIN) + ($inferredDraws * POINTS_DRAW);
+    $rawPerformancePoints = $calculatedRankingPoints[(int) $ranking['game_id']][$playerId] ?? 0;
+    $performanceCap = $matchesPlayed * 8;
+    $ranking['points'] = $basePoints + (int) round(min($rawPerformancePoints, $performanceCap) / 4);
+
+    $allRankingStmt = $pdo->prepare('SELECT player_id, matches_played, wins, losses FROM player_rankings WHERE game_id = :game_id');
+    $allRankingStmt->execute(['game_id' => (int) $ranking['game_id']]);
+    $higherRankCount = 0;
+    foreach ($allRankingStmt->fetchAll(PDO::FETCH_ASSOC) as $otherRanking) {
+        $otherMatches = max(0, (int) $otherRanking['matches_played']);
+        $otherWins = max(0, (int) $otherRanking['wins']);
+        $otherLosses = max(0, (int) $otherRanking['losses']);
+        $otherDraws = max(0, $otherMatches - $otherWins - $otherLosses);
+        $otherBase = ($otherWins * POINTS_WIN) + ($otherDraws * POINTS_DRAW);
+        $otherRawPerformance = $calculatedRankingPoints[(int) $ranking['game_id']][(int) $otherRanking['player_id']] ?? 0;
+        $otherPoints = $otherBase + (int) round(min($otherRawPerformance, $otherMatches * 8) / 4);
+        if ($otherPoints > $ranking['points']) {
+            $higherRankCount++;
+        }
+    }
+    $ranking['rank_position'] = $higherRankCount + 1;
 }
 unset($ranking);
 
@@ -181,13 +236,9 @@ $activeTournaments = array_values(array_filter($tournamentHistory, static functi
 // ตรวจสอบว่าผู้เล่นคนนี้ติด Top Player (ติดอันดับ Top 3 ใน ranking ใดเกมหนึ่ง)
 $isTopPlayer = false;
 foreach ($rankings as $rk) {
-    if (isset($rk['points']) && $rk['points'] > 0) {
-        $chkTop = $pdo->prepare("SELECT COUNT(*) FROM player_rankings WHERE game_id = :gid AND points > :pts");
-        $chkTop->execute(['gid' => $rk['game_id'], 'pts' => $rk['points']]);
-        if ($chkTop->fetchColumn() < 3) {
-            $isTopPlayer = true;
-            break;
-        }
+    if (isset($rk['points'], $rk['rank_position']) && $rk['points'] > 0 && $rk['rank_position'] <= 3) {
+        $isTopPlayer = true;
+        break;
     }
 }
 
@@ -422,23 +473,6 @@ $flashAlert = renderFlashAlert($flash ?: ($error
                         <?php endif; ?>
                     </div>
 
-                    <?php if (!empty($teams)): ?>
-                        <div class="flex flex-wrap justify-center md:justify-start items-center gap-2 text-xs">
-                            <span class="px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-cyan-200">
-                                <i class="fa-solid fa-shield-halved mr-1"></i><?= htmlspecialchars($teams[0]['name']) ?>
-                            </span>
-                            <span class="px-3 py-1 rounded-full bg-white/10 border border-white/15 text-gray-200">
-                                <?= ((int) $teams[0]['is_captain'] === 1) ? 'Captain' : 'Player' ?>
-                            </span>
-                            <?php if (!empty($teams[0]['game_name'])): ?>
-                                <span class="px-3 py-1 rounded-full bg-brand-orange/15 border border-brand-orange/30 text-brand-orange">
-                                    <i class="fa-solid fa-gamepad mr-1"></i><?= htmlspecialchars($teams[0]['game_name']) ?>
-                                </span>
-                            <?php endif; ?>
-                            <a href="team-profile.php?id=<?= (int) $teams[0]['team_id'] ?>" class="px-3 py-1 rounded-full bg-brand-orange text-white font-bold hover:bg-brand-glow">ดูทีม</a>
-                        </div>
-                    <?php endif; ?>
-
                     <?php if ($player['bio']): ?>
                         <p class="text-xs sm:text-sm text-gray-300 leading-relaxed pt-2 font-normal">
                             <?php echo nl2br(htmlspecialchars($player['bio'])); ?>
@@ -449,44 +483,98 @@ $flashAlert = renderFlashAlert($flash ?: ($error
 
             <section class="space-y-4">
                 <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider flex items-center gap-2">
-                    <i class="fa-solid fa-chart-simple text-brand-orange"></i> สถิติการแข่งขัน
+                    <i class="fa-solid fa-ranking-star text-amber-400"></i> อันดับล่าสุด
                 </h2>
-                <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
-                        <i class="fa-solid fa-trophy text-brand-orange text-lg"></i>
-                        <strong class="mt-2 block text-2xl font-black text-white"><?= $participatedTournaments ?></strong>
-                        <span class="text-xs text-gray-400">เข้าร่วมแข่งขัน</span>
-                        <span class="block text-[10px] text-gray-500">รายการ</span>
-                    </div>
-                    <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
-                        <i class="fa-solid fa-gamepad text-cyan-300 text-lg"></i>
-                        <strong class="mt-2 block text-2xl font-black text-white"><?= $totalMatches ?></strong>
-                        <span class="text-xs text-gray-400">แมตช์ทั้งหมด</span>
-                        <span class="block text-[10px] text-gray-500">แมตช์</span>
-                    </div>
-                    <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
-                        <i class="fa-solid fa-circle-check text-emerald-300 text-lg"></i>
-                        <strong class="mt-2 block text-2xl font-black text-emerald-300"><?= $wins ?></strong>
-                        <span class="text-xs text-gray-400">ชนะ</span>
-                        <span class="block text-[10px] text-gray-500">แมตช์</span>
-                    </div>
-                    <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
-                        <i class="fa-solid fa-percent text-amber-300 text-lg"></i>
-                        <strong class="mt-2 block text-2xl font-black text-amber-300"><?= $winRate ?>%</strong>
-                        <span class="text-xs text-gray-400">อัตราชนะ</span>
-                        <span class="block text-[10px] text-gray-500">จากแมตช์ที่จบแล้ว</span>
-                    </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <?php if (empty($rankings)): ?>
+                        <div class="glass-panel p-5 text-center text-gray-400 rounded-2xl sm:col-span-2 lg:col-span-3">
+                            ยังไม่มีอันดับในระบบ
+                        </div>
+                    <?php endif; ?>
+                    <?php foreach ($rankings as $ranking): ?>
+                        <div class="glass-panel rounded-2xl border border-white/15 p-4 flex items-center justify-between gap-3">
+                            <div class="min-w-0">
+                                <p class="text-xs text-gray-400 truncate"><?= htmlspecialchars($ranking['game_name']) ?></p>
+                                <strong class="mt-1 block text-2xl font-black text-cyan-300">#<?= (int) $ranking['rank_position'] ?></strong>
+                            </div>
+                            <span class="text-right text-xs text-gray-400">
+                                <b class="block text-lg text-brand-orange"><?= (int) ($ranking['points'] ?? 0) ?></b>
+                                คะแนน
+                            </span>
+                        </div>
+                    <?php endforeach; ?>
                 </div>
             </section>
 
             <nav class="flex flex-wrap gap-2 rounded-2xl border border-white/15 bg-white/5 p-2" aria-label="เมนูโปรไฟล์นักกีฬา">
                 <button type="button" class="public-tab px-4 py-2 rounded-xl bg-brand-orange text-white text-xs font-bold" data-tab="overview">ภาพรวม</button>
                 <button type="button" class="public-tab px-4 py-2 rounded-xl text-gray-300 hover:bg-white/10 text-xs font-bold" data-tab="results">ผลการแข่งขัน</button>
-                <button type="button" class="public-tab px-4 py-2 rounded-xl text-gray-300 hover:bg-white/10 text-xs font-bold" data-tab="rankings">อันดับ</button>
                 <button type="button" class="public-tab px-4 py-2 rounded-xl text-gray-300 hover:bg-white/10 text-xs font-bold" data-tab="teams">ทีม</button>
             </nav>
 
             <div id="public-tab-overview" class="public-tab-panel space-y-4">
+                <section class="glass-panel rounded-2xl border border-white/15 p-5 space-y-4">
+                    <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/15 pb-3">
+                        <i class="fa-solid fa-id-card text-brand-orange"></i> ข้อมูลทีมปัจจุบัน
+                    </h2>
+                    <?php if (empty($teams)): ?>
+                        <p class="text-sm text-gray-400">ยังไม่ได้สังกัดทีมใดในขณะนี้</p>
+                    <?php else: ?>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                            <div>
+                                <span class="block text-xs text-gray-400">ทีมปัจจุบัน</span>
+                                <a href="team-profile.php?id=<?= (int) $teams[0]['team_id'] ?>" class="mt-1 inline-block font-bold text-cyan-300 hover:text-brand-orange hover:underline">
+                                    <?= htmlspecialchars($teams[0]['name']) ?>
+                                </a>
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-400">ตำแหน่ง</span>
+                                <strong class="mt-1 block text-white"><?= ((int) $teams[0]['is_captain'] === 1) ? 'Captain' : 'Player' ?></strong>
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-400">เกมที่เล่น</span>
+                                <strong class="mt-1 block text-white"><?= htmlspecialchars($teams[0]['game_name'] ?? 'ไม่ระบุเกม') ?></strong>
+                            </div>
+                            <div>
+                                <span class="block text-xs text-gray-400">สถานะกัปตัน</span>
+                                <strong class="mt-1 block <?= ((int) $teams[0]['is_captain'] === 1) ? 'text-amber-300' : 'text-gray-300' ?>">
+                                    <?= ((int) $teams[0]['is_captain'] === 1) ? 'เป็นกัปตันทีม' : 'สมาชิกทีม' ?>
+                                </strong>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </section>
+                <section class="space-y-4">
+                    <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-chart-simple text-brand-orange"></i> สถิติการแข่งขัน
+                    </h2>
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
+                            <i class="fa-solid fa-trophy text-brand-orange text-lg"></i>
+                            <strong class="mt-2 block text-2xl font-black text-white"><?= $participatedTournaments ?></strong>
+                            <span class="text-xs text-gray-400">เข้าร่วมแข่งขัน</span>
+                            <span class="block text-[10px] text-gray-500">รายการ</span>
+                        </div>
+                        <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
+                            <i class="fa-solid fa-gamepad text-cyan-300 text-lg"></i>
+                            <strong class="mt-2 block text-2xl font-black text-white"><?= $totalMatches ?></strong>
+                            <span class="text-xs text-gray-400">แมตช์ทั้งหมด</span>
+                            <span class="block text-[10px] text-gray-500">แมตช์</span>
+                        </div>
+                        <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
+                            <i class="fa-solid fa-circle-check text-emerald-300 text-lg"></i>
+                            <strong class="mt-2 block text-2xl font-black text-emerald-300"><?= $wins ?></strong>
+                            <span class="text-xs text-gray-400">ชนะ</span>
+                            <span class="block text-[10px] text-gray-500">แมตช์</span>
+                        </div>
+                        <div class="glass-panel rounded-2xl border border-white/15 p-4 text-center">
+                            <i class="fa-solid fa-percent text-amber-300 text-lg"></i>
+                            <strong class="mt-2 block text-2xl font-black text-amber-300"><?= $winRate ?>%</strong>
+                            <span class="text-xs text-gray-400">อัตราชนะ</span>
+                            <span class="block text-[10px] text-gray-500">จากแมตช์ที่จบแล้ว</span>
+                        </div>
+                    </div>
+                </section>
                 <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/15 pb-3" data-aos="fade-right">
                     <i class="fa-solid fa-trophy text-brand-orange"></i>                     รายการที่กำลังแข่งขัน
                 </h2>
@@ -579,51 +667,6 @@ $flashAlert = renderFlashAlert($flash ?: ($error
                             <button type="button" id="show-all-matches" class="mt-4 rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/20">ดูทั้งหมด</button>
                         <?php endif; ?>
                     <?php endif; ?>
-                </div>
-            </div>
-
-            <div id="public-tab-rankings" class="public-tab-panel space-y-4 hidden">
-                <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/15 pb-3"
-                    data-aos="fade-right">
-                    <i class="fa-solid fa-ranking-star text-amber-400"></i> อันดับตามเกม
-                </h2>
-
-                <div class="glass-panel rounded-2xl overflow-hidden shadow-xl border border-white/15">
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-sm text-gray-200">
-                            <thead class="bg-black/40 text-xs uppercase font-bold text-gray-300 border-b border-white/15 font-display">
-                                <tr>
-                                    <th class="p-4">เกม</th>
-                                    <th class="p-4 text-center">อันดับ</th>
-                                    <th class="p-4 text-center">คะแนน</th>
-                                    <th class="p-4 text-center">แข่งแล้ว</th>
-                                    <th class="p-4 text-center">ชนะ</th>
-                                    <th class="p-4 text-center">แพ้</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-white/10 font-medium">
-                                <?php if (count($rankings) == 0): ?>
-                                    <tr>
-                                        <td colspan="6" class="p-8 text-center text-gray-400">ยังไม่มีสถิติการแข่งขันในระบบ</td>
-                                    </tr>
-                                <?php endif; ?>
-                                <?php foreach ($rankings as $rIndex => $r):
-                                    $rowDelay = min($rIndex * 50, 600);
-                                    ?>
-                                    <tr class="stat-row transition-colors hover:bg-white/10"
-                                        style="animation-delay: <?php echo $rowDelay; ?>ms;">
-                                        <td class="p-4 font-bold text-white"><?php echo htmlspecialchars($r['game_name']); ?></td>
-                                        <td class="p-4 text-center font-display font-black text-cyan-300">#<?php echo (int) ($r['rank_position'] ?? 0); ?></td>
-                                        <td class="p-4 text-center font-display font-black text-brand-orange stat-counter"
-                                            data-target="<?php echo $r['points'] ?? 0; ?>">0</td>
-                                        <td class="p-4 text-center font-mono"><?php echo $r['matches_played'] ?? 0; ?></td>
-                                        <td class="p-4 text-center font-mono text-emerald-400 font-bold"><?php echo $r['wins'] ?? 0; ?>W</td>
-                                        <td class="p-4 text-center font-mono text-rose-400 font-bold"><?php echo $r['losses'] ?? 0; ?>L</td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             </div>
 

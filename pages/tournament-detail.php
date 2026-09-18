@@ -325,7 +325,7 @@ if ($tournamentPlayMode === 'solo' && !$groupRows) {
         JOIN matches m ON m.group_id = tg.tournament_group_id
         JOIN players p ON p.player_id IN (m.team1_id, m.team2_id)
         LEFT JOIN users u ON u.user_id = p.user_id
-        WHERE tg.tournament_id = :tid AND m.status IN ('completed', 'walkover')
+        WHERE tg.tournament_id = :tid
         GROUP BY tg.tournament_group_id, tg.name, tg.tournament_category_id, p.player_id, p.display_name, u.username
         ORDER BY tg.name, points DESC, wins DESC, losses ASC, team_name ASC
     ");
@@ -830,13 +830,15 @@ function roundName($roundNum, $totalRounds)
                                                 $rowHighlightClass = $isTopTeamInGroup ? 'border-l-4 border-l-amber-400 bg-amber-500/10' : 'hover:bg-white/10';
                                                 ?>
                                                 <tr class="transition-colors <?php echo $rowHighlightClass; ?>">
-                                                    <td class="p-3 font-bold text-white flex items-center gap-2">
+                                                    <td class="p-3 font-bold text-white whitespace-nowrap">
+                                                        <span class="inline-flex items-center gap-2">
                                                         <?php if ($isTopTeamInGroup): ?>
                                                             <i class="fa-solid fa-crown text-amber-400"></i>
                                                         <?php else: ?>
                                                             <i class="fa-solid fa-shield-halved text-brand-orange"></i>
                                                         <?php endif; ?>
                                                         <?php echo htmlspecialchars($r['team_name']); ?>
+                                                        </span>
                                                     </td>
                                                     <td class="p-3 text-center text-gray-400 font-mono"><?php echo $r['played']; ?></td>
                                                     <td class="p-3 text-center text-emerald-400 font-mono font-bold"><?php echo $r['wins']; ?></td>
@@ -855,6 +857,7 @@ function roundName($roundNum, $totalRounds)
             <?php endif; ?>
 
             <!-- ================= 6. TOURNAMENT BRACKET ================= -->
+            <?php if ($playoffMatches || empty($groupedStandings)): ?>
             <section id="bracket" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/15 pb-4 gap-4">
                     <div class="flex items-center gap-3">
@@ -875,7 +878,7 @@ function roundName($roundNum, $totalRounds)
                     </div>
                 <?php endif; ?>
 
-                <?php if (!empty($roundsGrouped)): ?>
+                <?php if (!empty(array_filter($bracketSections, static fn(array $section): bool => !empty($section['rounds'])))): ?>
                     <div class="holo-arena-box p-6 sm:p-10 rounded-3xl relative shadow-2xl">
                         <div class="flex items-center justify-between pb-4 mb-6 border-b border-white/15 relative z-10">
                             <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-bold uppercase tracking-wider">
@@ -1005,6 +1008,7 @@ function roundName($roundNum, $totalRounds)
                     </div>
                 <?php endif; ?>
             </section>
+            <?php endif; ?>
 
             <section id="ranking" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex items-center gap-3 border-b border-white/15 pb-4">

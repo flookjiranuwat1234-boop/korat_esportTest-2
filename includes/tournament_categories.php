@@ -212,6 +212,7 @@ function getTournamentCategoryId(PDO $pdo, int $tournamentId, string $categoryCo
 function waiveRosterMemberCheckin(PDO $pdo, int $registrationId, int $playerId, string $reason, int $adminId): void
 {
     ensureTournamentCategorySchema($pdo);
+    markPlayerAsCompetitor($pdo, $playerId);
     $pdo->prepare('UPDATE tournament_registration_members
         SET checkin_status = \'waived\', checkin_waived_reason = :reason, checkin_waived_by = :admin_id, checkin_waived_at = NOW()
         WHERE tournament_registration_id = :registration_id AND player_id = :player_id')

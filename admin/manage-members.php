@@ -3,8 +3,10 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/team_roles.php';
+require_once '../includes/player_competitor.php';
 requireRole('admin');
 ensureTeamMemberRolesTable($pdo);
+ensurePlayerCompetitorColumn($pdo);
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
 $currentUser = [
@@ -66,6 +68,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'reason' => trim($_POST['suspension_reason'] ?? '') ?: 'ระงับโดยผู้ดูแลระบบ',
                             'id' => $userId,
                         ]);
+                    } elseif ($newStatus === 'disabled') {
+                        $pdo->prepare("
+                            UPDATE users
+                            SET status = 'disabled',
+                                suspended_at = NULL,
+                                suspended_by = NULL,
+                                suspension_reason = NULL,
+                                reactivated_at = NULL
+                            WHERE user_id = :id
+                        ")->execute(['id' => $userId]);
                     } elseif ($newStatus === 'active') {
                         $pdo->prepare("
                             UPDATE users
@@ -349,7 +361,7 @@ if ($q !== '') {
         OR g.name LIKE :q
         OR EXISTS (SELECT 1 FROM team_members tm2 JOIN teams t2 ON t2.team_id = tm2.team_id
             WHERE tm2.player_id = p.player_id AND tm2.is_active = 1
-              AND (t2.name LIKE :q OR t2.tag LIKE :q OR COALESCE(t2.team_tag, '') LIKE :q)))";
+              AND (t2.name LIKE :q OR t2.tag LIKE :q)))";
     $params['q'] = "%{$q}%";
 }
 $allowedGenders = ['male', 'female', 'other'];
@@ -357,7 +369,7 @@ if (in_array($genderFilter, $allowedGenders, true)) {
     $sql .= " AND p.gender = :gender";
     $params['gender'] = $genderFilter;
 }
-$allowedStatuses = ['active', 'suspended', 'disabled'];
+$allowedStatuses = ['active', 'suspended'];
 if (in_array($statusFilter, $allowedStatuses, true)) {
     $sql .= " AND u.status = :status";
     $params['status'] = $statusFilter;
@@ -366,19 +378,25 @@ if ($roleFilter === 'admin') {
     $sql .= " AND u.role = 'admin'";
 } elseif ($roleFilter === 'athlete') {
     // "นักกีฬา" คือผู้ที่เคยเข้าเช็คอิน / อนุโลมในรายการแข่งขันจริง
-    $sql .= " AND u.role != 'admin' AND p.player_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM tournament_registration_members trm
-        WHERE trm.player_id = p.player_id
-          AND trm.checkin_status IN ('checked_in', 'waived')
-    )";
-} elseif ($roleFilter === 'guest') {
-    // "ผู้ใช้ทั่วไป" = ไม่ใช่แอดมิน และยังไม่เคยเช็คอิน/อนุโลมลงแข่งขันจริง
-    $sql .= " AND u.role != 'admin' AND (
-        p.player_id IS NULL
-        OR NOT EXISTS (
+    $sql .= " AND u.role != 'admin' AND p.player_id IS NOT NULL AND (
+        EXISTS (
             SELECT 1 FROM tournament_registration_members trm
             WHERE trm.player_id = p.player_id
               AND trm.checkin_status IN ('checked_in', 'waived')
+        )
+        OR p.ever_competed = 1
+    )";
+} elseif ($roleFilter === 'guest') {
+    // "ผู้ใช้ทั่วไป" = ไม่ใช่แอดมิน และยังไม่เคยลงแข่งจริง
+    $sql .= " AND u.role != 'admin' AND (
+        p.player_id IS NULL
+        OR (
+            NOT EXISTS (
+                SELECT 1 FROM tournament_registration_members trm
+                WHERE trm.player_id = p.player_id
+                  AND trm.checkin_status IN ('checked_in', 'waived')
+            )
+            AND p.ever_competed = 0
         )
     )";
 }
@@ -388,19 +406,24 @@ if ($profileFilter === 'none') {
 } elseif ($profileFilter === 'has') {
     $sql .= " AND p.player_id IS NOT NULL";
 } elseif ($profileFilter === 'confirmed') {
-    // นักกีฬาตัวจริง: มีโปรไฟล์ + เคยเช็คอินเข้าแข่งจริงใน tournament_registration_members
-    $sql .= " AND p.player_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM tournament_registration_members trm
-        WHERE trm.player_id = p.player_id
-          AND trm.checkin_status IN ('checked_in', 'waived')
+    // นักกีฬาตัวจริง: มีโปรไฟล์ + เคยลงแข่งหรือเช็คอินจริง
+    $sql .= " AND p.player_id IS NOT NULL AND (
+        EXISTS (
+            SELECT 1 FROM tournament_registration_members trm
+            WHERE trm.player_id = p.player_id
+              AND trm.checkin_status IN ('checked_in', 'waived')
+        )
+        OR p.ever_competed = 1
     )";
 } elseif ($profileFilter === 'profile_only') {
-    // มีโปรไฟล์แล้ว แต่ยังไม่เคยเช็คอินเข้าแข่งเลยสักครั้ง
-    $sql .= " AND p.player_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM tournament_registration_members trm
-        WHERE trm.player_id = p.player_id
-          AND trm.checkin_status IN ('checked_in', 'waived')
-    )";
+    // มีโปรไฟล์แล้ว แต่ยังไม่เคยลงแข่งหรือเช็คอิน
+    $sql .= " AND p.player_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM tournament_registration_members trm
+            WHERE trm.player_id = p.player_id
+              AND trm.checkin_status IN ('checked_in', 'waived')
+        )
+        AND p.ever_competed = 0";
 }
 $sql .= " GROUP BY u.user_id, u.username, u.email, u.role, u.status, u.created_at{$lastLoginGroup}, suspended_admin.username,
     p.player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province, p.avatar_path
@@ -763,7 +786,6 @@ if ($flash) {
                             <option value="">ทุกสถานะบัญชี</option>
                             <option value="active" <?= $statusFilter === 'active' ? 'selected' : ''; ?>>ใช้งานปกติ</option>
                             <option value="suspended" <?= $statusFilter === 'suspended' ? 'selected' : ''; ?>>ระงับบัญชี</option>
-                            <option value="disabled" <?= $statusFilter === 'disabled' ? 'selected' : ''; ?>>ปิดใช้งาน</option>
                         </select>
                     </div>
 
@@ -928,12 +950,10 @@ if ($flash) {
                                                         <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>"><input type="hidden" name="action" value="toggle_status"><input type="hidden" name="target_status" value="<?php echo $m['status'] === 'active' ? 'suspended' : 'active'; ?>"><input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
                                                         <button type="submit" class="admin-action-item <?php echo $m['status'] === 'active' ? 'text-red-600 hover:bg-red-50' : 'text-emerald-700 hover:bg-emerald-50'; ?>"><i class="fa-solid <?php echo $m['status'] === 'active' ? 'fa-user-slash' : 'fa-user-check'; ?>"></i><?php echo $m['status'] === 'active' ? 'ระงับบัญชี' : 'เปิดใช้งานอีกครั้ง'; ?></button>
                                                     </form>
-                                                    <?php if ($m['status'] !== 'disabled'): ?>
-                                                        <form method="POST" onsubmit="return confirm('ต้องการปิดใช้งานบัญชีนี้ใช่หรือไม่?')">
-                                                            <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>"><input type="hidden" name="action" value="toggle_status"><input type="hidden" name="target_status" value="disabled"><input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
-                                                            <button type="submit" class="admin-action-item text-slate-700 hover:bg-slate-50"><i class="fa-solid fa-user-xmark text-slate-400"></i>ปิดใช้งาน</button>
-                                                        </form>
-                                                    <?php endif; ?>
+                                                    <form method="POST" onsubmit="return confirm('ต้องการลบบัญชีนี้ใช่หรือไม่? การลบจะไม่สามารถย้อนกลับได้ หากบัญชีมีประวัติการแข่งขันระบบจะป้องกันการลบ')">
+                                                        <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>"><input type="hidden" name="action" value="delete_member"><input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
+                                                        <button type="submit" class="admin-action-item text-red-600 hover:bg-red-50"><i class="fa-solid fa-trash"></i>ลบบัญชี</button>
+                                                    </form>
                                                 </div>
                                             </div>
                                         <?php else: ?>

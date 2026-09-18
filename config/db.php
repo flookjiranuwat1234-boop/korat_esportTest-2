@@ -24,6 +24,11 @@ try {
     $pdo->exec("SET time_zone = '+07:00'");
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    $demoColumn = $pdo->query("SHOW COLUMNS FROM tournaments LIKE 'is_demo'")->fetch();
+    if (!$demoColumn) {
+        $pdo->exec("ALTER TABLE tournaments ADD COLUMN is_demo TINYINT(1) NOT NULL DEFAULT 0 AFTER name");
+    }
+    $pdo->exec("UPDATE tournaments SET is_demo = 1, name = TRIM(SUBSTRING(name, 7)) WHERE name LIKE '[DEMO]%'");
 } catch (PDOException $e) {
     die("เชื่อมต่อฐานข้อมูลไม่ได้: " . $e->getMessage());
 }

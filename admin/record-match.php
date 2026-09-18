@@ -268,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
        $played = array_map('intval', $_POST['played_player_ids'] ?? []);
        $mvpId = (int) ($_POST['mvp_player_id'] ?? 0);
        $winnerTeamId = 0;
-       $levels = ['outstanding' => 5, 'normal' => 3, 'participation' => 1, 'absent' => 0];
+       $levels = ['outstanding', 'normal', 'participation', 'absent'];
        if (!$performanceMatch || !in_array($performanceMatch['status'], ['completed', 'walkover'], true)) {
            $error = 'ต้องบันทึกผล Match ให้เสร็จก่อนบันทึกผลงานผู้เล่น';
        } elseif (!$played || count($played) !== count(array_unique($played)) || !$mvpId || !in_array($mvpId, $played, true)) {
@@ -300,7 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
            }
            $invalidRating = false;
            foreach ($played as $playerId) {
-               if (!isset($levels[$ratings[$playerId] ?? ''])) {
+               if (!in_array($ratings[$playerId] ?? '', $levels, true)) {
                    $invalidRating = true;
                    break;
                }
@@ -324,10 +324,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                            throw new RuntimeException('Match นี้ประเมินคะแนนผู้เล่นไปแล้ว');
                        }
                    }
-                   $rankingStmt = $pdo->prepare('INSERT INTO player_rankings (game_id, player_id, category, points, matches_played, wins, losses)
-                       VALUES (:game_id, :player_id, :category, :points, 1, :wins, :losses)
-                       ON DUPLICATE KEY UPDATE points = points + VALUES(points), matches_played = matches_played + 1,
-                       wins = wins + VALUES(wins), losses = losses + VALUES(losses)');
                    $historyFields = ['game_id', 'tournament_id', 'tournament_category_id', 'player_id', 'team_id', 'points'];
                    $historyValues = [':game_id', ':tournament_id', ':category_id', ':player_id', ':team_id', ':points'];
                    if ($hasMatchId) { $historyFields[] = 'match_id'; $historyValues[] = ':match_id'; }
@@ -338,14 +334,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                    $winnerTeamId = (int) $performanceMatch['winner_team_id'];
                    foreach ($played as $playerId) {
                        $member = $rosterMap[$playerId];
-                       $basePoints = $levels[$ratings[$playerId] ?? 'participation'] ?? 1;
-                       $points = $basePoints + ($playerId === $mvpId ? 5 : 0);
-                       $isWinner = (int) $member['team_id'] === $winnerTeamId;
-                       $rankingStmt->execute([
-                           'game_id' => (int) $performanceMatch['game_id'], 'player_id' => $playerId,
-                           'category' => strtolower(trim($member['category'] ?: 'open')), 'points' => $points,
-                           'wins' => $isWinner ? 1 : 0, 'losses' => $isWinner ? 0 : 1,
-                       ]);
+                       $performanceLevel = $ratings[$playerId] ?? 'participation';
+                       $points = playerPerformancePoints($performanceLevel, $playerId === $mvpId);
                        $historyParams = [
                            'game_id' => (int) $performanceMatch['game_id'], 'tournament_id' => $tournamentId,
                            'category_id' => (int) $performanceMatch['tournament_category_id'], 'player_id' => $playerId,
@@ -357,6 +347,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                        }
                        if (in_array('created_by', $historyColumns, true)) $historyParams['created_by'] = (int) ($_SESSION['user_id'] ?? 1);
                        $historyStmt->execute($historyParams);
+
+                       if ($points > 0) {
+                           $rankingUpdate = $pdo->prepare('
+                               UPDATE player_rankings
+                               SET points = points + :points
+                               WHERE game_id = :game_id AND player_id = :player_id AND category = :category
+                           ');
+                           $rankingUpdate->execute([
+                               'points' => $points,
+                               'game_id' => (int) $performanceMatch['game_id'],
+                               'player_id' => $playerId,
+                               'category' => strtolower(trim((string) ($member['category'] ?? 'open'))),
+                           ]);
+                           if ($rankingUpdate->rowCount() !== 1) {
+                               throw new RuntimeException('ไม่พบรายการ Ranking ของผู้เล่นสำหรับอัปเดตคะแนนผลงาน');
+                           }
+                       }
                    }
                    $pdo->commit();
                    $success = 'บันทึกคะแนนผู้เล่นและ MVP เรียบร้อยแล้ว';
@@ -1071,28 +1078,36 @@ if ($flash) {
                                 </div>
 
                                 <div class="overflow-x-auto">
-                                    <table class="w-full text-left text-sm text-slate-600">
+                                    <table class="w-full min-w-[960px] table-fixed text-left text-sm text-slate-600">
+                                        <colgroup>
+                                            <col class="w-[8%]">
+                                            <col class="w-[21%]">
+                                            <col class="w-[8%]">
+                                            <col class="w-[21%]">
+                                            <col class="w-[16%]">
+                                            <col class="w-[14%]">
+                                            <col class="w-[12%]">
+                                        </colgroup>
                                         <thead class="bg-slate-100/50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                                             <tr>
-                                                <th class="p-4 text-center w-16">คู่ที่</th>
-                                                <th class="p-4 text-right">ผู้แข่งขัน 1</th>
-                                                <th class="p-4 text-center w-16">VS</th>
-                                                <th class="p-4">ผู้แข่งขัน 2</th>
-                                                <th class="p-4 text-center">ผลการแข่งขัน</th>
-                                                <th class="p-4 text-center">สถานะ</th>
-                                                <th class="p-4 text-center">กำหนดการ</th>
-                                                <th class="p-4 text-center">จัดการ</th>
+                                                <th class="p-4 text-center align-middle">คู่ที่</th>
+                                                <th class="p-4 text-right align-middle">ผู้แข่งขัน 1</th>
+                                                <th class="p-4 text-center align-middle">VS</th>
+                                                <th class="p-4 text-left align-middle">ผู้แข่งขัน 2</th>
+                                                <th class="p-4 text-center align-middle">ผลการแข่งขัน</th>
+                                                <th class="p-4 text-center align-middle">สถานะ</th>
+                                                <th class="p-4 text-center align-middle">จัดการ</th>
                                             </tr>
                                         </thead>
                                         <tbody class="divide-y divide-slate-100">
                                             <?php foreach ($roundMatches as $m): ?>
                                             <?php $participantWithdrawn = in_array($m['team1_participation_status'] ?? '', ['withdrawn', 'disqualified'], true) || in_array($m['team2_participation_status'] ?? '', ['withdrawn', 'disqualified'], true); ?>
                                             <tr class="hover:bg-slate-50/80 transition-colors">
-                                                <td class="p-4 text-center font-mono text-xs font-bold text-slate-400">
+                                                <td class="p-4 text-center align-middle font-mono text-xs font-bold text-slate-400">
                                                     #<?php echo $m['match_index'] + 1; ?>
                                                 </td>
 
-                                                <td class="p-4 text-right font-bold text-slate-900">
+                                                <td class="p-4 text-right align-middle font-bold text-slate-900">
                                                     <?php if (!empty($m['team1_id'])): ?>
                                                         <?php echo htmlspecialchars(trim($m['team1_name'])); ?>
                                                         <?php if ($m['team1_cat'] == 'female'): ?>
@@ -1105,9 +1120,9 @@ if ($flash) {
                                                     <?php endif; ?>
                                                 </td>
 
-                                                <td class="p-4 text-center text-xs font-black text-slate-300">VS</td>
+                                                <td class="p-4 text-center align-middle text-xs font-black text-slate-300">VS</td>
 
-                                                <td class="p-4 font-bold text-slate-900">
+                                                <td class="p-4 text-left align-middle font-bold text-slate-900">
                                                     <?php if (!empty($m['team2_id'])): ?>
                                                         <?php echo htmlspecialchars(trim($m['team2_name'])); ?>
                                                         <?php if ($m['team2_cat'] == 'female'): ?>
@@ -1120,7 +1135,7 @@ if ($flash) {
                                                     <?php endif; ?>
                                                 </td>
 
-                                                <td class="p-4 text-center">
+                                                <td class="p-4 text-center align-middle">
                                                     <?php if ($m['status'] == 'completed' || $m['status'] == 'walkover'): ?>
                                                         <span class="font-display font-bold text-slate-900 bg-slate-100 border border-slate-200 px-4 py-1.5 rounded-lg inline-block text-sm">
                                                             <?php echo $m['team1_score']; ?> - <?php echo $m['team2_score']; ?>
@@ -1176,7 +1191,7 @@ if ($flash) {
                                                     <?php endif; ?>
                                                 </td>
 
-                                                <td class="p-4 text-center">
+                                                <td class="p-4 text-center align-middle">
                                                     <?php if ($m['status'] == 'completed'): ?>
                                                         <span class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">แข่งเสร็จแล้ว</span>
                                                     <?php elseif ($m['status'] == 'walkover'): ?>
@@ -1184,10 +1199,6 @@ if ($flash) {
                                                     <?php else: ?>
                                                         <span class="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold">รอแข่ง</span>
                                                     <?php endif; ?>
-                                                </td>
-                                                <td class="p-4 text-center align-top">
-                                                    <div class="text-xs font-semibold text-slate-700"><?= !empty($m['scheduled_at']) ? date('d/m/Y H:i', strtotime($m['scheduled_at'])) : (in_array($m['status'], ['completed', 'walkover'], true) ? 'ไม่ได้บันทึกกำหนดการ' : 'ยังไม่กำหนด') ?></div>
-                                                    <div class="mt-1 text-[11px] text-slate-400"><?= htmlspecialchars($m['venue_area'] ?: $m['venue_name'] ?: '-') ?></div>
                                                 </td>
                                                 <td class="p-4 text-center align-top">
                                                     <button type="button" class="match-action-toggle inline-flex h-9 items-center gap-2 rounded-lg bg-brand-orange px-3 text-xs font-semibold text-white hover:bg-brand-glow" data-match-id="<?= (int) $m['match_id'] ?>" data-menu-id="match-action-menu-<?= (int) $m['match_id'] ?>" aria-haspopup="menu" aria-expanded="false"><i class="fa-solid fa-ellipsis"></i>จัดการ</button>
@@ -1214,7 +1225,7 @@ if ($flash) {
     <div id="matchDetailModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 id="matchDetailTitle" class="font-bold text-slate-900">รายละเอียด Match</h3><button type="button" onclick="closeMatchModal('matchDetailModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><div id="matchDetailContent" class="space-y-3 p-6 text-sm"></div><div class="flex justify-end border-t border-slate-100 bg-slate-50 px-6 py-4"><button type="button" onclick="closeMatchModal('matchDetailModal')" class="rounded-lg bg-slate-200 px-4 py-2 text-xs font-bold">ปิด</button></div></div></div>
     <div id="matchScheduleModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">จัดตารางการแข่งขัน</h3><button type="button" onclick="closeMatchModal('matchScheduleModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_schedule"><input type="hidden" name="match_id" id="scheduleMatchId"><div id="scheduleMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><label class="block text-xs font-bold">วันและเวลาแข่งขัน<input type="datetime-local" name="scheduled_at" id="scheduleDate" required class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><label class="block text-xs font-bold">สนาม/สถานที่<input name="venue_name" id="scheduleVenue" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><label class="block text-xs font-bold">พื้นที่/เครื่อง/โต๊ะ<input name="venue_area" id="scheduleArea" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></label><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('matchScheduleModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึกกำหนดการ</button></div></form></div></div>
     <div id="matchScoreModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">บันทึกผลการแข่งขัน</h3><button type="button" onclick="closeMatchModal('matchScoreModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" id="matchScoreForm" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_score"><input type="hidden" name="match_id" id="scoreMatchId"><div id="scoreMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><div id="scoreFields"></div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('matchScoreModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">ยืนยันผลการแข่งขัน</button></div></form></div></div>
-    <div id="playerPerformanceModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">บันทึกผลงานผู้เล่น</h3><button type="button" onclick="closeMatchModal('playerPerformanceModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" id="playerPerformanceForm" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_player_performance"><input type="hidden" name="match_id" id="performanceMatchId"><div id="performanceMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><p class="text-xs text-slate-500">เลือกผู้เล่นที่ลงแข่ง, MVP 1 คน และระดับผลงาน ระบบจะบวก MVP เพิ่มอีก 5 คะแนน</p><div id="performanceFields" class="space-y-2"></div><div class="rounded-xl bg-orange-50 p-3 text-sm font-bold text-orange-800">คะแนนรวมตัวอย่าง: <span id="performanceTotal">0</span> คะแนน</div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('playerPerformanceModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึกคะแนนผู้เล่น</button></div></form></div></div>
+    <div id="playerPerformanceModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/70 p-4"><div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4"><h3 class="font-bold text-slate-900">บันทึกผลงานผู้เล่น</h3><button type="button" onclick="closeMatchModal('playerPerformanceModal')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button></div><form method="POST" id="playerPerformanceForm" class="space-y-4 p-6"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>"><input type="hidden" name="action" value="save_player_performance"><input type="hidden" name="match_id" id="performanceMatchId"><div id="performanceMatchLabel" class="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"></div><p class="text-xs text-slate-500">เลือกผู้เล่นที่ลงแข่ง, MVP 1 คน และระดับผลงาน ระบบจะบวก MVP เพิ่มอีก 2 คะแนน</p><div id="performanceFields" class="space-y-2"></div><div class="rounded-xl bg-orange-50 p-3 text-sm font-bold text-orange-800">คะแนนรวมตัวอย่าง: <span id="performanceTotal">0</span> คะแนน</div><div class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onclick="closeMatchModal('playerPerformanceModal')" class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold">ยกเลิก</button><button type="submit" class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">บันทึกคะแนนผู้เล่น</button></div></form></div></div>
     <script>
         const matchData = <?= json_encode(array_column($matches, null, 'match_id'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
         function openMatchModal(id) { const element = document.getElementById(id); element.classList.remove('hidden'); element.classList.add('flex'); }
@@ -1237,7 +1248,7 @@ if ($flash) {
             const teamTabs = Object.entries(rosterByTeam).map(([teamId, players], index) => `<button type="button" class="performance-team-tab rounded-lg px-3 py-2 text-xs font-bold ${index === 0 ? 'bg-brand-orange text-white' : 'bg-slate-100 text-slate-600'}" data-team-id="${teamId}">${escapePerformanceText(teamNames[teamId] || 'ทีมแข่งขัน')}</button>`).join('');
             const teamPanels = Object.entries(rosterByTeam).map(([teamId, players], index) => `<section class="performance-team-panel space-y-2 ${index === 0 ? '' : 'hidden'}" data-team-id="${teamId}"><h4 class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">${escapePerformanceText(teamNames[teamId] || 'ทีมแข่งขัน')}</h4>${players.map(player => {
                 const roles = String(player.member_roles || 'player').split(',').map(role => ({coach: 'Coach', manager: 'Manager', player: player.is_starter == 1 ? 'Starter' : 'Player', substitute: 'Substitute'}[role.trim()] || role.trim())).join(', ');
-                return `<label class="grid grid-cols-[auto_1fr_10rem] items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm"><input type="checkbox" name="played_player_ids[]" value="${player.player_id}" data-performance-played class="h-4 w-4"><span><span class="font-semibold">${escapePerformanceText(player.display_name)}</span><span class="ml-2 text-[10px] text-slate-500">${escapePerformanceText(roles)}</span><select name="performance[${player.player_id}]" data-performance-level class="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"><option value="outstanding">โดดเด่น +5</option><option value="normal" selected>ปกติ +3</option><option value="participation">มีส่วนร่วม +1</option><option value="absent">ไม่ได้ลงแข่ง 0</option></select></span><label class="text-xs text-slate-600"><input type="radio" name="mvp_player_id" value="${player.player_id}" data-performance-mvp> MVP</label></label>`;
+                return `<label class="grid grid-cols-[auto_1fr_10rem] items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm"><input type="checkbox" name="played_player_ids[]" value="${player.player_id}" data-performance-played class="h-4 w-4"><span><span class="font-semibold">${escapePerformanceText(player.display_name)}</span><span class="ml-2 text-[10px] text-slate-500">${escapePerformanceText(roles)}</span><select name="performance[${player.player_id}]" data-performance-level class="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs"><option value="outstanding">โดดเด่น +3</option><option value="normal" selected>ปกติ +1</option><option value="participation">มีส่วนร่วม +1</option><option value="absent">ไม่ได้ลงแข่ง 0</option></select></span><label class="text-xs text-slate-600"><input type="radio" name="mvp_player_id" value="${player.player_id}" data-performance-mvp> MVP +2</label></label>`;
             }).join('')}</section>`).join('');
             fields.innerHTML = `<div class="flex gap-2 border-b border-slate-200 pb-2">${teamTabs}</div>${teamPanels}`;
             fields.querySelectorAll('.performance-team-tab').forEach(tab => tab.addEventListener('click', () => {
@@ -1255,11 +1266,11 @@ if ($flash) {
         }
         function escapePerformanceText(value) { return String(value || '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[character])); }
         function updatePerformancePreview() {
-            const points = {outstanding: 5, normal: 3, participation: 1, absent: 0};
+            const points = {outstanding: 3, normal: 1, participation: 1, absent: 0};
             let total = 0;
             document.querySelectorAll('#performanceFields [data-performance-played]:checked').forEach(input => {
                 const level = document.querySelector(`#performanceFields select[name="performance[${input.value}]"]`);
-                total += (points[level ? level.value : 'participation'] || 0) + (document.querySelector(`#performanceFields input[data-performance-mvp][value="${input.value}"]:checked`) ? 5 : 0);
+                total += (points[level ? level.value : 'participation'] || 0) + (document.querySelector(`#performanceFields input[data-performance-mvp][value="${input.value}"]:checked`) ? 2 : 0);
             });
             document.getElementById('performanceTotal').textContent = total;
         }

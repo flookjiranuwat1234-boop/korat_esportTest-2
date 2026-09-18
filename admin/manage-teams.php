@@ -4,6 +4,7 @@ require_once '../includes/auth.php';
 require_once '../includes/tournament_roster.php';
 require_once '../includes/tournament_categories.php';
 require_once '../includes/registration_status.php';
+require_once '../includes/tournament_demo.php';
 requireRole('admin');
 
 ensureTournamentRosterTables($pdo);
@@ -17,6 +18,7 @@ $currentUser = [
 
 function getTournamentRegistrationState(array $tournament, DateTimeImmutable $now): array
 {
+    if (isDemoTournament($tournament)) return ['allowed' => true, 'message' => ''];
     $status = strtolower((string) ($tournament['status'] ?? 'draft'));
     $start = !empty($tournament['registration_start'])
         ? new DateTimeImmutable((string) $tournament['registration_start'], new DateTimeZone('Asia/Bangkok'))
@@ -322,40 +324,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_solo_player') {
             } elseif (($targetTournament['play_mode'] ?? 'team') !== 'solo') {
                 $error = 'ฟังก์ชันเพิ่มผู้แข่งขันแบบเดี่ยวใช้ได้เฉพาะทัวร์นาเมนต์ Solo เท่านั้น';
             } else {
-                $windowState = getTournamentRegistrationState($targetTournament, new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
-                if (!$windowState['allowed']) {
-                    $error = $windowState['message'];
-                } else {
-                    $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label, max_participants, starters_count
-                        FROM tournament_categories
-                        WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1 LIMIT 1');
-                    $categoryStmt->execute(['category_id' => $targetCategoryId, 'tournament_id' => $targetTournamentId]);
-                    $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
+                $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label, max_participants, starters_count
+                    FROM tournament_categories
+                    WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1 LIMIT 1');
+                $categoryStmt->execute(['category_id' => $targetCategoryId, 'tournament_id' => $targetTournamentId]);
+                $category = $categoryStmt->fetch(PDO::FETCH_ASSOC);
 
-                    if (!$category) {
-                        $error = 'Category ที่เลือกไม่พร้อมใช้งาน';
+                if (!$category) {
+                    $error = 'Category ที่เลือกไม่พร้อมใช้งาน';
+                } else {
+                    $duplicateStmt = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations
+                        WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND player_id = :player_id AND status IN (\'pending\', \'approved\') LIMIT 1');
+                    $duplicateStmt->execute([
+                        'tournament_id' => $targetTournamentId,
+                        'category_id' => $targetCategoryId,
+                        'player_id' => $targetPlayerId,
+                    ]);
+                    if ($duplicateStmt->fetchColumn()) {
+                        $error = 'ผู้เล่นรายนี้สมัคร Category นี้แล้ว';
                     } else {
-                        $duplicateStmt = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations
-                            WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND player_id = :player_id AND status IN (\'pending\', \'approved\') LIMIT 1');
-                        $duplicateStmt->execute([
+                        $registeredCountStmt = $pdo->prepare("SELECT COUNT(*) FROM tournament_registrations
+                            WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND status IN ('pending', 'approved')");
+                        $registeredCountStmt->execute([
                             'tournament_id' => $targetTournamentId,
                             'category_id' => $targetCategoryId,
-                            'player_id' => $targetPlayerId,
                         ]);
-                        if ($duplicateStmt->fetchColumn()) {
-                            $error = 'ผู้เล่นรายนี้สมัคร Category นี้แล้ว';
-                        } else {
-                            $registeredCountStmt = $pdo->prepare("SELECT COUNT(*) FROM tournament_registrations
-                                WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id AND status IN ('pending', 'approved')");
-                            $registeredCountStmt->execute([
-                                'tournament_id' => $targetTournamentId,
-                                'category_id' => $targetCategoryId,
-                            ]);
-                            $registeredCount = (int) $registeredCountStmt->fetchColumn();
-                            $maxParticipants = (int) ($category['max_participants'] ?? 0);
-                            if ($maxParticipants > 0 && $registeredCount >= $maxParticipants) {
-                                $error = 'Category นี้มีผู้สมัครเต็มแล้ว';
-                            }
+                        $registeredCount = (int) $registeredCountStmt->fetchColumn();
+                        $maxParticipants = (int) ($category['max_participants'] ?? 0);
+                        if ($maxParticipants > 0 && $registeredCount >= $maxParticipants) {
+                            $error = 'Category นี้มีผู้สมัครเต็มแล้ว';
                         }
                     }
                 }
@@ -409,7 +406,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
         } elseif (($targetTournament['play_mode'] ?? '') !== 'team') {
             $error = 'ฟังก์ชันเพิ่มทีมใช้ได้เฉพาะทัวร์นาเมนต์ Team เท่านั้น';
         } else {
-            $windowState = getTournamentRegistrationState($targetTournament, new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok')));
             $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, max_participants, starters_count
                 FROM tournament_categories WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id AND is_active = 1 LIMIT 1');
             $categoryStmt->execute(['category_id' => $targetCategoryId, 'tournament_id' => $targetTournamentId]);
@@ -418,18 +414,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
             $teamStmt->execute(['team_id' => $targetTeamId]);
             $team = $teamStmt->fetch(PDO::FETCH_ASSOC);
 
-            if (!$windowState['allowed']) {
-                $error = $windowState['message'];
-            } elseif (!$category) {
+            if (!$category) {
                 $error = 'Category ที่เลือกไม่พร้อมใช้งาน';
             } elseif (!$team || $team['status'] !== 'active' || ((int) $team['game_id'] !== (int) $targetTournament['game_id'] && !($team['game_id'] === null && str_starts_with((string) $team['tag'], 'A64')))) {
                 $error = 'ทีมนี้ไม่พร้อมใช้งานกับ Tournament นี้';
             } else {
-                $genderMismatchStmt = $pdo->prepare("SELECT COUNT(*) FROM team_members tm
-                    JOIN players p ON p.player_id = tm.player_id
-                    WHERE tm.team_id = :team_id AND tm.is_active = 1
-                      AND LOWER(COALESCE(p.gender, '')) <> LOWER(:gender)");
-                $genderMismatchStmt->execute(['team_id' => $targetTeamId, 'gender' => (string) ($category['category_code'] ?? '')]);
                 $memberStmt = $pdo->prepare('SELECT COUNT(*) FROM team_members WHERE team_id = :team_id AND is_active = 1');
                 $memberStmt->execute(['team_id' => $targetTeamId]);
                 $memberCount = (int) $memberStmt->fetchColumn();
@@ -442,8 +431,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
 
                 if ($duplicateStmt->fetchColumn()) {
                     $error = 'ทีมนี้สมัคร Category นี้แล้ว';
-                } elseif (in_array($category['category_code'], ['male', 'female'], true) && (int) $genderMismatchStmt->fetchColumn() > 0) {
-                    $error = 'เพศสมาชิกทีมไม่ตรงกับ Category ที่เลือก';
                 } elseif ((int) ($category['starters_count'] ?? 0) > $memberCount) {
                     $error = 'จำนวนสมาชิกทีมยังไม่ครบตามกติกา';
                 } elseif ((int) ($category['max_participants'] ?? 0) > 0 && (int) $registeredCountStmt->fetchColumn() >= (int) $category['max_participants']) {
@@ -472,6 +459,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add_team') {
                 $selectedCategoryId = $targetCategoryId;
             } catch (Throwable $exception) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
+                error_log(sprintf(
+                    'Admin add team registration failed: admin_id=%d tournament_id=%d category_id=%d team_id=%d error=%s',
+                    (int) ($_SESSION['user_id'] ?? 0),
+                    $targetTournamentId,
+                    $targetCategoryId,
+                    $targetTeamId,
+                    $exception->getMessage()
+                ));
                 $error = 'เพิ่มทีมไม่สำเร็จ';
             }
         }
@@ -883,7 +878,23 @@ $isSolo = ($tournament['play_mode'] ?? 'team') === 'solo';
 $csrfToken = generateCsrfToken();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     setFlashMessage($error ? 'error' : 'success', $error ?: $success);
-    header('Location: ' . ($_SERVER['REQUEST_URI'] ?? 'manage-teams.php'), true, 303);
+    $redirectQuery = [
+        'tournament_id' => $tournamentId,
+        'category_id' => $selectedCategoryId,
+    ];
+    if ($search !== '') {
+        $redirectQuery['search'] = $search;
+    }
+    if ($approvalStatus !== 'all') {
+        $redirectQuery['approval_status'] = $approvalStatus;
+    }
+    if ($checkinStatus !== 'all') {
+        $redirectQuery['checkin_status'] = $checkinStatus;
+    }
+    if ($drawStatus !== 'all') {
+        $redirectQuery['draw_status'] = $drawStatus;
+    }
+    header('Location: manage-teams.php?' . http_build_query($redirectQuery), true, 303);
     exit;
 }
 $flash = consumeFlashMessage();
@@ -1186,7 +1197,6 @@ if ($flash) {
                                         <th class="px-4 py-3">การอนุมัติ</th>
                                         <th class="px-4 py-3">Check-in</th>
                                         <th class="px-4 py-3">สิทธิ์จัดสาย</th>
-                                        <th class="px-4 py-3">Group/Seed</th>
                                         <th class="px-4 py-3 text-right">จัดการ</th>
                                     </tr>
                                 </thead>
@@ -1222,7 +1232,6 @@ if ($flash) {
                                             <td class="px-4 py-3"><?= statusBadge((string) ($row['status'] ?? 'pending'), 'approval') ?></td>
                                             <td class="px-4 py-3"><?= statusBadge($progress['status'], 'checkin') ?></td>
                                             <td class="px-4 py-3"><?= statusBadge((string) ($row['participation_status'] ?: 'registered'), 'participation') ?></td>
-                                            <td class="px-4 py-3 text-slate-600"><?= $row['seed_no'] ? '#' . (int) $row['seed_no'] : '-' ?></td>
                                             <td class="px-4 py-3 text-right">
                                                 <?php $registrationId = (int) $row['tournament_registration_id']; ?>
                                                 <div class="flex justify-end gap-2">
@@ -1424,7 +1433,6 @@ if ($flash) {
                                     <div class="flex justify-between gap-3"><span class="text-slate-500">Tournament</span><span class="font-bold text-slate-900"><?= htmlspecialchars($autoOpenRegistration['tournament_name'] ?? '-') ?></span></div>
                                     <div class="flex justify-between gap-3"><span class="text-slate-500">สถานะการอนุมัติ</span><span><?= statusBadge((string) ($autoOpenRegistration['status'] ?? 'pending'), 'approval') ?></span></div>
                                     <div class="flex justify-between gap-3"><span class="text-slate-500">สถานะพร้อมจัดสาย</span><span class="font-bold"><?= htmlspecialchars(($autoOpenRegistration['participation_status'] ?: 'registered') === 'registered' ? 'รอ Check-in' : ($autoOpenRegistration['participation_status'] ?: 'registered')) ?></span></div>
-                                    <div class="flex justify-between gap-3"><span class="text-slate-500">Group/Seed</span><span class="font-bold"><?= $autoOpenRegistration['seed_no'] ? '#' . (int) $autoOpenRegistration['seed_no'] : '-' ?></span></div>
                                     <div class="flex justify-between gap-3"><span class="text-slate-500">สมัครเมื่อ</span><span class="font-bold"><?= !empty($autoOpenRegistration['registered_at']) ? date('d/m/Y H:i', strtotime($autoOpenRegistration['registered_at'])) : '-' ?></span></div>
                                 </div>
                             </div>
@@ -1705,30 +1713,34 @@ if ($flash) {
                         const participantId = isSolo ? player.player_id : player.team_id;
                         const action = isSolo ? 'add_solo_player' : 'add_team';
                         const participantField = isSolo ? 'player_id' : 'team_id';
+                        const form = document.createElement('form');
+                        form.method = 'POST';
+                        form.action = `manage-teams.php?tournament_id=<?= (int) $tournamentId ?>&category_id=<?= (int) $selectedCategoryId ?>`;
+                        form.className = 'shrink-0 self-start sm:self-auto';
+                        form.addEventListener('submit', event => {
+                            if (!confirm(isSolo ? 'ยืนยันเพิ่มผู้เล่นรายนี้เข้าสู่ Tournament นี้หรือไม่?' : 'ยืนยันเพิ่มทีมนี้เข้าสู่ Tournament หรือไม่?')) {
+                                event.preventDefault();
+                                return;
+                            }
+                            const button = event.currentTarget.querySelector('button[type="submit"]');
+                            if (button) {
+                                button.disabled = true;
+                                button.textContent = 'กำลังเพิ่ม...';
+                            }
+                        });
+                        [["csrf_token", '<?= htmlspecialchars($csrfToken, ENT_QUOTES) ?>'], ['action', action], ['tournament_id', '<?= (int) $tournamentId ?>'], ['tournament_category_id', '<?= (int) $selectedCategoryId ?>'], [participantField, participantId]].forEach(([nameValue, value]) => {
+                            const hidden = document.createElement('input');
+                            hidden.type = 'hidden';
+                            hidden.name = nameValue;
+                            hidden.value = value;
+                            form.append(hidden);
+                        });
                         const button = document.createElement('button');
-                        button.type = 'button';
+                        button.type = 'submit';
                         button.className = 'shrink-0 self-start rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 sm:self-auto';
                         button.textContent = isSolo ? 'เพิ่มผู้แข่งขัน' : 'เพิ่มทีม';
-                        button.addEventListener('click', event => {
-                            if (!confirm(isSolo ? 'ยืนยันเพิ่มผู้เล่นรายนี้เข้าสู่ Tournament นี้หรือไม่?' : 'ยืนยันเพิ่มทีมนี้เข้าสู่ Tournament หรือไม่?')) event.preventDefault();
-                            if (event.defaultPrevented) return;
-                            const form = document.createElement('form');
-                            form.method = 'POST';
-                            form.action = `manage-teams.php?tournament_id=<?= (int) $tournamentId ?>&category_id=<?= (int) $selectedCategoryId ?>`;
-                            form.className = 'hidden';
-                            [["csrf_token", '<?= htmlspecialchars($csrfToken, ENT_QUOTES) ?>'], ['action', action], ['tournament_id', '<?= (int) $tournamentId ?>'], ['tournament_category_id', '<?= (int) $selectedCategoryId ?>'], [participantField, participantId]].forEach(([nameValue, value]) => {
-                                const hidden = document.createElement('input');
-                                hidden.type = 'hidden';
-                                hidden.name = nameValue;
-                                hidden.value = value;
-                                form.append(hidden);
-                            });
-                            document.body.append(form);
-                            button.disabled = true;
-                            button.textContent = 'กำลังเพิ่ม...';
-                            HTMLFormElement.prototype.submit.call(form);
-                        });
-                        row.append(button);
+                        form.append(button);
+                        row.append(form);
                     }
                     addPlayerSearchResultsList.append(row);
                 });

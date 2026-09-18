@@ -2,6 +2,7 @@
 // pages/index.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_demo.php';
 
 // ตรวจสอบสถานะการเข้าสู่ระบบแบบยืดหยุ่น ป้องกัน Error / Redirect Loop
 $isLoggedIn = isLoggedIn();
@@ -17,8 +18,10 @@ $tournamentStmt = $pdo->prepare("
     FROM tournaments t
     JOIN games g ON g.game_id = t.game_id
     WHERE t.status = 'registration_open'
-      AND t.registration_start <= :now
-      AND t.registration_end >= :now
+      AND (
+          t.is_demo = 1
+          OR (t.registration_start <= :now AND t.registration_end >= :now)
+      )
       AND EXISTS (
           SELECT 1
           FROM tournament_categories tc

@@ -14,15 +14,18 @@ function isTournamentDemoEnvironment(): bool
 
 function isDemoTournament(array $tournament): bool
 {
-    return isTournamentDemoEnvironment() && str_starts_with(trim((string) ($tournament['name'] ?? '')), '[DEMO]');
+    return isTournamentDemoEnvironment() && (
+        !empty($tournament['is_demo'])
+        || str_starts_with(trim((string) ($tournament['name'] ?? '')), '[DEMO]')
+    );
 }
 
 function isDemoTournamentById(PDO $pdo, int $tournamentId): bool
 {
     if (!isTournamentDemoEnvironment() || $tournamentId <= 0) return false;
-    $stmt = $pdo->prepare('SELECT name FROM tournaments WHERE tournament_id = :tournament_id LIMIT 1');
+    $stmt = $pdo->prepare('SELECT name, is_demo FROM tournaments WHERE tournament_id = :tournament_id LIMIT 1');
     $stmt->execute(['tournament_id' => $tournamentId]);
-    return isDemoTournament(['name' => $stmt->fetchColumn()]);
+    return isDemoTournament($stmt->fetch(PDO::FETCH_ASSOC) ?: []);
 }
 
 function demoClockAllows(array $tournament): bool

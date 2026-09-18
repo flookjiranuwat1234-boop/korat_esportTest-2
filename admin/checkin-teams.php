@@ -386,13 +386,15 @@ if ($flash) {
                         <option value="">-- กรุณาเลือกรายการแข่งขัน --</option>
                         <?php foreach ($tournaments as $t): ?>
                             <?php 
-                                $genderLabel = '';
-                                if ($t['gender_category'] == 'male') $genderLabel = ' [รุ่นชาย]';
-                                elseif ($t['gender_category'] == 'female') $genderLabel = ' [รุ่นหญิง]';
-                                else $genderLabel = ' [ทั่วไป]';
+                                $genderLabel = match (strtolower(trim((string) ($t['gender_category'] ?? '')))) {
+                                    'male' => 'ชาย',
+                                    'female' => 'หญิง',
+                                    default => 'ทั่วไป',
+                                };
+                                $playModeLabel = ($t['play_mode'] === 'solo') ? 'เดี่ยว' : 'ทีม';
                             ?>
                             <option value="<?php echo $t['tournament_id']; ?>" <?php echo ($t['tournament_id'] == $tournamentId) ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($t['name'] . $genderLabel); ?> [<?php echo ($t['play_mode'] === 'solo') ? 'เดี่ยว' : 'ทีม'; ?>]
+                                <?php echo htmlspecialchars($t['name'] . ' · ' . $genderLabel . ' · ' . $playModeLabel); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -412,7 +414,7 @@ if ($flash) {
                         && $now <= new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok')));
                     $checkinNotStarted = $checkinOpenAt && $now < new DateTimeImmutable($checkinOpenAt, new DateTimeZone('Asia/Bangkok'));
                     $checkinClosed = $checkinCloseAt && $now > new DateTimeImmutable($checkinCloseAt, new DateTimeZone('Asia/Bangkok'));
-                    $checkinWindowLabel = isDemoTournament($tournament ?? []) ? 'เปิดเช็กอิน (DEMO)' : ((!$checkinOpenAt || !$checkinCloseAt) ? 'ยังไม่ได้กำหนดเวลาเช็กอิน' : ($checkinNotStarted ? 'ยังไม่เปิดเช็กอิน' : ($checkinClosed ? 'ปิดเช็กอินแล้ว' : 'เปิดเช็กอิน')));
+                    $checkinWindowLabel = (!$checkinOpenAt || !$checkinCloseAt) ? 'ยังไม่ได้กำหนดเวลาเช็กอิน' : ($checkinNotStarted ? 'ยังไม่เปิดเช็กอิน' : ($checkinClosed ? 'ปิดเช็กอินแล้ว' : 'เปิดเช็กอิน'));
                 ?>
                 <?php if ($gameMissing): ?>
                     <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-center gap-3 shadow-sm">

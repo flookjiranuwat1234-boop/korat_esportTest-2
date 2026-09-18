@@ -48,19 +48,25 @@ $importedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn(
 $claimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NOT NULL")->fetchColumn();
 $unclaimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NULL")->fetchColumn();
 
-// 3) นักกีฬาตัวจริง: มีบัญชีผู้ใช้และเช็คอินผ่าน Tournament Roster แล้ว
+// 3) นักกีฬาตัวจริง: มีบัญชีผู้ใช้และเคยลงแข่ง/เช็คอินแล้ว
 $confirmedAthleteCount = $pdo->query("
     SELECT COUNT(DISTINCT p.player_id)
     FROM players p
-    JOIN tournament_registration_members trm ON trm.player_id = p.player_id
     WHERE p.user_id IS NOT NULL
-      AND trm.checkin_status IN ('checked_in', 'waived')
+      AND (
+          EXISTS (
+              SELECT 1 FROM tournament_registration_members trm
+              WHERE trm.player_id = p.player_id
+                AND trm.checkin_status IN ('checked_in', 'waived')
+          )
+          OR p.ever_competed = 1
+      )
 ")->fetchColumn();
 
 // 4) บัญชีผู้ใช้ทั้งหมด (ไม่นับ admin)
 $memberCount = $pdo->query("SELECT COUNT(*) FROM users WHERE role != 'admin'")->fetchColumn();
 
-// 5) มีบัญชี + มีโปรไฟล์นักกีฬาแล้ว แต่ยังไม่เคยเช็คอินเข้าแข่งขัน
+// 5) มีบัญชี + มีโปรไฟล์นักกีฬาแล้ว แต่ยังไม่เคยลงแข่ง
 $profileOnlyNoTournamentCount = $pdo->query("
     SELECT COUNT(DISTINCT u.user_id)
     FROM users u
@@ -70,6 +76,7 @@ $profileOnlyNoTournamentCount = $pdo->query("
           SELECT 1 FROM tournament_registration_members trm
           WHERE trm.player_id = p.player_id AND trm.checkin_status IN ('checked_in', 'waived')
       )
+      AND p.ever_competed = 0
 ")->fetchColumn();
 
 $noProfileCount = max(0, (int) $memberCount - (int) $claimedPlayerCount);

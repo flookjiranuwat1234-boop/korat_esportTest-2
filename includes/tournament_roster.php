@@ -2,12 +2,14 @@
 // Tournament roster and per-player check-in helpers.
 
 require_once __DIR__ . '/team_roles.php';
+require_once __DIR__ . '/player_competitor.php';
 
 function ensureTournamentRosterTables(PDO $pdo): void
 {
     static $ready = false;
     if ($ready) return;
     ensureTeamMemberRolesTable($pdo);
+    ensurePlayerCompetitorColumn($pdo);
 
     $tableCheck = $pdo->prepare('SELECT TABLE_NAME FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
@@ -37,6 +39,12 @@ function ensureTournamentRosterTables(PDO $pdo): void
         CONSTRAINT registration_member_player_fk FOREIGN KEY (player_id)
             REFERENCES players (player_id) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    }
+
+    $rosterColumns = $pdo->query('SHOW COLUMNS FROM tournament_registration_members')->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('roster_status', $rosterColumns, true)) {
+        $pdo->exec("ALTER TABLE tournament_registration_members
+            ADD COLUMN roster_status VARCHAR(30) NOT NULL DEFAULT 'active'");
     }
 
     if (!in_array('player_tournament_checkins', $existingTables, true)) {
@@ -105,10 +113,11 @@ function snapshotTournamentRoster(PDO $pdo, int $registrationId, ?int $teamId, ?
     }
 
     $insert = $pdo->prepare('INSERT INTO tournament_registration_members
-        (tournament_registration_id, player_id, member_roles, is_starter, is_required_for_checkin)
-        VALUES (:registration_id, :player_id, :roles, :starter, :required)
+        (tournament_registration_id, player_id, member_roles, is_starter, is_required_for_checkin, roster_status)
+        VALUES (:registration_id, :player_id, :roles, :starter, :required, "active")
         ON DUPLICATE KEY UPDATE member_roles = VALUES(member_roles),
-            is_starter = VALUES(is_starter), is_required_for_checkin = VALUES(is_required_for_checkin)');
+            is_starter = VALUES(is_starter), is_required_for_checkin = VALUES(is_required_for_checkin),
+            roster_status = "active"');
     $checkin = $pdo->prepare('INSERT IGNORE INTO player_tournament_checkins
         (tournament_registration_id, player_id) VALUES (:registration_id, :player_id)');
     foreach ($rows as $row) {
@@ -126,6 +135,7 @@ function snapshotTournamentRoster(PDO $pdo, int $registrationId, ?int $teamId, ?
 function markRosterPlayerCheckedIn(PDO $pdo, int $registrationId, int $playerId, ?int $adminId = null): void
 {
     ensureTournamentRosterTables($pdo);
+    markPlayerAsCompetitor($pdo, $playerId);
     $pdo->prepare('UPDATE tournament_registration_members SET checkin_status = \'checked_in\', checkin_at = NOW()
         WHERE tournament_registration_id = :registration_id AND player_id = :player_id')
         ->execute(['registration_id' => $registrationId, 'player_id' => $playerId]);

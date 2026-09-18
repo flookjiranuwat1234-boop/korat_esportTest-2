@@ -2,6 +2,7 @@
 // pages/tournaments.php
 require_once '../config/db.php';
 require_once '../includes/auth.php';
+require_once '../includes/tournament_demo.php';
 
 // ตรวจสอบสถานะการเข้าสู่ระบบ
 $isLoggedIn = isLoggedIn();
@@ -29,7 +30,9 @@ $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
 $nowSql = $now->format('Y-m-d H:i:s');
 $currentStatuses = ['registration_closed', 'check_in', 'checkin_open', 'ready_for_draw', 'grouped', 'bracket_generated', 'ongoing'];
 $currentStatusSql = "'" . implode("', '", $currentStatuses) . "'";
-$tournamentWhere = [$view === 'completed' ? "t.status = 'completed'" : "t.status IN ($currentStatusSql)"];
+$tournamentWhere = [$view === 'completed'
+    ? "t.status = 'completed'"
+    : "(t.status IN ($currentStatusSql) OR t.is_demo = 1)"];
 $tournamentParams = [];
 if ($searchFilter !== '') {
     $tournamentWhere[] = 't.name LIKE :search_name';
@@ -48,7 +51,7 @@ if (in_array($modeFilter, ['solo', 'team'], true)) {
     $tournamentParams['play_mode'] = $modeFilter;
 }
 if ($view === 'current' && $statusFilter === 'checkin_open') {
-    $tournamentWhere[] = "t.checkin_open_at IS NOT NULL AND t.checkin_close_at IS NOT NULL AND t.checkin_open_at <= :status_now AND t.checkin_close_at >= :status_now";
+    $tournamentWhere[] = "(t.is_demo = 1 OR (t.checkin_open_at IS NOT NULL AND t.checkin_close_at IS NOT NULL AND t.checkin_open_at <= :status_now AND t.checkin_close_at >= :status_now))";
     $tournamentParams['status_now'] = $nowSql;
 } elseif ($view === 'current' && $statusFilter !== '') {
     $tournamentWhere[] = 't.status = :status';
@@ -455,15 +458,12 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                 <a href="<?= htmlspecialchars($currentTabUrl) ?>" role="tab" aria-selected="<?= $view === 'current' ? 'true' : 'false' ?>" class="min-w-[190px] flex-1 rounded-xl px-4 py-3 text-center text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-orange <?= $view === 'current' ? 'bg-brand-orange text-white shadow-orange-glow' : 'text-gray-400 hover:bg-white/10 hover:text-white' ?>">กำลังแข่งขัน</a>
                 <a href="<?= htmlspecialchars($completedTabUrl) ?>" role="tab" aria-selected="<?= $view === 'completed' ? 'true' : 'false' ?>" class="min-w-[190px] flex-1 rounded-xl px-4 py-3 text-center text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-orange <?= $view === 'completed' ? 'bg-brand-orange text-white shadow-orange-glow' : 'text-gray-400 hover:bg-white/10 hover:text-white' ?>">ผลการแข่งขัน</a>
             </div>
-            <form method="GET" class="mb-8 grid grid-cols-1 gap-3 rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-md sm:grid-cols-2 lg:grid-cols-6">
+            <form method="GET" class="mx-auto mb-8 grid w-full max-w-7xl grid-cols-1 gap-3 rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-md sm:grid-cols-2 <?= $view === 'completed' ? 'lg:grid-cols-5' : 'lg:grid-cols-4' ?>">
                 <input type="hidden" name="view" value="<?= htmlspecialchars($view) ?>">
                 <input type="search" name="search" value="<?= htmlspecialchars($searchFilter) ?>" placeholder="ค้นหาชื่อ Tournament" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white placeholder:text-gray-500 focus:border-brand-orange focus:outline-none">
                 <select name="game_id" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกเกม</option><?php foreach ($games as $game): ?><option value="<?= (int) $game['game_id'] ?>" <?= $gameFilter === (int) $game['game_id'] ? 'selected' : '' ?>><?= htmlspecialchars($game['name']) ?></option><?php endforeach; ?></select>
-                <select name="category" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกรุ่นการแข่งขัน</option><?php foreach ($categoryOptions as $category): $categoryCode = strtolower((string) $category['category_code']); ?><option value="<?= htmlspecialchars($categoryCode) ?>" <?= $categoryFilter === $categoryCode ? 'selected' : '' ?>><?= htmlspecialchars($categoryLabels[$categoryCode]) ?></option><?php endforeach; ?></select>
                 <select name="mode" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกประเภทการแข่งขัน</option><?php foreach (['team' => 'ประเภททีม', 'solo' => 'ประเภทบุคคล'] as $modeValue => $modeLabel): ?><option value="<?= $modeValue ?>" <?= $modeFilter === $modeValue ? 'selected' : '' ?>><?= $modeLabel ?></option><?php endforeach; ?></select>
                 <?php if ($view === 'current'): ?>
-                    <select name="status" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกสถานะ</option><?php foreach ($statusLabels as $statusValue => $statusLabel): ?><option value="<?= $statusValue ?>" <?= $statusFilter === $statusValue ? 'selected' : '' ?>><?= $statusLabel ?></option><?php endforeach; ?></select>
-                    <select name="date" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกช่วงเวลา</option><option value="today" <?= $dateFilter === 'today' ? 'selected' : '' ?>>วันนี้</option><option value="week" <?= $dateFilter === 'week' ? 'selected' : '' ?>>สัปดาห์นี้</option><option value="month" <?= $dateFilter === 'month' ? 'selected' : '' ?>>เดือนนี้</option><option value="starting" <?= $dateFilter === 'starting' ? 'selected' : '' ?>>ใกล้เริ่มการแข่งขัน</option></select>
                 <?php else: ?>
                     <select name="year" class="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-xs text-white focus:border-brand-orange focus:outline-none"><option value="">ทุกปีที่แข่งขัน</option><?php foreach ($completedYears as $completedYear): ?><option value="<?= (int) $completedYear ?>" <?= $yearFilter === (int) $completedYear ? 'selected' : '' ?>><?= (int) $completedYear ?></option><?php endforeach; ?></select>
                 <?php endif; ?>
@@ -518,7 +518,8 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                         $staggerDelay = min($tIndex * 100, 800);
                         ?>
                         <div class="tournament-card rounded-3xl overflow-hidden flex flex-col justify-between shadow-2xl group"
-                            data-aos="zoom-in-up" data-aos-delay="<?php echo $staggerDelay; ?>" data-aos-duration="700">
+                            data-aos="zoom-in-up" data-aos-delay="<?php echo $staggerDelay; ?>" data-aos-duration="700"
+                            data-tilt data-tilt-glare data-tilt-max-glare="0.15" data-tilt-scale="1.02">
                             <div>
                                 <!-- Image & Cyber Badges -->
                                 <div class="aspect-video relative overflow-hidden bg-black/90">

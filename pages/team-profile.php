@@ -12,6 +12,25 @@ $currentUser = [
 
 $teamId = (int) ($_GET['id'] ?? 0);
 
+function teamRoleLabel(?string $roles): string
+{
+    $labels = [
+        'player' => 'ผู้เล่น',
+        'substitute' => 'ตัวสำรอง',
+        'coach' => 'โค้ช',
+        'manager' => 'ผู้จัดการทีม',
+        'leader' => 'หัวหน้าทีม',
+    ];
+
+    $roleList = preg_split('/\s*,\s*/', strtolower(trim((string) $roles)), -1, PREG_SPLIT_NO_EMPTY);
+    $translated = [];
+    foreach ($roleList as $role) {
+        $translated[] = $labels[$role] ?? $role;
+    }
+
+    return implode(' / ', array_unique($translated));
+}
+
 // ใช้ LEFT JOIN games เพื่อป้องกันปัญหา error หากตาราง teams ไม่มีคอลัมน์ game_id ตรงๆ
 $tStmt = $pdo->prepare("
     SELECT t.*, COALESCE(g.name, 'ทั่วไป / ไม่ระบุ') AS game_name, t.game_id AS game_id
@@ -383,7 +402,7 @@ try {
                                     <?php endif; ?>
                                 </h3>
                                 <?php if (!empty($m['role_in_team'])): ?>
-                                    <p class="text-xs text-gray-400 font-medium pl-5"><?php echo htmlspecialchars($m['role_in_team']); ?></p>
+                                    <p class="text-xs text-gray-400 font-medium pl-5"><?php echo htmlspecialchars(teamRoleLabel($m['role_in_team'])); ?></p>
                                 <?php endif; ?>
                             </div>
                         </a>

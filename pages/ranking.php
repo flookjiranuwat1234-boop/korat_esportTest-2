@@ -4,6 +4,9 @@ require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/ranking.php';
 
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+
 $isLoggedIn = isLoggedIn();
 $currentUser = [
     'username' => $_SESSION['username'] ?? null,
@@ -52,12 +55,12 @@ $topTeams = $pdo->query("
 ")->fetchAll(PDO::FETCH_ASSOC);
 
 $topPlayers = $pdo->query("
-    SELECT pr.points, pr.wins, pr.losses, p.player_id, p.display_name, g.name AS game_name
+    SELECT pr.game_id, pr.points, pr.matches_played, pr.wins, pr.losses, p.player_id, p.display_name, g.name AS game_name
     FROM player_rankings pr
     JOIN players p ON p.player_id = pr.player_id
     JOIN games g ON g.game_id = pr.game_id
     ORDER BY pr.points DESC
-    LIMIT 5
+    LIMIT 100
 ")->fetchAll(PDO::FETCH_ASSOC);
 
 $requestedGameId = filter_input(INPUT_GET, 'game_id', FILTER_VALIDATE_INT);
@@ -80,6 +83,43 @@ if (!$rankingGameIds) {
     $rankingGameIds = [0];
 }
 $rankingGameIdList = implode(', ', $rankingGameIds);
+
+$performanceBonuses = [];
+if ($rankingGameIds !== [0] && in_array('player_id', $rankingHistoryColumns, true)) {
+    $performanceReasonColumn = in_array('reason', $rankingHistoryColumns, true) ? 'rh.reason' : 'rh.result_code';
+    $performanceStmt = $pdo->query("
+        SELECT rh.game_id, rh.player_id,
+               SUM(CASE
+                   WHEN LOWER(TRIM($performanceReasonColumn)) = 'outstanding' THEN 3
+                   WHEN LOWER(TRIM($performanceReasonColumn)) IN ('normal', 'participation') THEN 1
+                   WHEN LOWER(TRIM($performanceReasonColumn)) = 'mvp' THEN 2
+                   ELSE 0
+               END) AS performance_points
+        FROM ranking_history rh
+        WHERE rh.player_id IS NOT NULL
+        GROUP BY rh.game_id, rh.player_id
+    ");
+    foreach ($performanceStmt->fetchAll(PDO::FETCH_ASSOC) as $performance) {
+        $performanceBonuses[(int) $performance['game_id']][(int) $performance['player_id']] = (int) $performance['performance_points'];
+    }
+}
+
+// player_rankings.points already contains match points and player-performance
+// points recorded by the admin. Do not rebuild it from wins, otherwise players
+// with the same team record are incorrectly forced to the same score.
+usort($topPlayers, static function (array $left, array $right): int {
+    return [
+        (float) ($right['points'] ?? 0),
+        (int) ($right['wins'] ?? 0),
+        (int) ($right['player_id'] ?? 0),
+    ] <=> [
+        (float) ($left['points'] ?? 0),
+        (int) ($left['wins'] ?? 0),
+        (int) ($left['player_id'] ?? 0),
+    ];
+});
+$topPlayers = array_slice($topPlayers, 0, 5);
+
 $gamePlayMode = 'team';
 if ($gameId > 0) {
     $gameModeStmt = $pdo->prepare('SELECT play_mode FROM games WHERE game_id = :game_id LIMIT 1');
@@ -225,6 +265,31 @@ if ($type === 'team') {
         $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
         rankings_loaded_players:
     }
+}
+
+if ($type === 'player' && $rankings) {
+    usort($rankings, static function (array $left, array $right): int {
+        return [
+            (float) ($right['total_points'] ?? 0),
+            (int) ($right['wins'] ?? 0),
+            (int) ($right['player_id'] ?? 0),
+        ] <=> [
+            (float) ($left['total_points'] ?? 0),
+            (int) ($left['wins'] ?? 0),
+            (int) ($left['player_id'] ?? 0),
+        ];
+    });
+
+    $topPlayers = array_map(function (array $ranking) use ($selectedGameName): array {
+        return [
+            'player_id' => $ranking['player_id'],
+            'display_name' => $ranking['display_name'],
+            'points' => $ranking['total_points'],
+            'wins' => $ranking['wins'],
+            'losses' => $ranking['losses'],
+            'game_name' => $selectedGameName,
+        ];
+    }, array_slice($rankings, 0, 5));
 }
 
 $rankingRowsPerPage = 10;
@@ -684,7 +749,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                                 <td class="p-4 text-center font-display font-black text-sm"><?= $i + 1 ?></td>
                                                 <td class="p-4 font-bold text-white text-sm truncate max-w-[180px]"><?= htmlspecialchars($row[$hall['name']]) ?><span class="block text-[10px] text-gray-400 font-normal"><?= htmlspecialchars($row['game_name']) ?></span></td>
                                                 <td class="p-4 text-center font-mono text-xs"><span class="text-emerald-400 font-bold"><?= (int) $row['wins'] ?>W</span>-<span class="text-rose-400 font-bold"><?= (int) $row['losses'] ?>L</span></td>
-                                                <td class="p-4 text-right font-display font-black text-<?= $hall['color'] ?> text-base"><?= number_format((int) $row[$hall['score']]) ?> <span class="text-[10px] text-gray-300 font-normal">คะแนน</span></td>
+                                                <td class="p-4 text-right text-<?= $hall['color'] ?> text-base"><span class="inline-flex min-w-[8rem] items-baseline justify-end gap-1"><span class="font-mono font-black tabular-nums text-base"><?= number_format((int) $row[$hall['score']]) ?></span><span class="font-display font-normal text-xs text-gray-300">คะแนน</span></span></td>
                                             </tr>
                                         <?php endforeach; ?>
                                     </tbody>
@@ -862,7 +927,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                             </div>
                                         </td>
                                         <td class="ranking-score p-5 text-right font-display font-black text-brand-orange text-xl">
-                                            <?php echo number_format($r['total_points']); ?> <span class="text-xs text-gray-400 font-normal font-sans">คะแนน</span>
+                                            <span class="inline-flex min-w-[9rem] items-baseline justify-end gap-1"><span class="font-mono tabular-nums text-lg"><?php echo number_format($r['total_points']); ?></span><span class="font-sans text-xs text-gray-400 font-normal">คะแนน</span></span>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>

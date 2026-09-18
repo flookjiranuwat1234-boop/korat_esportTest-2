@@ -707,7 +707,6 @@ if (isset($_GET['ajax_get_registrations'])) {
         echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">Roster</span><b>' . (int) ($registration['roster_count'] ?? 0) . ' คน</b></div>';
         echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">Check-in</span><b>' . $checkedCount . '/' . $requiredCount . '</b></div>';
         echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">พร้อมจัดสาย</span><b>' . htmlspecialchars($participationBadge) . '</b></div>';
-        echo '<div class="rounded-lg bg-slate-50 p-2"><span class="block text-[10px] uppercase tracking-[0.15em] text-slate-400">Group/Seed</span><b>' . ($registration['seed_no'] ? '#' . (int) $registration['seed_no'] : '-') . '</b></div>';
         echo '</div>';
         echo '<div class="flex justify-end gap-2 pt-1 border-t border-slate-100"><a href="manage-teams.php?tournament_id=' . $tournamentId . ($categoryId ? '&category_id=' . $categoryId : '') . '&registration_id=' . (int) $registration['tournament_registration_id'] . '" title="เปิดรายละเอียดใบสมัครในหน้าจัดการผู้สมัคร" class="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"><i class="fa-solid fa-arrow-up-right-from-square"></i>เปิดใบสมัคร</a></div>';
         echo '</article>';
@@ -920,6 +919,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                     ->execute(['tournament_id' => $tournamentId, 'tournament_id_next' => $tournamentId]);
                 $pdo->prepare('DELETE FROM matches WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
                 $pdo->prepare('DELETE FROM ranking_history WHERE tournament_id = :tournament_id')->execute(['tournament_id' => $tournamentId]);
+                $pdo->prepare("
+                    UPDATE players p
+                    JOIN tournament_registration_members trm ON trm.player_id = p.player_id
+                    JOIN tournament_registrations tr ON tr.tournament_registration_id = trm.tournament_registration_id
+                    SET p.ever_competed = 1
+                    WHERE tr.tournament_id = :tournament_id
+                      AND trm.checkin_status IN ('checked_in', 'waived')
+                ")->execute(['tournament_id' => $tournamentId]);
                 $pdo->prepare('DELETE FROM player_tournament_checkins WHERE tournament_registration_id IN (SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id)')
                     ->execute(['tournament_id' => $tournamentId]);
                 $pdo->prepare('DELETE FROM registration_status_history WHERE tournament_registration_id IN (SELECT tournament_registration_id FROM tournament_registrations WHERE tournament_id = :tournament_id)')
@@ -1016,11 +1023,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
         } else {
             try {
                 $stmt = $pdo->prepare("
-                    INSERT INTO tournaments (name, game_id, format, best_of, max_teams, prize_pool, venue_address, venue_lat_lng, image_path, rules, description, registration_start, registration_end, roster_lock_at, checkin_open_at, checkin_close_at, start_date, end_date, status, created_by)
-                    VALUES (:name, :game_id, :format, :best_of, :max_teams, :prize_pool, :venue_address, :venue_lat_lng, :image_path, :rules, :description, :reg_start, :reg_end, :roster_lock, :checkin_open, :checkin_close, :start_date, :end_date, 'registration_open', :created_by)
+                    INSERT INTO tournaments (name, is_demo, game_id, format, best_of, max_teams, prize_pool, venue_address, venue_lat_lng, image_path, rules, description, registration_start, registration_end, roster_lock_at, checkin_open_at, checkin_close_at, start_date, end_date, status, created_by)
+                    VALUES (:name, :is_demo, :game_id, :format, :best_of, :max_teams, :prize_pool, :venue_address, :venue_lat_lng, :image_path, :rules, :description, :reg_start, :reg_end, :roster_lock, :checkin_open, :checkin_close, :start_date, :end_date, 'registration_open', :created_by)
                 ");
                 $stmt->execute([
-                    'name' => $name, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
+                    'name' => $name, 'is_demo' => $demoRequested ? 1 : 0, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
                     'venue_address' => $venueAddress, 'venue_lat_lng' => $venueLatLng, 'image_path' => $imagePath, 'rules' => $rules, 'description' => $description, 'reg_start' => $regStart,
                     'reg_end' => $regEnd, 'roster_lock' => $rosterLock, 'checkin_open' => $checkinOpen, 'checkin_close' => $checkinClose, 'start_date' => $startDate, 'end_date' => $endDate, 'created_by' => $adminId
                 ]);
@@ -1126,6 +1133,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
     } else {
         $tid = (int) $_POST['tournament_id'];
         $name = trim($_POST['name']);
+        $demoRequested = ($_POST['demo_mode'] ?? '') === '1';
+        if ($demoRequested && !isTournamentDemoEnvironment()) {
+            $error = 'โหมดทดสอบเปิดได้เฉพาะ Local/Test เท่านั้น';
+        }
         $gameId = trim($_POST['game_id'] ?? '');
         $categoryForm = selectedCategoryFormData($_POST);
         $format = $categoryForm['format'];
@@ -1176,13 +1187,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
             if ($newImagePath) {
                 $update = $pdo->prepare("
                     UPDATE tournaments 
-                    SET name = :name, game_id = :game_id, format = :format, best_of = :best_of, max_teams = :max_teams, prize_pool = :prize_pool,
+                    SET name = :name, is_demo = :is_demo, game_id = :game_id, format = :format, best_of = :best_of, max_teams = :max_teams, prize_pool = :prize_pool,
                         venue_address = :venue_address, venue_lat_lng = :venue_lat_lng, image_path = :image_path, rules = :rules, description = :description,
                         registration_start = :reg_start, registration_end = :reg_end, roster_lock_at = :roster_lock, checkin_open_at = :checkin_open, checkin_close_at = :checkin_close, start_date = :start_date, end_date = :end_date
                     WHERE tournament_id = :id
                 ");
                 $update->execute([
-                    'name' => $name, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
+                    'name' => $name, 'is_demo' => $demoRequested ? 1 : 0, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
                     'venue_address' => $venueAddress, 'venue_lat_lng' => $venueLatLng, 'image_path' => $newImagePath, 'rules' => $rules,
                     'description' => $description, 'reg_start' => $regStart, 'reg_end' => $regEnd, 'checkin_open' => $checkinOpen, 'checkin_close' => $checkinClose,
                     'start_date' => $startDate, 'end_date' => $endDate, 'roster_lock' => $rosterLock, 'id' => $tid
@@ -1190,13 +1201,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
             } else {
                 $update = $pdo->prepare("
                     UPDATE tournaments 
-                    SET name = :name, game_id = :game_id, format = :format, best_of = :best_of, max_teams = :max_teams, prize_pool = :prize_pool,
+                    SET name = :name, is_demo = :is_demo, game_id = :game_id, format = :format, best_of = :best_of, max_teams = :max_teams, prize_pool = :prize_pool,
                         venue_address = :venue_address, venue_lat_lng = :venue_lat_lng, rules = :rules, description = :description,
                         registration_start = :reg_start, registration_end = :reg_end, roster_lock_at = :roster_lock, checkin_open_at = :checkin_open, checkin_close_at = :checkin_close, start_date = :start_date, end_date = :end_date
                     WHERE tournament_id = :id
                 ");
                 $update->execute([
-                    'name' => $name, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
+                    'name' => $name, 'is_demo' => $demoRequested ? 1 : 0, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
                     'venue_address' => $venueAddress, 'venue_lat_lng' => $venueLatLng, 'rules' => $rules, 'description' => $description,
                     'reg_start' => $regStart, 'reg_end' => $regEnd, 'roster_lock' => $rosterLock, 'checkin_open' => $checkinOpen, 'checkin_close' => $checkinClose, 'start_date' => $startDate, 'end_date' => $endDate, 'id' => $tid
                 ]);
@@ -1227,7 +1238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['close_registration'])
     }
     $tid = (int) $_POST['close_registration'];
 
-    $windowStmt = $pdo->prepare('SELECT name, registration_end, checkin_close_at, status FROM tournaments WHERE tournament_id = :tournament_id');
+    $windowStmt = $pdo->prepare('SELECT name, is_demo, registration_end, checkin_close_at, status FROM tournaments WHERE tournament_id = :tournament_id');
     $windowStmt->execute(['tournament_id' => $tid]);
     $window = $windowStmt->fetch();
     if (!$window) {
@@ -2921,6 +2932,7 @@ $csrfToken = generateCsrfToken();
 
             <form method="POST" enctype="multipart/form-data" class="space-y-4">
                 <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                <input type="hidden" name="demo_mode" value="0">
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="tournament_id" id="edit_tournament_id">
 
