@@ -75,7 +75,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 ? "../assets/uploads/banners/album_{$albumId}/"
                 : "../assets/uploads/gallery/album_{$albumId}/";
             if (!is_dir($uploadDir)) {
-                mkdir($uploadDir, 0777, true);
+                if (!mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+                    throw new RuntimeException('ไม่สามารถเตรียมพื้นที่เก็บรูปภาพได้');
+                }
             }
 
             $allowed = ['jpg', 'jpeg', 'png', 'webp'];
@@ -268,7 +270,7 @@ if ($flash) {
     <link rel="stylesheet" href="../assets/css/admin-responsive.css">
     
     <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
         tailwind.config = {
             theme: {

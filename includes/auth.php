@@ -3,7 +3,21 @@
 // รวมฟังก์ชันเกี่ยวกับสมัครสมาชิก, login, logout และเช็คสิทธิ์การใช้งาน
 // ไฟล์ที่จะใช้ฟังก์ชันพวกนี้ต้อง include config/db.php มาก่อนแล้ว (ต้องมี $pdo)
 
-session_start();
+require_once __DIR__ . '/../config/runtime.php';
+
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
+
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'secure' => $isHttps,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    session_start();
+}
 
 function setFlashMessage(string $type, string $message): void
 {

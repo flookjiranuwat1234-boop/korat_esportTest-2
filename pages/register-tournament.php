@@ -198,7 +198,7 @@ if ($requestedTournamentId > 0 && !$tournaments) {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>tailwind.config={theme:{extend:{colors:{brand:{orange:'#FF5500',glow:'#FF7700',dark:'#0A0A0C'}},fontFamily:{sans:['Kanit','sans-serif'],display:['Orbitron','sans-serif']},boxShadow:{'orange-glow':'0 0 25px rgba(255,85,0,.45)'}}}};</script>
     <style>
         body{background:#0f1117}.bg-arena{background:linear-gradient(to bottom,rgba(15,17,23,.65),rgba(15,17,23,.96)),url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop');background-size:cover;background-position:center;background-attachment:fixed}.glass-nav{background:rgba(15,17,23,.88);backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,.15)}.glass-panel{background:rgba(255,255,255,.07);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.15)}.grid-bg{background-image:radial-gradient(rgba(255,255,255,.15) 1px,transparent 0);background-size:24px 24px}

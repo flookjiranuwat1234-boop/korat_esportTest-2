@@ -316,10 +316,10 @@ if ($tournamentPlayMode === 'solo' && !$groupRows) {
         SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id,
                p.player_id AS team_id,
                COALESCE(p.display_name, u.username, 'ผู้แข่งขัน') AS team_name,
-               COUNT(m.match_id) AS played,
-               SUM(m.winner_team_id = p.player_id) AS wins,
-               SUM(m.winner_team_id IS NOT NULL AND m.winner_team_id <> p.player_id) AS losses,
-               SUM(m.winner_team_id = p.player_id) * 3 AS points,
+               SUM(CASE WHEN m.status IN ('completed', 'walkover') THEN 1 ELSE 0 END) AS played,
+               SUM(CASE WHEN m.status IN ('completed', 'walkover') AND m.winner_team_id = p.player_id THEN 1 ELSE 0 END) AS wins,
+               SUM(CASE WHEN m.status IN ('completed', 'walkover') AND m.winner_team_id IS NOT NULL AND m.winner_team_id <> p.player_id THEN 1 ELSE 0 END) AS losses,
+               SUM(CASE WHEN m.status IN ('completed', 'walkover') AND m.winner_team_id = p.player_id THEN 3 ELSE 0 END) AS points,
                0 AS draws, 0 AS score_diff
         FROM tournament_groups tg
         JOIN matches m ON m.group_id = tg.tournament_group_id
@@ -432,10 +432,10 @@ function roundName($roundNum, $totalRounds)
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
     <!-- AOS CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+    <link rel="stylesheet" href="https://unpkg.com/aos@2.3.4/dist/aos.css" />
 
     <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -1096,7 +1096,7 @@ function roundName($roundNum, $totalRounds)
     <?php endif; ?>
 
    <!-- AOS JS Library -->
-    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+    <script src="https://unpkg.com/aos@2.3.4/dist/aos.js"></script>
 
     <!-- Script คำนวณพิกัดเส้น SVG แบบสมมาตรตรงกลางเป๊ะ 100% พร้อมเรืองแสงถาวรสำหรับคู่ที่รู้ผลแล้ว -->
     <script>

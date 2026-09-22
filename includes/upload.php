@@ -10,6 +10,11 @@ function handleImageUpload($file, $subfolder)
 {
     global $MAX_UPLOAD_SIZE, $ALLOWED_TYPES;
 
+    $subfolder = trim((string) $subfolder, "/\\");
+    if ($subfolder === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $subfolder)) {
+        throw new InvalidArgumentException('โฟลเดอร์อัปโหลดไม่ถูกต้อง');
+    }
+
     if (!isset($file) || $file['error'] === UPLOAD_ERR_NO_FILE) {
         return null; // ไม่ได้แนบไฟล์มา ไม่ต้องทำอะไรต่อ
     }
@@ -21,7 +26,9 @@ function handleImageUpload($file, $subfolder)
     }
 
     // เช็คชนิดไฟล์จากตัวเนื้อหาจริง ไม่ใช่แค่ดูนามสกุล เผื่อมีคนเปลี่ยนนามสกุลไฟล์หลอกระบบ
-    $mimeType = mime_content_type($file['tmp_name']);
+    $mimeType = function_exists('mime_content_type')
+        ? mime_content_type($file['tmp_name'])
+        : null;
     if (!in_array($mimeType, $ALLOWED_TYPES)) {
         throw new Exception('อัปโหลดได้แค่ไฟล์รูปภาพ (JPG, PNG, WEBP)');
     }
@@ -34,7 +41,9 @@ function handleImageUpload($file, $subfolder)
 
     $uploadDir = __DIR__ . '/../assets/uploads/' . $subfolder . '/';
     if (!is_dir($uploadDir)) {
-        mkdir($uploadDir, 0755, true);
+        if (!mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+            throw new RuntimeException('ไม่สามารถเตรียมพื้นที่เก็บไฟล์อัปโหลดได้');
+        }
     }
 
     if (!move_uploaded_file($file['tmp_name'], $uploadDir . $fileName)) {

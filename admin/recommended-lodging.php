@@ -35,7 +35,9 @@ function uploadAccommodationImage($file) {
             $fileName = 'hotel_' . bin2hex(random_bytes(8)) . '.' . $allowedTypes[$mimeType];
             $uploadDir = '../assets/uploads/';
             if (!is_dir($uploadDir)) {
-                mkdir($uploadDir, 0755, true);
+                if (!mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+                    throw new RuntimeException('ไม่สามารถเตรียมพื้นที่เก็บรูปภาพที่พักได้');
+                }
             }
             $destination = $uploadDir . $fileName;
             if (move_uploaded_file($file['tmp_name'], $destination)) {
@@ -159,7 +161,7 @@ if ($flash) {
     <link rel="stylesheet" href="../assets/css/admin-responsive.css">
     
     <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
         tailwind.config = {
             theme: {

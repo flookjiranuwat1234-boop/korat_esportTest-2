@@ -28,7 +28,6 @@ function tournamentPlayerAge(?string $birthDate, ?string $startDate): ?int
 function tournamentCategoryAllowsPlayer(array $player, array $category): ?string
 {
     if (($player['account_status'] ?? '') !== 'active') return 'บัญชีผู้เล่นไม่ได้เปิดใช้งาน';
-    if (($player['eligibility_status'] ?? '') !== 'verified') return 'โปรไฟล์ผู้เล่นยังไม่ผ่านการยืนยัน';
 
     $age = tournamentPlayerAge($player['birth_date'] ?? null, $category['start_date'] ?? null);
     $minAge = $category['min_age'] ?? $category['min_age_years'] ?? $category['minimum_age'] ?? null;

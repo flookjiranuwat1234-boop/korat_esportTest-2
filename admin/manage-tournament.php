@@ -889,7 +889,9 @@ function uploadTournamentImage($file) {
             $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp', 'image/gif' => 'gif'];
             $fileName = 'tourney_' . bin2hex(random_bytes(16)) . '.' . $extensions[$mimeType];
             $uploadDir = '../assets/uploads/';
-            if (!is_dir($uploadDir)) { mkdir($uploadDir, 0755, true); }
+            if (!is_dir($uploadDir) && !mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+                throw new RuntimeException('ไม่สามารถเตรียมพื้นที่เก็บรูปภาพการแข่งขันได้');
+            }
             $destination = $uploadDir . $fileName;
             if (move_uploaded_file($file['tmp_name'], $destination)) { return 'uploads/' . $fileName; }
         }
@@ -1422,7 +1424,7 @@ $csrfToken = generateCsrfToken();
 <!DOCTYPE html>
 <html lang="th" class="h-full">
 <head>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
         tailwind.config = {
             theme: {

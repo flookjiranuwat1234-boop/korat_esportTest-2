@@ -3,6 +3,8 @@
 // ไฟล์เชื่อมต่อฐานข้อมูล ให้ทุกไฟล์ include ตัวนี้แค่ตัวเดียว
 // ไม่ต้องเขียน connection ซ้ำในแต่ละไฟล์
 
+require_once __DIR__ . '/runtime.php';
+
 date_default_timezone_set('Asia/Bangkok');
 
 // Demo mode is disabled unless explicitly enabled in the Local/Test environment.
@@ -10,10 +12,10 @@ if (!defined('ENABLE_TOURNAMENT_DEMO_MODE')) {
     define('ENABLE_TOURNAMENT_DEMO_MODE', filter_var(getenv('ENABLE_TOURNAMENT_DEMO_MODE') ?: 'false', FILTER_VALIDATE_BOOLEAN));
 }
 
-$host = 'localhost';
-$dbname = 'esport_korattest';
-$dbuser = 'root';
-$dbpass = ''; // แก้เป็นรหัสจริงตอนขึ้น production
+$host = getenv('DB_HOST') ?: 'localhost';
+$dbname = getenv('DB_NAME') ?: 'esport_korattest';
+$dbuser = getenv('DB_USER') ?: 'root';
+$dbpass = getenv('DB_PASSWORD') ?: '';
 
 try {
     $pdo = new PDO(
@@ -30,7 +32,8 @@ try {
     }
     $pdo->exec("UPDATE tournaments SET is_demo = 1, name = TRIM(SUBSTRING(name, 7)) WHERE name LIKE '[DEMO]%'");
 } catch (PDOException $e) {
-    die("เชื่อมต่อฐานข้อมูลไม่ได้: " . $e->getMessage());
+    error_log('Database connection failed: ' . $e->getMessage());
+    die('เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจสอบการตั้งค่าเซิร์ฟเวอร์');
 }
 
 /**

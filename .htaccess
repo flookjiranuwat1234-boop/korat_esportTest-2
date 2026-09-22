@@ -1,0 +1,8 @@
+Options -Indexes
+
+<FilesMatch "^(composer\.(json|lock)|.*\.(sql|md|csv|json|log|bak|ini|env))$">
+    Require all denied
+</FilesMatch>
+
+RewriteEngine On
+RewriteRule ^(?:database|backups|\.git|\.vscode)(?:/|$) - [F,L]
