@@ -775,7 +775,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                     ?>
                         <a href="<?php echo $link2; ?>" class="podium-card podium-2 p-6 rounded-3xl order-2 md:order-1 space-y-4 podium-animate-2">
                             <div class="flex items-center justify-between">
-                                <span class="w-10 h-10 rounded-2xl bg-slate-200/20 text-slate-200 flex items-center justify-center font-display font-black text-lg border border-slate-300/40">#2</span>
+                                <span class="w-10 h-10 rounded-2xl bg-slate-200/20 text-slate-200 flex items-center justify-center font-display font-black text-lg border border-slate-300/40">2</span>
                             </div>
                             <div>
                                 <h3 class="text-xl font-bold font-display text-white truncate"><?php echo htmlspecialchars($name2); ?></h3>
@@ -823,7 +823,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                     ?>
                         <a href="<?php echo $link3; ?>" class="podium-card podium-3 p-6 rounded-3xl order-3 space-y-4 podium-animate-3">
                             <div class="flex items-center justify-between">
-                                <span class="w-10 h-10 rounded-2xl bg-amber-700/30 text-amber-400 flex items-center justify-center font-display font-black text-lg border border-amber-600/40">#3</span>
+                                <span class="w-10 h-10 rounded-2xl bg-amber-700/30 text-amber-400 flex items-center justify-center font-display font-black text-lg border border-amber-600/40">3</span>
                             </div>
                             <div>
                                 <h3 class="text-xl font-bold font-display text-white truncate"><?php echo htmlspecialchars($name3); ?></h3>
@@ -885,7 +885,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                         style="animation-delay: <?php echo $staggerDelay; ?>ms;"
                                         onclick="window.location='<?php echo $rowLink; ?>'"
                                         data-search-name="<?php echo strtolower(htmlspecialchars($name)); ?>">
-                                        <td class="p-5 text-center font-display font-bold text-gray-400 text-sm">#<?php echo $actualRank; ?></td>
+                                        <td class="p-5 text-center font-display font-bold text-gray-400 text-sm"><?php echo $actualRank; ?></td>
                                         <td class="p-5 font-bold text-white text-base">
                                             <div class="flex items-center gap-3">
                                                 <?php if ($type == 'team'): ?>

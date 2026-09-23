@@ -16,6 +16,19 @@ $totalTeamsRegister = $pdo->query("
 $totalTournamentsRegister = $pdo->query("SELECT COUNT(*) FROM tournaments")->fetchColumn();
 $totalGamesRegister = $pdo->query("SELECT COUNT(*) FROM games WHERE is_active = 1")->fetchColumn();
 
+$provinces = [
+    'กระบี่', 'กรุงเทพมหานคร', 'กาญจนบุรี', 'กาฬสินธุ์', 'กำแพงเพชร', 'ขอนแก่น', 'จันทบุรี',
+    'ฉะเชิงเทรา', 'ชลบุรี', 'ชัยนาท', 'ชัยภูมิ', 'ชุมพร', 'ตรัง', 'ตราด', 'ตาก', 'นครนายก',
+    'นครปฐม', 'นครพนม', 'นครราชสีมา', 'นครศรีธรรมราช', 'นครสวรรค์', 'นนทบุรี', 'นราธิวาส',
+    'น่าน', 'บึงกาฬ', 'บุรีรัมย์', 'ปทุมธานี', 'ประจวบคีรีขันธ์', 'ปราจีนบุรี', 'ปัตตานี',
+    'พะเยา', 'พังงา', 'พัทลุง', 'พิจิตร', 'พิษณุโลก', 'ภูเก็ต', 'มหาสารคาม', 'มุกดาหาร',
+    'ยะลา', 'ยโสธร', 'ร้อยเอ็ด', 'ระนอง', 'ระยอง', 'ราชบุรี', 'ลพบุรี', 'ลำปาง', 'ลำพูน',
+    'ศรีสะเกษ', 'สกลนคร', 'สงขลา', 'สตูล', 'สมุทรปราการ', 'สมุทรสงคราม', 'สมุทรสาคร',
+    'สระแก้ว', 'สระบุรี', 'สิงห์บุรี', 'สุพรรณบุรี', 'สุราษฎร์ธานี', 'สุรินทร์', 'สุโขทัย',
+    'หนองคาย', 'หนองบัวลำภู', 'อ่างทอง', 'อำนาจเจริญ', 'อุดรธานี', 'อุตรดิตถ์', 'อุทัยธานี',
+    'อุบลราชธานี', 'เชียงราย', 'เชียงใหม่', 'เพชรบุรี', 'เพชรบูรณ์', 'เลย', 'แพร่', 'แม่ฮ่องสอน'
+];
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
@@ -28,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $securityAnswer = trim($_POST['security_answer'] ?? '');
         $gender = strtolower(trim($_POST['gender'] ?? ''));
         $birthDate = trim($_POST['birth_date'] ?? '');
+        $province = trim($_POST['province'] ?? '');
         $birthDateObject = DateTimeImmutable::createFromFormat('!Y-m-d', $birthDate);
 
         if (strlen($username) < 3) {
@@ -42,13 +56,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $error = 'กรุณาเลือกเพศ';
         } elseif (!$birthDateObject || $birthDateObject->format('Y-m-d') !== $birthDate || $birthDateObject > new DateTimeImmutable('today')) {
             $error = 'กรุณากรอกวันเกิดให้ถูกต้อง';
+        } elseif (!in_array($province, $provinces, true)) {
+            $error = 'กรุณาเลือกจังหวัด';
         } elseif (!in_array($securityQuestion, securityQuestionOptions())) {
             $error = 'กรุณาเลือกคำถามกันลืมรหัสผ่าน';
         } elseif ($securityAnswer == '') {
             $error = 'กรุณากรอกคำตอบของคำถามกันลืมรหัสผ่าน';
         } else {
             try {
-                registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer, $gender, $birthDate);
+                registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer, $gender, $birthDate, $province);
                 setFlashMessage('success', 'สมัครสมาชิกเรียบร้อยแล้ว');
                 header('Location: login.php', true, 303);
                 exit;
@@ -218,6 +234,7 @@ $questions = securityQuestionOptions();
         .field-stagger-4 { animation: fieldFadeUp 0.4s ease 0.6s forwards; opacity: 0; }
         .field-stagger-5 { animation: fieldFadeUp 0.4s ease 0.7s forwards; opacity: 0; }
         .field-stagger-6 { animation: fieldFadeUp 0.4s ease 0.8s forwards; opacity: 0; }
+        .field-stagger-7 { animation: fieldFadeUp 0.4s ease 0.9s forwards; opacity: 0; }
 
         .grid-bg {
             background-image: radial-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 0);
@@ -419,6 +436,21 @@ $questions = securityQuestionOptions();
                     </div>
 
                     <div class="field-stagger-5">
+                        <label class="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">จังหวัด</label>
+                        <div class="relative glass-input-light rounded-xl overflow-hidden flex items-center">
+                            <span class="pl-3.5 text-slate-400 text-xs"><i class="fa-solid fa-location-dot"></i></span>
+                            <select name="province" required class="w-full bg-transparent px-3 py-3 text-slate-900 focus:outline-none text-xs font-medium cursor-pointer">
+                                <option value="">-- เลือกจังหวัด --</option>
+                                <?php foreach ($provinces as $provinceOption): ?>
+                                    <option value="<?= htmlspecialchars($provinceOption) ?>" <?= ($_POST['province'] ?? '') === $provinceOption ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($provinceOption) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="field-stagger-6">
                         <label class="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">คำถามกันลืมรหัสผ่าน</label>
                         <div class="relative glass-input-light rounded-xl overflow-hidden flex items-center">
                             <span class="pl-3.5 text-slate-400 text-xs input-icon transition-colors duration-200"><i class="fa-solid fa-circle-question"></i></span>
@@ -431,7 +463,7 @@ $questions = securityQuestionOptions();
                         </div>
                     </div>
 
-                    <div class="field-stagger-6">
+                    <div class="field-stagger-7">
                         <label class="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">คำตอบกันลืม</label>
                         <div class="relative glass-input-light rounded-xl overflow-hidden flex items-center">
                             <span class="pl-3.5 text-slate-400 text-xs input-icon transition-colors duration-200"><i class="fa-solid fa-key"></i></span>

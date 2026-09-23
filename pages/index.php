@@ -373,6 +373,55 @@ try {
         .animate-auto-glitch { animation: autoGlitch 0.5s ease 1; }
 
         .esports-corner-card { clip-path: polygon(0 0, calc(100% - 15px) 0, 100% 15px, 100% 100%, 15px 100%, 0 calc(100% - 15px)); }
+        .tournament-slide-card {
+            position: relative;
+            border: 1px solid rgba(255, 85, 0, 0.55);
+            background: linear-gradient(145deg, rgba(25, 24, 31, 0.98), rgba(8, 10, 16, 0.98));
+            box-shadow: 0 0 16px rgba(255, 85, 0, 0.12), inset 0 0 22px rgba(255, 85, 0, 0.04);
+            transition: transform 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+        }
+        .tournament-slide-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            border-color: rgba(255, 85, 0, 0.9);
+            box-shadow: 0 18px 38px rgba(255, 85, 0, 0.35), 0 0 28px rgba(255, 85, 0, 0.22), inset 0 0 22px rgba(255, 85, 0, 0.08);
+        }
+        .tournament-slide-card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            padding: 1px;
+            border-radius: inherit;
+            background: linear-gradient(115deg, transparent 25%, rgba(255, 255, 255, 0.95) 45%, rgba(255, 140, 70, 0.85) 52%, transparent 72%);
+            background-size: 250% 100%;
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            animation: tournamentFrameSweep 3.5s linear infinite;
+        }
+        @keyframes tournamentFrameGlow {
+            0%, 100% { box-shadow: 0 0 10px rgba(255, 85, 0, 0.1), inset 0 0 14px rgba(255, 85, 0, 0.03); }
+            50% { box-shadow: 0 0 20px rgba(255, 85, 0, 0.24), inset 0 0 18px rgba(255, 85, 0, 0.06); }
+        }
+        @keyframes tournamentFrameSweep {
+            from { background-position: 150% 0; }
+            to { background-position: -150% 0; }
+        }
+        .tournament-slide-card .group\/image {
+            border-bottom: 1px solid rgba(255, 85, 0, 0.35);
+        }
+        .tournament-slide-card h3 {
+            color: #ff6a1a;
+            text-shadow: 0 0 14px rgba(255, 85, 0, 0.22);
+        }
+        .tournament-slide-card .rounded-2xl.border-white\/10 {
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025));
+            border-color: rgba(255, 255, 255, 0.16);
+            box-shadow: inset 0 0 16px rgba(255, 255, 255, 0.025);
+        }
+        .tournament-slide-card > div:last-child > a {
+            box-shadow: 0 0 18px rgba(255, 85, 0, 0.28);
+        }
 
         @keyframes borderGlowPulse {
             0% { box-shadow: 0 0 5px rgba(244, 63, 94, 0.4); border-color: rgba(244, 63, 94, 0.6); }
@@ -437,25 +486,37 @@ try {
 
         <canvas id="intro-particles" class="absolute inset-0 pointer-events-none z-10"></canvas>
 
-        <div class="text-center space-y-6 max-w-lg w-full relative z-20">
+        <div class="text-center space-y-6 w-full max-w-[72rem] relative z-20">
             
-            <!-- วงแหวนและโลโก้ขนาดใหญ่ ขยายให้โดดเด่นสะดุดตาพร้อมวงแหวนออร์บิท -->
-            <div class="relative inline-flex items-center justify-center w-80 h-80 sm:w-96 sm:h-96 mx-auto">
-                <div class="absolute inset-0 bg-gradient-to-r from-brand-orange via-purple-600 to-brand-cyber rounded-full blur-3xl opacity-70 animate-pulse"></div>
-                <div id="orbit-ring-slow" class="absolute inset-2 rounded-full border-2 border-dashed border-brand-orange/60"></div>
-                <div id="orbit-ring-fast" class="absolute inset-8 rounded-full border-2 border-dotted border-brand-cyber/70"></div>
-                <div class="absolute inset-12 rounded-full border border-brand-orange/80 animate-ping-slow"></div>
-                
-                <img src="../assets/img/logo.png" alt="Korat Esport"
-                    class="relative z-10 h-56 sm:h-72 w-auto mx-auto drop-shadow-[0_0_65px_rgba(255,85,0,1)] animate-logo-float"
-                    onError="this.src='https://placehold.co/150x150/121318/FF5500?text=KE';">
-            </div>
-
-            <div class="space-y-2">
-                <h1 class="font-display text-3xl sm:text-5xl font-black text-white tracking-wider drop-shadow-lg">
-                    KORAT <span class="text-brand-orange">ESPORT</span> SYSTEM
-                </h1>
-                <p class="font-mono text-xs sm:text-sm text-brand-cyber uppercase tracking-widest mt-1 animate-pulse font-bold drop-shadow">
+            <?php if (count($tournaments) > 0): ?>
+                <div id="intro-tournament-carousel" class="relative mx-auto mt-3 w-full max-w-[72rem] overflow-hidden px-[2%] sm:px-[4%]" onclick="event.stopPropagation()">
+                    <div class="intro-tournament-track flex items-stretch gap-4 transition-transform duration-500 ease-out">
+                        <?php foreach ($tournaments as $tournament): ?>
+                            <?php $introRegistrationUrl = 'register-tournament.php?id=' . (int) $tournament['tournament_id']; ?>
+                            <article class="intro-tournament-slide group relative min-w-[96%] overflow-hidden rounded-2xl border border-white/30 bg-black/50 shadow-xl transition-all duration-500 sm:min-w-[92%]">
+                                <a href="<?php echo htmlspecialchars($introRegistrationUrl); ?>" class="block">
+                                    <img src="<?php echo !empty($tournament['image_path']) ? '../assets/' . htmlspecialchars($tournament['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>" alt="<?php echo htmlspecialchars($tournament['name']); ?>" class="aspect-[16/7] w-full object-cover">
+                                    <div class="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 text-left opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100 sm:p-6">
+                                        <div class="mb-1.5 flex items-center justify-between gap-2">
+                                            <span class="truncate text-xs font-bold text-white sm:text-lg"><?php echo htmlspecialchars($tournament['name']); ?></span>
+                                            <span class="shrink-0 rounded-full bg-emerald-500/30 px-2.5 py-0.5 text-[10px] font-bold text-emerald-100 sm:text-xs">เปิดรับสมัคร</span>
+                                        </div>
+                                        <p class="truncate text-[11px] text-orange-300 sm:text-sm"><?php echo htmlspecialchars($tournament['game_name']); ?></p>
+                                    </div>
+                                </a>
+                            </article>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php if (count($tournaments) > 1): ?>
+                        <button type="button" class="intro-tournament-prev absolute left-2 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/70 text-white hover:bg-brand-orange" aria-label="รายการก่อนหน้า"><i class="fa-solid fa-chevron-left"></i></button>
+                        <button type="button" class="intro-tournament-next absolute right-2 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/70 text-white hover:bg-brand-orange" aria-label="รายการถัดไป"><i class="fa-solid fa-chevron-right"></i></button>
+                        <div class="intro-tournament-dots absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 gap-1.5"></div>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+            <div class="mt-5 space-y-2">
+                <p class="font-display text-xl font-black tracking-wider text-white sm:text-3xl">KORAT <span class="text-brand-orange">ESPORT</span> SYSTEM</p>
+                <p class="font-mono text-xs sm:text-sm text-brand-cyber uppercase tracking-widest animate-pulse font-bold drop-shadow">
                     [ CLICK ANYWHERE TO ENTER THE ARENA ]
                 </p>
             </div>
@@ -637,68 +698,25 @@ try {
             }());
         </script>
 
-        <!-- ================= 3. HERO SECTION ================= -->
-        <section
-            class="relative min-h-[75vh] flex flex-col items-center justify-center text-center p-6 lg:p-12 overflow-hidden">
-            <div
-                class="absolute top-0 left-1/2 -translate-x-1/2 w-px h-full bg-gradient-to-b from-transparent via-brand-orange/40 to-transparent animate-scanline">
-            </div>
-
-            <div class="max-w-4xl space-y-6 relative z-10" data-aos="zoom-in" data-aos-duration="1000">
-                <div
-                    class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand-orange/20 border border-brand-orange/50 text-brand-orange text-xs font-bold uppercase tracking-widest backdrop-blur-md shadow-sm">
-                    <span class="w-2.5 h-2.5 rounded-full bg-brand-orange animate-ping"></span>
-                    Nakhon Ratchasima Esport Hub
-                </div>
-
-                <div class="flex justify-center mb-2">
-                    <img src="../assets/img/logo.png" alt="Korat Esport"
-                        class="h-28 sm:h-36 w-auto filter drop-shadow-[0_4px_15px_rgba(0,0,0,0.5)] animate-logo-float transition-transform duration-300"
-                        onError="this.src='https://placehold.co/150x150/121318/FF5500?text=KE';">
-                </div>
-
-                <h1 id="hero-title"
-                    class="text-5xl sm:text-7xl font-black font-display text-white tracking-wider uppercase leading-none drop-shadow-md glitch-text animate-auto-glitch">
-                    KORAT <span
-                        class="text-transparent bg-clip-text bg-gradient-to-r from-brand-orange via-amber-300 to-white">ESPORT</span>
-                </h1>
-
-                <p class="text-lg sm:text-2xl text-gray-100 font-normal max-w-2xl mx-auto leading-relaxed drop-shadow">
-                    ศูนย์กลางข้อมูลข่าวสาร การแข่งขัน และจัดอันดับนักกีฬาอีสปอร์ตแห่งจังหวัดนครราชสีมา
-                </p>
-
-                <div class="flex flex-wrap items-center justify-center gap-4 pt-4">
-                    <a href="#tournaments"
-                        class="shine-btn px-8 py-4 rounded-xl font-bold text-white uppercase tracking-wider bg-brand-orange hover:bg-brand-glow shadow-orange-glow hover:shadow-orange-glow-lg transition-all duration-300 transform hover:-translate-y-1 flex items-center gap-2">
-                        <i class="fa-solid fa-trophy text-sm"></i>
-                        <span>เข้าร่วมการแข่งขัน</span>
-                    </a>
-                    <a href="ranking.php"
-                        class="px-8 py-4 rounded-xl font-bold text-white uppercase tracking-wider glass-panel hover:bg-white/20 border border-white/40 transition-all duration-300 flex items-center gap-2 shadow-md">
-                        <i class="fa-solid fa-ranking-star text-amber-400"></i>
-                        <span>ดูอันดับตารางคะแนน</span>
-                    </a>
-                </div>
-            </div>
-        </section>
-
         <?php if ($banners): ?>
-            <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full" data-aos="fade-up">
+            <section id="promotion-banner" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full" data-aos="fade-up">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-bullhorn text-brand-orange"></i> ประชาสัมพันธ์</h2>
                     <span class="text-[10px] text-slate-400">ข่าวสารล่าสุดจาก Korat Esport</span>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <?php foreach ($banners as $banner): ?>
-                        <article class="relative overflow-hidden rounded-2xl border border-white/20 bg-black/30 shadow-xl aspect-[16/7]">
-                            <img src="../assets/<?php echo htmlspecialchars($banner['image_path']); ?>" alt="<?php echo htmlspecialchars($banner['title'] ?: 'แบนเนอร์ประชาสัมพันธ์'); ?>" class="absolute inset-0 w-full h-full object-cover">
-                            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
-                            <div class="absolute inset-x-0 bottom-0 p-4 text-left">
-                                <h3 class="text-base font-bold text-white"><?php echo htmlspecialchars($banner['title'] ?: 'ประชาสัมพันธ์'); ?></h3>
-                                <?php if (!empty($banner['caption'])): ?><p class="text-xs text-slate-200 mt-1"><?php echo htmlspecialchars($banner['caption']); ?></p><?php endif; ?>
-                            </div>
-                        </article>
-                    <?php endforeach; ?>
+                <div class="relative overflow-hidden rounded-3xl border border-white/20 bg-slate-950/70 shadow-2xl">
+                    <div class="promotion-banner-track flex transition-transform duration-700 ease-out">
+                        <?php foreach ($banners as $banner): ?>
+                            <article class="promotion-banner-slide relative min-w-full aspect-[16/7] overflow-hidden">
+                                <img src="../assets/<?php echo htmlspecialchars($banner['image_path']); ?>" alt="<?php echo htmlspecialchars($banner['title'] ?: 'แบนเนอร์ประชาสัมพันธ์'); ?>" class="absolute inset-0 h-full w-full object-cover">
+                            </article>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php if (count($banners) > 1): ?>
+                        <button type="button" class="promotion-banner-prev absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/60 text-white transition hover:bg-brand-orange" aria-label="ประชาสัมพันธ์ก่อนหน้า"><i class="fa-solid fa-chevron-left"></i></button>
+                        <button type="button" class="promotion-banner-next absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/60 text-white transition hover:bg-brand-orange" aria-label="ประชาสัมพันธ์ถัดไป"><i class="fa-solid fa-chevron-right"></i></button>
+                        <div class="promotion-banner-dots absolute bottom-4 left-1/2 flex -translate-x-1/2 gap-2" role="tablist" aria-label="ประชาสัมพันธ์"></div>
+                    <?php endif; ?>
                 </div>
             </section>
         <?php endif; ?>
@@ -765,16 +783,9 @@ try {
             </div>
         </section>
 
-        <!-- Cyber HUD Badge Divider -->
-        <div class="hud-divider">
-            <div class="hud-divider-badge">
-                <span></span> รายการแข่งขัน <span></span>
-            </div>
-        </div>
-
         <!-- ================= 5. TOURNAMENTS SECTION ================= -->
-        <section id="tournaments" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8 w-full">
-            <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b border-white/20 pb-4 gap-4"
+        <section id="tournaments" data-tournament-count="<?php echo count($tournaments); ?>" class="tournament-carousel-section max-w-[1350px] mx-auto px-4 sm:px-6 lg:px-8 py-1 space-y-2 w-full">
+            <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b border-white/20 pb-2 gap-2"
                 data-aos="fade-right">
                 <div>
                     <span class="text-brand-orange font-bold text-xs uppercase tracking-widest block mb-1">                    รายการแข่งขัน</span>
@@ -785,9 +796,11 @@ try {
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div class="relative">
+                <div class="tournament-carousel-viewport w-full max-w-[1250px] mx-auto overflow-hidden rounded-2xl touch-pan-y">
+                    <div class="tournament-carousel-track flex items-stretch gap-4 transition-transform duration-500 ease-out">
                 <?php if (count($tournaments) == 0): ?>
-                    <div class="col-span-full glass-panel p-12 text-center text-gray-200 rounded-2xl" data-aos="fade-up">
+                    <div class="min-w-full glass-panel p-12 text-center text-gray-200 rounded-2xl" data-aos="fade-up">
                         <i class="fa-solid fa-calendar-xmark text-4xl mb-3 block opacity-60"></i>
                         ขณะนี้ยังไม่มีทัวร์นาเมนต์เปิดรับสมัคร
                     </div>
@@ -825,54 +838,63 @@ try {
                     $loginUrl = '../auth/login.php?next=' . urlencode('../pages/' . $registrationUrl);
                     $hasRegistration = !empty($registeredByCategory);
                     ?>
-                    <div class="glass-card p-6 rounded-2xl flex flex-col justify-between space-y-6 group shadow-lg esports-corner-card"
-                        data-aos="fade-up" data-aos-delay="<?php echo $index * 100; ?>" data-tilt data-tilt-scale="1.02">
-                        <div class="space-y-3">
-                            <div class="aspect-video rounded-xl overflow-hidden bg-black/50">
-                                <img src="<?php echo !empty($t['image_path']) ? '../assets/' . htmlspecialchars($t['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>"
-                                    alt="<?php echo htmlspecialchars($t['name']); ?>" class="w-full h-full object-cover">
+                    <div class="min-w-full md:min-w-[calc(50%-0.75rem)] lg:min-w-[calc(33.333%-1rem)] overflow-hidden rounded-2xl border border-white/20 bg-[#0b0d14] flex flex-col group shadow-lg tournament-slide-card"
+                        data-aos="fade-up" data-aos-delay="<?php echo $index * 100; ?>">
+                        <a href="<?php echo htmlspecialchars($registrationUrl); ?>" class="relative block aspect-[16/9] overflow-hidden bg-black/50 group/image" aria-label="สมัครแข่งขัน <?php echo htmlspecialchars($t['name']); ?>">
+                            <img src="<?php echo !empty($t['image_path']) ? '../assets/' . htmlspecialchars($t['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>" alt="<?php echo htmlspecialchars($t['name']); ?>" class="h-full w-full object-cover transition-transform duration-500 group-hover/image:scale-105">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20"></div>
+                            <span class="absolute left-3 top-3 rounded-full bg-pink-600 px-3 py-1 text-[10px] font-black text-white shadow-lg">กำลังรับสมัคร</span>
+                            <?php if (!empty($t['prize_pool'])): ?>
+                                <span class="absolute right-3 top-3 rounded-full bg-black/80 px-3 py-1 text-xs font-black text-amber-300 shadow-lg"><i class="fa-solid fa-trophy mr-1"></i><?php echo htmlspecialchars($t['prize_pool']); ?></span>
+                            <?php endif; ?>
+                            <span class="absolute bottom-3 left-3 rounded-md bg-cyan-400 px-2 py-1 text-[10px] font-black text-slate-950"><i class="fa-solid fa-gamepad mr-1"></i><?php echo htmlspecialchars($t['game_name']); ?> - <?php echo htmlspecialchars($openCategories[0]['label'] ?? 'โอเพ่น'); ?></span>
+                        </a>
+                        <div class="flex flex-1 flex-col gap-4 p-5 sm:p-6">
+                            <div class="flex items-center justify-between gap-2">
+                                <h3 class="truncate text-xl font-black text-white sm:text-2xl"><?php echo htmlspecialchars($t['name']); ?></h3>
+                                <span class="shrink-0 rounded-full border border-emerald-400/60 bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-200">เปิด</span>
                             </div>
-                            <div class="flex items-center justify-between">
-                                <span
-                                    class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-white/20 border border-white/30 text-white shadow-sm">
-                                    <i class="fa-solid fa-gamepad mr-1 text-brand-orange"></i>
-                                    <?php echo htmlspecialchars($t['game_name']); ?>
-                                </span>
-
-                                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-500/30 border border-emerald-400 text-emerald-300 text-xs font-bold shadow-sm">
-                                    <i class="fa-solid fa-door-open text-[10px]"></i> เปิดรับสมัคร
-                                </span>
+                            <div class="flex flex-wrap gap-2">
+                            <?php foreach ($openCategories as $category): ?>
+                                <span class="rounded-full border border-brand-orange/60 bg-brand-orange/15 px-3 py-1 text-[10px] font-bold text-brand-orange"><?php echo htmlspecialchars($category['label'] ?: $category['category_code']); ?></span>
+                            <?php endforeach; ?>
                             </div>
-
-                            <h3
-                                class="text-xl font-black text-white group-hover:text-brand-orange transition-colors font-display line-clamp-2 drop-shadow-sm">
-                                <?php echo htmlspecialchars($t['name']); ?>
-                            </h3>
-                            <div class="flex flex-wrap gap-1.5">
-                                <?php foreach ($openCategories as $category): ?>
-                                    <span class="px-2.5 py-1 rounded-full bg-brand-orange/15 border border-brand-orange/40 text-brand-orange text-[10px] font-bold">
-                                        <?php echo htmlspecialchars($category['label'] ?: $category['category_code']); ?>
-                                    </span>
-                                <?php endforeach; ?>
+                            <div class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] text-xs text-gray-200">
+                                <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                                    <span><i class="fa-solid fa-shield-halved mr-2 text-orange-400"></i>โหมดการแข่งขัน</span>
+                                    <strong><?php echo $t['play_mode'] === 'solo' ? 'SOLO' : 'TEAM'; ?></strong>
+                                </div>
+                                <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                                    <span><i class="fa-regular fa-calendar-check mr-2 text-cyan-400"></i>วันแข่งขัน</span>
+                                    <strong><?php echo !empty($t['start_date']) ? date('d/m/Y', strtotime($t['start_date'])) : '-'; ?></strong>
+                                </div>
+                                <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                                    <span><i class="fa-solid fa-user-group mr-2 text-emerald-400"></i>ทีม/ผู้สมัคร</span>
+                                    <strong><?php echo $totalRegistered; ?> / <?php echo $totalCapacity > 0 ? $totalCapacity : 'ไม่จำกัด'; ?></strong>
+                                </div>
+                                <div class="flex items-center justify-between px-4 py-3">
+                                    <span><i class="fa-solid fa-bolt mr-2 text-amber-400"></i>รับสมัครถึง</span>
+                                    <strong class="text-amber-300"><?php echo date('d/m/Y', strtotime($t['registration_end'])); ?></strong>
+                                </div>
                             </div>
-                            <div class="grid grid-cols-2 gap-2 text-xs text-gray-300">
-                                <span><i class="fa-solid fa-users text-brand-orange mr-1"></i><?php echo $t['play_mode'] === 'solo' ? 'เดี่ยว' : 'ทีม'; ?></span>
-                                <span class="text-right"><i class="fa-regular fa-clock text-amber-400 mr-1"></i>ปิด <?php echo date('d/m/Y H:i', strtotime($t['registration_end'])); ?></span>
-                                <span><i class="fa-solid fa-user-plus text-emerald-400 mr-1"></i>สมัคร <?php echo $totalRegistered; ?> / <?php echo $totalCapacity > 0 ? $totalCapacity : 'ไม่จำกัด'; ?></span>
-                                <span class="text-right text-emerald-300"><?php echo $remainingCapacity === null ? 'ว่างไม่จำกัด' : 'ว่าง ' . $remainingCapacity; ?></span>
-                            </div>
-                        </div>
-
-                        <div
-                            class="pt-4 border-t border-white/15 flex items-center justify-between text-xs font-bold text-gray-200 uppercase tracking-wider">
-                            <a href="<?php echo $isLoggedIn ? htmlspecialchars($registrationUrl) : htmlspecialchars($loginUrl); ?>"
-                                class="w-full flex items-center justify-between text-brand-orange hover:text-white transition-colors">
-                                <span><?php echo $hasRegistration ? 'ดูใบสมัครของฉัน' : 'สมัครแข่งขัน'; ?></span>
-                                <i class="fa-solid fa-arrow-right group-hover:translate-x-2 transition-transform"></i>
+                            <a href="<?php echo htmlspecialchars($registrationUrl); ?>" class="mt-auto flex items-center justify-center gap-2 rounded-2xl bg-brand-orange px-4 py-3 text-sm font-black text-white transition hover:bg-orange-400 hover:shadow-[0_0_24px_rgba(255,85,0,0.55)]">
+                                <i class="fa-solid fa-circle-info"></i>
+                                <?php echo $hasRegistration ? 'ดูใบสมัครของฉัน' : 'ดูรายละเอียด'; ?>
                             </a>
                         </div>
                     </div>
                 <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php if (count($tournaments) > 1): ?>
+                    <button type="button" class="tournament-carousel-prev absolute left-1 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/75 text-white transition hover:bg-brand-orange" aria-label="รายการก่อนหน้า">
+                        <i class="fa-solid fa-chevron-left"></i>
+                    </button>
+                    <button type="button" class="tournament-carousel-next absolute right-1 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/75 text-white transition hover:bg-brand-orange" aria-label="รายการถัดไป">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    <div class="tournament-carousel-page mt-3 flex min-h-3 items-center justify-center gap-2 md:hidden" role="tablist" aria-label="รายการแข่งขัน"></div>
+                <?php endif; ?>
             </div>
         </section>
 
@@ -1161,6 +1183,256 @@ try {
             }
         }
     </script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const introTournament = document.getElementById('intro-tournament-carousel');
+        if (introTournament) {
+            const track = introTournament.querySelector('.intro-tournament-track');
+            const slides = Array.from(introTournament.querySelectorAll('.intro-tournament-slide'));
+            const dots = introTournament.querySelector('.intro-tournament-dots');
+            const previous = introTournament.querySelector('.intro-tournament-prev');
+            const next = introTournament.querySelector('.intro-tournament-next');
+            let current = 0;
+            let autoPlayTimer = null;
+
+            if (track && slides.length > 1 && dots && previous && next) {
+                slides.forEach(function (_, index) {
+                    const dot = document.createElement('button');
+                    dot.type = 'button';
+                    dot.className = 'h-1.5 w-1.5 rounded-full bg-white/50 transition-all';
+                    dot.setAttribute('aria-label', 'ไปยังประชาสัมพันธ์ที่ ' + (index + 1));
+                    dot.addEventListener('click', function () {
+                        current = index;
+                        updateIntroPromo();
+                        stopIntroAutoPlay();
+                        startIntroAutoPlay();
+                    });
+                    dots.appendChild(dot);
+                });
+
+                function updateIntroPromo() {
+                    const active = slides[current];
+                    const offset = active.offsetLeft - ((introTournament.clientWidth - active.clientWidth) / 2);
+                    track.style.transform = 'translateX(-' + Math.max(0, offset) + 'px)';
+                    slides.forEach(function (slide, index) {
+                        const isActive = index === current;
+                        slide.classList.toggle('scale-105', isActive);
+                        slide.classList.toggle('opacity-100', isActive);
+                        slide.classList.toggle('opacity-50', !isActive);
+                    });
+                    Array.from(dots.children).forEach(function (dot, index) {
+                        dot.classList.toggle('bg-brand-orange', index === current);
+                        dot.classList.toggle('scale-125', index === current);
+                    });
+                }
+
+                function showNextIntroTournament() {
+                    current = (current + 1) % slides.length;
+                    updateIntroPromo();
+                }
+
+                function startIntroAutoPlay() {
+                    if (autoPlayTimer === null) {
+                        autoPlayTimer = window.setInterval(showNextIntroTournament, 2000);
+                    }
+                }
+
+                function stopIntroAutoPlay() {
+                    if (autoPlayTimer !== null) {
+                        window.clearInterval(autoPlayTimer);
+                        autoPlayTimer = null;
+                    }
+                }
+
+                previous.addEventListener('click', function () {
+                    current = (current - 1 + slides.length) % slides.length;
+                    updateIntroPromo();
+                    stopIntroAutoPlay();
+                    startIntroAutoPlay();
+                });
+                next.addEventListener('click', function () {
+                    showNextIntroTournament();
+                    stopIntroAutoPlay();
+                    startIntroAutoPlay();
+                });
+                introTournament.addEventListener('mouseenter', stopIntroAutoPlay);
+                introTournament.addEventListener('mouseleave', startIntroAutoPlay);
+                introTournament.addEventListener('touchstart', stopIntroAutoPlay, {passive: true});
+                introTournament.addEventListener('touchend', startIntroAutoPlay, {passive: true});
+                introTournament.addEventListener('focusin', stopIntroAutoPlay);
+                introTournament.addEventListener('focusout', startIntroAutoPlay);
+                window.addEventListener('resize', updateIntroPromo);
+                updateIntroPromo();
+                startIntroAutoPlay();
+            }
+        }
+
+        const section = document.getElementById('tournaments');
+        const header = document.querySelector('header');
+        const track = section ? section.querySelector('.tournament-carousel-track') : null;
+        const slides = track ? Array.from(track.children) : [];
+        const previous = section ? section.querySelector('.tournament-carousel-prev') : null;
+        const next = section ? section.querySelector('.tournament-carousel-next') : null;
+        const pageIndicator = section ? section.querySelector('.tournament-carousel-page') : null;
+        const tournamentCount = section ? Number(section.dataset.tournamentCount || 0) : 0;
+        const viewport = section ? section.querySelector('.tournament-carousel-viewport') : null;
+        let currentSlide = 0;
+
+        if (!section || !header || !track || slides.length === 0) return;
+
+        header.insertAdjacentElement('afterend', section);
+
+        if (tournamentCount === 0) {
+            if (previous) previous.hidden = true;
+            if (next) next.hidden = true;
+            if (pageIndicator) pageIndicator.hidden = true;
+            return;
+        }
+
+        function getCardsPerPage() {
+            if (window.matchMedia('(min-width: 1024px)').matches) return 3;
+            if (window.matchMedia('(min-width: 768px)').matches) return 2;
+            return 1;
+        }
+
+        function updatePageDots() {
+            if (!pageIndicator) return;
+            pageIndicator.innerHTML = '';
+            const pageCount = Math.max(1, Math.ceil(slides.length / getCardsPerPage()));
+            for (let index = 0; index < pageCount; index += 1) {
+                const dot = document.createElement('button');
+                dot.type = 'button';
+                dot.className = 'tournament-carousel-dot w-2 h-2 rounded-full bg-white/40 hover:bg-white/80 transition-all';
+                dot.setAttribute('role', 'tab');
+                dot.setAttribute('aria-label', 'ไปยังหน้าที่ ' + (index + 1));
+                dot.addEventListener('click', function () {
+                    currentSlide = index;
+                    updateCarousel();
+                });
+                pageIndicator.appendChild(dot);
+            }
+        }
+
+        function updateCarousel() {
+            const cardsPerPage = getCardsPerPage();
+            const pageCount = Math.max(1, Math.ceil(slides.length / cardsPerPage));
+            currentSlide = Math.min(currentSlide, pageCount - 1);
+            const firstSlide = slides[currentSlide * cardsPerPage];
+            track.style.transform = 'translateX(-' + (firstSlide ? firstSlide.offsetLeft : 0) + 'px)';
+            updatePageDots();
+            if (pageIndicator) {
+                Array.from(pageIndicator.children).forEach(function (dot, index) {
+                    const isActive = index === currentSlide;
+                    dot.classList.toggle('bg-brand-orange', isActive);
+                    dot.classList.toggle('bg-white/40', !isActive);
+                    dot.classList.toggle('scale-125', isActive);
+                    dot.setAttribute('aria-selected', isActive ? 'true' : 'false');
+                });
+            }
+        }
+
+        if (previous) {
+            previous.addEventListener('click', function () {
+                const pageCount = Math.max(1, Math.ceil(slides.length / getCardsPerPage()));
+                currentSlide = (currentSlide - 1 + pageCount) % pageCount;
+                updateCarousel();
+            });
+        }
+        if (next) {
+            next.addEventListener('click', function () {
+                const pageCount = Math.max(1, Math.ceil(slides.length / getCardsPerPage()));
+                currentSlide = (currentSlide + 1) % pageCount;
+                updateCarousel();
+            });
+        }
+        if (viewport) {
+            let touchStartX = 0;
+            let touchStartY = 0;
+            viewport.addEventListener('touchstart', function (event) {
+                const touch = event.touches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+            }, {passive: true});
+            viewport.addEventListener('touchend', function (event) {
+                const touch = event.changedTouches[0];
+                const deltaX = touch.clientX - touchStartX;
+                const deltaY = touch.clientY - touchStartY;
+                if (Math.abs(deltaX) < 40 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+                const pageCount = Math.max(1, Math.ceil(slides.length / getCardsPerPage()));
+                currentSlide = deltaX < 0
+                    ? (currentSlide + 1) % pageCount
+                    : (currentSlide - 1 + pageCount) % pageCount;
+                updateCarousel();
+            }, {passive: true});
+        }
+        window.addEventListener('resize', updateCarousel);
+        updateCarousel();
+
+        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+            slides.forEach(function (card) {
+                card.addEventListener('mousemove', function (event) {
+                    const bounds = card.getBoundingClientRect();
+                    const rotateX = ((event.clientY - bounds.top) / bounds.height - 0.5) * -8;
+                    const rotateY = ((event.clientX - bounds.left) / bounds.width - 0.5) * 8;
+                    card.style.transform = 'perspective(900px) translateY(-10px) scale(1.02) rotateX(' + rotateX.toFixed(2) + 'deg) rotateY(' + rotateY.toFixed(2) + 'deg)';
+                });
+                card.addEventListener('mouseleave', function () {
+                    card.style.transform = '';
+                });
+            });
+        }
+    });
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const banner = document.getElementById('promotion-banner');
+    if (!banner) return;
+    const tournaments = document.getElementById('tournaments');
+    if (tournaments) {
+        tournaments.before(banner);
+    }
+    const track = banner.querySelector('.promotion-banner-track');
+    const slides = track ? Array.from(track.children) : [];
+    const dots = banner.querySelector('.promotion-banner-dots');
+    const previous = banner.querySelector('.promotion-banner-prev');
+    const next = banner.querySelector('.promotion-banner-next');
+    let current = 0;
+
+    if (!track || slides.length < 2) return;
+
+    slides.forEach(function (_, index) {
+        const dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = 'h-2 w-2 rounded-full bg-white/50 transition-all hover:bg-white';
+        dot.setAttribute('aria-label', 'ไปยังประชาสัมพันธ์ที่ ' + (index + 1));
+        dot.addEventListener('click', function () {
+            current = index;
+            update();
+        });
+        dots.appendChild(dot);
+    });
+
+    function update() {
+        track.style.transform = 'translateX(-' + (current * 100) + '%)';
+        Array.from(dots.children).forEach(function (dot, index) {
+            const active = index === current;
+            dot.classList.toggle('bg-brand-orange', active);
+            dot.classList.toggle('scale-125', active);
+            dot.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+    }
+
+    previous.addEventListener('click', function () {
+        current = (current - 1 + slides.length) % slides.length;
+        update();
+    });
+    next.addEventListener('click', function () {
+        current = (current + 1) % slides.length;
+        update();
+    });
+    update();
+});
+</script>
 <script src="../assets/js/flash-messages.js" defer></script>
 </body>
 

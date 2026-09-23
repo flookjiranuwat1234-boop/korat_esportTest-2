@@ -6,7 +6,11 @@ require_once '../includes/tournament_categories.php';
 require_once '../includes/registration_status.php';
 require_once '../includes/tournament_registration.php';
 require_once '../includes/tournament_demo.php';
-requireLogin();
+
+$isLoggedIn = isLoggedIn();
+if (!$isLoggedIn && ($_SERVER['REQUEST_METHOD'] === 'POST' || ($_GET['action'] ?? '') === 'search_players')) {
+    requireLogin();
+}
 
 date_default_timezone_set('Asia/Bangkok');
 $currentUser = [
@@ -220,16 +224,59 @@ if ($requestedTournamentId > 0 && !$tournaments) {
     <?php foreach ($tournaments as $tournament): ?>
         <?php $id = (int) $tournament['tournament_id']; ?>
         <?php $tournamentCategories = $categories[$id] ?? []; $fixedCategoryId = count($tournamentCategories) === 1 ? (int) $tournamentCategories[0]['tournament_category_id'] : 0; ?>
+        <?php $hasDescription = trim((string) ($tournament['description'] ?? '')) !== ''; ?>
+        <?php $hasRules = trim((string) ($tournament['rules'] ?? '')) !== ''; ?>
+        <?php $loginUrl = '../auth/login.php?next=' . urlencode('../pages/register-tournament.php?id=' . $id); ?>
         <section class="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl">
             <h2 class="text-2xl font-bold"><?= htmlspecialchars($tournament['name']); ?> <span class="text-orange-400">(<?= htmlspecialchars($tournament['game_name']); ?>)</span></h2>
+            <div class="mt-5 grid items-start gap-4 lg:grid-cols-2">
+                <div class="<?= $hasRules ? '' : 'lg:col-span-2'; ?> space-y-4">
+                    <?php if ($hasDescription): ?>
+                        <div class="h-fit min-w-0 rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+                            <h3 class="flex items-center gap-2 text-lg font-bold text-orange-300">
+                                <i class="fa-solid fa-circle-info"></i> รายละเอียดการแข่งขัน
+                            </h3>
+                            <p class="mt-3 whitespace-pre-line text-sm leading-7 text-gray-300"><?= htmlspecialchars($tournament['description']); ?></p>
+                        </div>
+                    <?php endif; ?>
+                    <div class="h-fit min-w-0 rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+                        <h3 class="flex items-center gap-2 text-lg font-bold text-orange-300">
+                            <i class="fa-solid fa-calendar-days"></i> ข้อมูลรายการ
+                        </h3>
+                        <div class="mt-3 grid gap-2 text-sm text-gray-300 sm:grid-cols-2">
+                            <?php if (!empty($tournament['format'])): ?><p><span class="text-gray-500">รูปแบบ:</span> <?= htmlspecialchars($tournament['format']); ?></p><?php endif; ?>
+                            <?php if (!empty($tournament['best_of'])): ?><p><span class="text-gray-500">การแข่งขัน:</span> Best of <?= (int) $tournament['best_of']; ?></p><?php endif; ?>
+                            <?php if (!empty($tournament['prize_pool'])): ?><p><span class="text-gray-500">เงินรางวัล:</span> <?= htmlspecialchars($tournament['prize_pool']); ?></p><?php endif; ?>
+                            <?php if (!empty($tournament['venue_address'])): ?><p><span class="text-gray-500">สถานที่:</span> <?= htmlspecialchars($tournament['venue_address']); ?></p><?php endif; ?>
+                            <?php if (!empty($tournament['start_date'])): ?><p><span class="text-gray-500">เริ่มแข่งขัน:</span> <?= htmlspecialchars(date('d/m/Y H:i', strtotime($tournament['start_date']))); ?></p><?php endif; ?>
+                            <?php if (!empty($tournament['registration_end'])): ?><p><span class="text-gray-500">ปิดรับสมัคร:</span> <?= htmlspecialchars(date('d/m/Y H:i', strtotime($tournament['registration_end']))); ?></p><?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+                <?php if ($hasRules): ?>
+                    <div class="h-fit min-w-0 rounded-2xl border border-orange-400/30 bg-orange-500/10 p-5">
+                        <h3 class="flex items-center gap-2 text-lg font-bold text-orange-300">
+                            <i class="fa-solid fa-scroll"></i> กติกาการแข่งขัน
+                        </h3>
+                        <p class="mt-3 whitespace-pre-line text-sm leading-7 text-gray-200"><?= htmlspecialchars($tournament['rules']); ?></p>
+                    </div>
+                <?php endif; ?>
+            </div>
             <?php if ($tournament['play_mode'] === 'solo'): ?>
-                <form method="post" class="mt-5 flex flex-wrap items-end gap-3">
-                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken); ?>"><input type="hidden" name="tournament_id" value="<?= $id; ?>"><input type="hidden" name="mode" value="solo">
-                    <?php if ($fixedCategoryId): ?><input type="hidden" name="tournament_category_id" value="<?= $fixedCategoryId; ?>"><?php endif; ?>
-                    <label class="text-sm">รุ่นการแข่งขัน<select <?= $fixedCategoryId ? 'disabled' : ''; ?> name="<?= $fixedCategoryId ? '' : 'tournament_category_id'; ?>" required class="mt-1 block rounded-lg bg-slate-900 p-3"><?php foreach ($tournamentCategories as $category): ?><option value="<?= (int) $category['tournament_category_id']; ?>" <?= $fixedCategoryId === (int) $category['tournament_category_id'] ? 'selected' : ''; ?>><?= htmlspecialchars(strtolower((string) ($category['category_code'] ?? '')) === 'open' ? 'โอเพ่น' : ($category['label'] ?: $category['name'])); ?></option><?php endforeach; ?></select></label>
-                    <button class="rounded-lg bg-orange-500 px-5 py-3 font-bold">สมัคร Solo</button>
-                </form>
+                <?php if ($isLoggedIn): ?>
+                    <form method="post" class="mt-5 flex flex-wrap items-end gap-3">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken); ?>"><input type="hidden" name="tournament_id" value="<?= $id; ?>"><input type="hidden" name="mode" value="solo">
+                        <?php if ($fixedCategoryId): ?><input type="hidden" name="tournament_category_id" value="<?= $fixedCategoryId; ?>"><?php endif; ?>
+                        <label class="text-sm">รุ่นการแข่งขัน<select <?= $fixedCategoryId ? 'disabled' : ''; ?> name="<?= $fixedCategoryId ? '' : 'tournament_category_id'; ?>" required class="mt-1 block rounded-lg bg-slate-900 p-3"><?php foreach ($tournamentCategories as $category): ?><option value="<?= (int) $category['tournament_category_id']; ?>" <?= $fixedCategoryId === (int) $category['tournament_category_id'] ? 'selected' : ''; ?>><?= htmlspecialchars(strtolower((string) ($category['category_code'] ?? '')) === 'open' ? 'โอเพ่น' : ($category['label'] ?: $category['name'])); ?></option><?php endforeach; ?></select></label>
+                        <button class="rounded-lg bg-orange-500 px-5 py-3 font-bold">สมัคร Solo</button>
+                    </form>
+                <?php else: ?>
+                    <a href="<?= htmlspecialchars($loginUrl); ?>" class="mt-5 inline-flex rounded-lg bg-orange-500 px-5 py-3 font-bold">เข้าสู่ระบบเพื่อสมัครแข่งขัน</a>
+                <?php endif; ?>
             <?php else: ?>
+                <?php if (!$isLoggedIn): ?>
+                    <a href="<?= htmlspecialchars($loginUrl); ?>" class="mt-5 inline-flex rounded-lg bg-orange-500 px-5 py-3 font-bold">เข้าสู่ระบบเพื่อสมัครแข่งขัน</a>
+                <?php else: ?>
                 <form method="post" enctype="multipart/form-data" class="team-form mt-5 space-y-5" data-tournament="<?= $id; ?>">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken); ?>"><input type="hidden" name="tournament_id" value="<?= $id; ?>"><input type="hidden" name="mode" value="team">
                     <div class="grid gap-4 sm:grid-cols-2">
@@ -246,6 +293,7 @@ if ($requestedTournamentId > 0 && !$tournaments) {
                     <div><h3>ทีมงาน</h3><div class="staff space-y-2"></div></div>
                     <button type="submit" disabled class="submit-team rounded-lg bg-orange-500 px-5 py-3 font-bold disabled:cursor-not-allowed disabled:opacity-40">ยืนยันการสมัคร</button>
                 </form>
+                <?php endif; ?>
             <?php endif; ?>
         </section>
     <?php endforeach; ?>

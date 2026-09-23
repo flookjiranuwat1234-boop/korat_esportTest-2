@@ -89,7 +89,7 @@ function renderFlashAlert(?array $flash): string
 // สมัครสมาชิกใหม่ ค่าเริ่มต้น role = athlete (แอดมินสร้างเองแยกต่างหาก ไม่เปิดให้สมัครผ่านหน้าเว็บ)
 // $securityQuestion / $securityAnswer ใช้สำหรับฟีเจอร์ "ลืมรหัสผ่าน"
 // (ระบบไม่มีการส่งอีเมลจริง จึงใช้คำถามกันลืมแทนลิงก์รีเซ็ตทางอีเมล)
-function registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer, $gender, $birthDate)
+function registerUser($pdo, $username, $email, $password, $securityQuestion, $securityAnswer, $gender, $birthDate, $province)
 {
     // เช็คก่อนว่า username หรือ email ซ้ำไหม
     $check = $pdo->prepare("SELECT user_id FROM users WHERE username = :username OR email = :email");
@@ -118,13 +118,14 @@ function registerUser($pdo, $username, $email, $password, $securityQuestion, $se
         ]);
 
         $userId = $pdo->lastInsertId();
-        $playerInsert = $pdo->prepare('INSERT INTO players (user_id, display_name, gender, birth_date)
-            VALUES (:user_id, :display_name, :gender, :birth_date)');
+        $playerInsert = $pdo->prepare('INSERT INTO players (user_id, display_name, gender, birth_date, province)
+            VALUES (:user_id, :display_name, :gender, :birth_date, :province)');
         $playerInsert->execute([
             'user_id' => $userId,
             'display_name' => $username,
             'gender' => $gender,
             'birth_date' => $birthDate,
+            'province' => $province,
         ]);
         $pdo->commit();
     } catch (Throwable $exception) {

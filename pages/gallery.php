@@ -567,6 +567,12 @@ $galleryPageParams = $selectedAlbumId > 0
                                 <img src="../assets/<?php echo htmlspecialchars($img['image_path']); ?>"
                                     alt="<?php echo htmlspecialchars($img['caption'] ?? 'Gallery Image'); ?>" loading="lazy">
 
+                                <div class="masonry-overlay">
+                                    <h3 class="text-lg font-bold text-white"><?php echo htmlspecialchars($img['display_album_name'] ?? 'แกลเลอรี่กิจกรรม'); ?></h3>
+                                    <?php if (!empty($img['caption'])): ?>
+                                        <p class="mt-1 text-xs text-gray-200"><?php echo htmlspecialchars($img['caption']); ?></p>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -652,6 +658,12 @@ $galleryPageParams = $selectedAlbumId > 0
                                 <img src="../assets/<?php echo htmlspecialchars($img['image_path'] ?? ''); ?>"
                                     alt="<?php echo htmlspecialchars($img['caption'] ?? 'Gallery Image'); ?>" loading="lazy">
 
+                                <div class="masonry-overlay">
+                                    <h3 class="text-lg font-bold text-white"><?php echo htmlspecialchars($img['display_album_name'] ?? 'แกลเลอรี่กิจกรรม'); ?></h3>
+                                    <?php if (!empty($img['caption'])): ?>
+                                        <p class="mt-1 text-xs text-gray-200"><?php echo htmlspecialchars($img['caption']); ?></p>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                         <?php endforeach; ?>
                     </div>

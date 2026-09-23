@@ -889,6 +889,10 @@ if ($flash) {
                                             <i class="fa-solid fa-gamepad text-brand-orange"></i>
                                             <span><?php echo htmlspecialchars($m['display_name'] ?: 'มีโปรไฟล์นักกีฬา'); ?></span>
                                         </div>
+                                        <div class="mt-1 flex items-center gap-1.5 text-[10px] font-normal text-slate-400">
+                                            <i class="fa-solid fa-location-dot text-brand-orange/70"></i>
+                                            <span><?php echo htmlspecialchars($m['province'] ?: 'ยังไม่ระบุจังหวัด'); ?></span>
+                                        </div>
                                     <?php else: ?>
                                         <span class="text-slate-300 italic">-</span>
                                     <?php endif; ?>
