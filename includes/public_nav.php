@@ -23,7 +23,9 @@
     <a href="/korat_esportTest-2/pages/tournaments.php">ทัวร์นาเมนต์</a>
     <a href="/korat_esportTest-2/pages/news.php">ข่าวสาร</a>
     <a href="/korat_esportTest-2/pages/gallery.php">แกลลอรี่</a>
-    <a href="/korat_esportTest-2/pages/lodging.php">ที่พักแนะนำ</a>
+    <?php if (isLoggedIn()): ?>
+        <a href="/korat_esportTest-2/pages/lodging.php">ที่พักแนะนำ</a>
+    <?php endif; ?>
     <a href="/korat_esportTest-2/pages/ranking.php">อันดับ</a>
 
     <?php if (isLoggedIn()): ?>

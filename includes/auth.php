@@ -3,8 +3,6 @@
 // รวมฟังก์ชันเกี่ยวกับสมัครสมาชิก, login, logout และเช็คสิทธิ์การใช้งาน
 // ไฟล์ที่จะใช้ฟังก์ชันพวกนี้ต้อง include config/db.php มาก่อนแล้ว (ต้องมี $pdo)
 
-require_once __DIR__ . '/../config/runtime.php';
-
 if (session_status() !== PHP_SESSION_ACTIVE) {
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);

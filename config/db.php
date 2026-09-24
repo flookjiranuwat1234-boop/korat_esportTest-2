@@ -3,8 +3,6 @@
 // ไฟล์เชื่อมต่อฐานข้อมูล ให้ทุกไฟล์ include ตัวนี้แค่ตัวเดียว
 // ไม่ต้องเขียน connection ซ้ำในแต่ละไฟล์
 
-require_once __DIR__ . '/runtime.php';
-
 date_default_timezone_set('Asia/Bangkok');
 
 // Demo mode is disabled unless explicitly enabled in the Local/Test environment.

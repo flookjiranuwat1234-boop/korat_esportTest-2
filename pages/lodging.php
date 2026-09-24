@@ -94,8 +94,17 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
     </script>
 
     <style>
+        html {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+            overflow-x: clip;
+        }
+        html::-webkit-scrollbar {
+            display: none;
+        }
         body {
             background-color: #0F1117;
+            overflow-x: clip;
         }
 
         .bg-esports-arena {

@@ -474,16 +474,40 @@ try {
             100% { transform: translateY(100%); }
         }
         .animate-scanline { animation: scanline 8s linear infinite; }
+
+        #promotion-banner {
+            animation: promotionBannerEnter 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        @keyframes promotionBannerEnter {
+            from {
+                opacity: 0;
+                transform: translateY(18px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            #promotion-banner {
+                animation: none;
+            }
+        }
     </style>
     <script>
         (function () {
             try {
                 const shouldShowIntro = new URLSearchParams(window.location.search).get('intro') === '1';
+                const hasSeenIntro = window.localStorage.getItem('korat-esport-intro-seen-v2') === '1';
                 if (shouldShowIntro) {
-                    window.localStorage.removeItem('korat-esport-intro-seen');
-                    window.history.replaceState({}, document.title, window.location.pathname);
-                } else if (window.localStorage.getItem('korat-esport-intro-seen') === '1') {
+                    window.localStorage.removeItem('korat-esport-intro-seen-v2');
+                } else if (hasSeenIntro) {
                     document.documentElement.classList.add('intro-already-seen');
+                }
+                if (shouldShowIntro) {
+                    window.history.replaceState({}, document.title, window.location.pathname);
                 }
             } catch (error) {
                 // Keep the intro visible when browser storage is unavailable.
@@ -610,10 +634,12 @@ try {
                             <i class="fa-solid fa-images text-xs mr-1.5"></i> แกลเลอรี่
                         </a>
 
-                        <a href="lodging.php"
-                            class="nav-link-item px-4 py-2 text-sm font-semibold text-gray-200 hover:text-brand-orange transition-all drop-shadow-sm">
-                            <i class="fa-solid fa-hotel text-xs mr-1.5"></i> ที่พักแนะนำ
-                        </a>
+                        <?php if ($isLoggedIn): ?>
+                            <a href="lodging.php"
+                                class="nav-link-item px-4 py-2 text-sm font-semibold text-gray-200 hover:text-brand-orange transition-all drop-shadow-sm">
+                                <i class="fa-solid fa-hotel text-xs mr-1.5"></i> ที่พักแนะนำ
+                            </a>
+                        <?php endif; ?>
                     </nav>
 
                     <nav id="mobile-public-menu"
@@ -633,9 +659,11 @@ try {
                         <a href="gallery.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
                             <i class="fa-solid fa-images mr-2 text-xs"></i> แกลเลอรี่
                         </a>
-                        <a href="lodging.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
-                            <i class="fa-solid fa-hotel mr-2 text-xs"></i> ที่พักแนะนำ
-                        </a>
+                        <?php if ($isLoggedIn): ?>
+                            <a href="lodging.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                                <i class="fa-solid fa-hotel mr-2 text-xs"></i> ที่พักแนะนำ
+                            </a>
+                        <?php endif; ?>
                         <?php if ($isLoggedIn): ?>
                             <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
                                 <a href="../admin/dashboard.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-brand-orange">
@@ -721,7 +749,7 @@ try {
         </script>
 
         <?php if ($banners): ?>
-            <section id="promotion-banner" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full" data-aos="fade-up">
+            <section id="promotion-banner" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-bullhorn text-brand-orange"></i> ประชาสัมพันธ์</h2>
                     <span class="text-[10px] text-slate-400">ข่าวสารล่าสุดจาก Korat Esport</span>
@@ -1250,7 +1278,7 @@ try {
             if (intro && !intro.classList.contains('intro-leaving')) {
                 intro.classList.add('intro-leaving');
                 try {
-                    window.localStorage.setItem('korat-esport-intro-seen', '1');
+                    window.localStorage.setItem('korat-esport-intro-seen-v2', '1');
                 } catch (error) {
                     // The transition still works when browser storage is unavailable.
                 }
