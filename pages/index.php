@@ -486,16 +486,18 @@ try {
 
         <canvas id="intro-particles" class="absolute inset-0 pointer-events-none z-10"></canvas>
 
-        <div class="text-center space-y-6 w-full max-w-[72rem] relative z-20">
+        <div class="text-center space-y-6 w-full max-w-[64rem] relative z-20">
             
             <?php if (count($tournaments) > 0): ?>
-                <div id="intro-tournament-carousel" class="relative mx-auto mt-3 w-full max-w-[72rem] overflow-hidden px-[2%] sm:px-[4%]" onclick="event.stopPropagation()">
-                    <div class="intro-tournament-track flex items-stretch gap-4 transition-transform duration-500 ease-out">
+                <div id="intro-tournament-carousel" class="relative mx-auto mt-3 w-full max-w-[64rem] overflow-hidden" onclick="event.stopPropagation()">
+                    <div class="intro-tournament-track flex items-stretch gap-3 will-change-transform">
+                        <?php $isFirstIntroSlide = true; ?>
                         <?php foreach ($tournaments as $tournament): ?>
                             <?php $introRegistrationUrl = 'register-tournament.php?id=' . (int) $tournament['tournament_id']; ?>
-                            <article class="intro-tournament-slide group relative min-w-[96%] overflow-hidden rounded-2xl border border-white/30 bg-black/50 shadow-xl transition-all duration-500 sm:min-w-[92%]">
-                                <a href="<?php echo htmlspecialchars($introRegistrationUrl); ?>" class="block">
-                                    <img src="<?php echo !empty($tournament['image_path']) ? '../assets/' . htmlspecialchars($tournament['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>" alt="<?php echo htmlspecialchars($tournament['name']); ?>" class="aspect-[16/7] w-full object-cover">
+                            <?php $introImageLoading = $isFirstIntroSlide ? 'fetchpriority="high" loading="eager"' : 'loading="lazy"'; ?>
+                            <article class="intro-tournament-slide group relative min-w-0 shrink-0 basis-[78%] overflow-hidden rounded-2xl border border-white/30 bg-black/50 shadow-xl transition-[opacity,border-color,box-shadow,filter] duration-500 hover:brightness-110 sm:basis-[74%]">
+                                <a href="<?php echo htmlspecialchars($introRegistrationUrl); ?>" class="block" onclick="event.stopPropagation()">
+                                    <img src="<?php echo !empty($tournament['image_path']) ? '../assets/' . htmlspecialchars($tournament['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>" alt="<?php echo htmlspecialchars($tournament['name']); ?>" class="aspect-video w-full object-cover" <?php echo $introImageLoading; ?>>
                                     <div class="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 text-left opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100 sm:p-6">
                                         <div class="mb-1.5 flex items-center justify-between gap-2">
                                             <span class="truncate text-xs font-bold text-white sm:text-lg"><?php echo htmlspecialchars($tournament['name']); ?></span>
@@ -505,11 +507,12 @@ try {
                                     </div>
                                 </a>
                             </article>
+                            <?php $isFirstIntroSlide = false; ?>
                         <?php endforeach; ?>
                     </div>
                     <?php if (count($tournaments) > 1): ?>
-                        <button type="button" class="intro-tournament-prev absolute left-2 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/70 text-white hover:bg-brand-orange" aria-label="รายการก่อนหน้า"><i class="fa-solid fa-chevron-left"></i></button>
-                        <button type="button" class="intro-tournament-next absolute right-2 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/70 text-white hover:bg-brand-orange" aria-label="รายการถัดไป"><i class="fa-solid fa-chevron-right"></i></button>
+                        <button type="button" class="intro-tournament-prev absolute left-2 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/70 text-white hover:bg-brand-orange" aria-label="รายการก่อนหน้า" onclick="event.stopPropagation()"><i class="fa-solid fa-chevron-left"></i></button>
+                        <button type="button" class="intro-tournament-next absolute right-2 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/70 text-white hover:bg-brand-orange" aria-label="รายการถัดไป" onclick="event.stopPropagation()"><i class="fa-solid fa-chevron-right"></i></button>
                         <div class="intro-tournament-dots absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 gap-1.5"></div>
                     <?php endif; ?>
                 </div>
@@ -1022,7 +1025,7 @@ try {
     </div>
 
     <!-- AOS JS Library -->
-    <script src="https://unpkg.com/aos@2.3.4/dist/aos.js"></script>
+    <script src="https://unpkg.com/aos@2.3.4/dist/aos.js" defer></script>
 
     <!-- Gamer SFX & Core Animations Script -->
     <script>
@@ -1188,15 +1191,15 @@ try {
         const introTournament = document.getElementById('intro-tournament-carousel');
         if (introTournament) {
             const track = introTournament.querySelector('.intro-tournament-track');
-            const slides = Array.from(introTournament.querySelectorAll('.intro-tournament-slide'));
+            const originalSlides = Array.from(introTournament.querySelectorAll('.intro-tournament-slide'));
             const dots = introTournament.querySelector('.intro-tournament-dots');
             const previous = introTournament.querySelector('.intro-tournament-prev');
             const next = introTournament.querySelector('.intro-tournament-next');
+            const slides = originalSlides;
             let current = 0;
-            let autoPlayTimer = null;
 
-            if (track && slides.length > 1 && dots && previous && next) {
-                slides.forEach(function (_, index) {
+            if (track && originalSlides.length > 1 && dots && previous && next) {
+                originalSlides.forEach(function (_, index) {
                     const dot = document.createElement('button');
                     dot.type = 'button';
                     dot.className = 'h-1.5 w-1.5 rounded-full bg-white/50 transition-all';
@@ -1204,66 +1207,54 @@ try {
                     dot.addEventListener('click', function () {
                         current = index;
                         updateIntroPromo();
-                        stopIntroAutoPlay();
-                        startIntroAutoPlay();
                     });
                     dots.appendChild(dot);
                 });
 
                 function updateIntroPromo() {
                     const active = slides[current];
-                    const offset = active.offsetLeft - ((introTournament.clientWidth - active.clientWidth) / 2);
-                    track.style.transform = 'translateX(-' + Math.max(0, offset) + 'px)';
+                    if (!active) return;
+
+                    const offset = (introTournament.clientWidth / 2)
+                        - (active.offsetLeft + (active.offsetWidth / 2));
+
+                    track.style.transition = 'transform 0.65s cubic-bezier(0.16, 1, 0.3, 1)';
+                    track.style.transform = 'translateX(' + offset + 'px)';
+
                     slides.forEach(function (slide, index) {
                         const isActive = index === current;
-                        slide.classList.toggle('scale-105', isActive);
+                        slide.classList.toggle('border-brand-orange', isActive);
+                        slide.classList.toggle('shadow-[0_0_28px_rgba(255,85,0,0.45)]', isActive);
                         slide.classList.toggle('opacity-100', isActive);
-                        slide.classList.toggle('opacity-50', !isActive);
+                        slide.classList.toggle('opacity-60', !isActive);
+                        slide.classList.toggle('brightness-110', isActive);
+                        slide.classList.toggle('brightness-75', !isActive);
                     });
+
                     Array.from(dots.children).forEach(function (dot, index) {
                         dot.classList.toggle('bg-brand-orange', index === current);
                         dot.classList.toggle('scale-125', index === current);
                     });
                 }
 
-                function showNextIntroTournament() {
-                    current = (current + 1) % slides.length;
-                    updateIntroPromo();
-                }
-
-                function startIntroAutoPlay() {
-                    if (autoPlayTimer === null) {
-                        autoPlayTimer = window.setInterval(showNextIntroTournament, 2000);
-                    }
-                }
-
-                function stopIntroAutoPlay() {
-                    if (autoPlayTimer !== null) {
-                        window.clearInterval(autoPlayTimer);
-                        autoPlayTimer = null;
-                    }
-                }
-
                 previous.addEventListener('click', function () {
                     current = (current - 1 + slides.length) % slides.length;
                     updateIntroPromo();
-                    stopIntroAutoPlay();
-                    startIntroAutoPlay();
                 });
                 next.addEventListener('click', function () {
-                    showNextIntroTournament();
-                    stopIntroAutoPlay();
-                    startIntroAutoPlay();
+                    current = (current + 1) % slides.length;
+                    updateIntroPromo();
                 });
-                introTournament.addEventListener('mouseenter', stopIntroAutoPlay);
-                introTournament.addEventListener('mouseleave', startIntroAutoPlay);
-                introTournament.addEventListener('touchstart', stopIntroAutoPlay, {passive: true});
-                introTournament.addEventListener('touchend', startIntroAutoPlay, {passive: true});
-                introTournament.addEventListener('focusin', stopIntroAutoPlay);
-                introTournament.addEventListener('focusout', startIntroAutoPlay);
+
+                if ('ResizeObserver' in window) {
+                    const resizeObserver = new ResizeObserver(function () {
+                        updateIntroPromo();
+                    });
+                    resizeObserver.observe(introTournament);
+                }
+
                 window.addEventListener('resize', updateIntroPromo);
                 updateIntroPromo();
-                startIntroAutoPlay();
             }
         }
 
