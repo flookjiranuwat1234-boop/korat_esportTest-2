@@ -199,7 +199,7 @@ $flashAlert = renderFlashAlert($flash ?: ($error
                 <div class="flex items-center justify-between h-20">
 
                     <!-- Logo & Brand Header -->
-                    <a href="index.php" class="flex items-center gap-3 group">
+                    <a href="index.php?intro=1" class="flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)] group-hover:scale-105 transition-transform" onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors drop-shadow">KORAT <span class="text-brand-orange">ESPORT</span></span>

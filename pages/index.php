@@ -140,7 +140,7 @@ try {
         }
     </script>
     <!-- Vanilla Tilt JS (เอฟเฟกต์การ์ด 3D ตามเมาส์) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.1/vanilla-tilt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.1/vanilla-tilt.min.js" defer></script>
 
     <style>
         ::-webkit-scrollbar {
@@ -231,6 +231,12 @@ try {
             height: 100%;
             pointer-events: none;
             z-index: 1;
+            will-change: contents;
+        }
+
+        html.intro-already-seen #intro-screen,
+        #intro-screen.intro-dismissed {
+            display: none !important;
         }
 
         .glass-nav {
@@ -469,6 +475,21 @@ try {
         }
         .animate-scanline { animation: scanline 8s linear infinite; }
     </style>
+    <script>
+        (function () {
+            try {
+                const shouldShowIntro = new URLSearchParams(window.location.search).get('intro') === '1';
+                if (shouldShowIntro) {
+                    window.localStorage.removeItem('korat-esport-intro-seen');
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                } else if (window.localStorage.getItem('korat-esport-intro-seen') === '1') {
+                    document.documentElement.classList.add('intro-already-seen');
+                }
+            } catch (error) {
+                // Keep the intro visible when browser storage is unavailable.
+            }
+        }());
+    </script>
 </head>
 
 <body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased select-none">
@@ -546,7 +567,7 @@ try {
                 <div class="flex items-center justify-between h-20 transition-all duration-300">
 
                     <!-- Logo & Brand Header -->
-                    <a href="index.php" class="hidden sm:flex items-center gap-3 group">
+                    <a href="index.php?intro=1" class="hidden sm:flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport"
                             class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)] group-hover:scale-105 transition-transform"
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
@@ -589,12 +610,10 @@ try {
                             <i class="fa-solid fa-images text-xs mr-1.5"></i> แกลเลอรี่
                         </a>
 
-                        <?php if ($isLoggedIn): ?>
-                            <a href="lodging.php"
-                                class="nav-link-item px-4 py-2 text-sm font-semibold text-gray-200 hover:text-brand-orange transition-all drop-shadow-sm">
-                                <i class="fa-solid fa-hotel text-xs mr-1.5"></i> ที่พักแนะนำ
-                            </a>
-                        <?php endif; ?>
+                        <a href="lodging.php"
+                            class="nav-link-item px-4 py-2 text-sm font-semibold text-gray-200 hover:text-brand-orange transition-all drop-shadow-sm">
+                            <i class="fa-solid fa-hotel text-xs mr-1.5"></i> ที่พักแนะนำ
+                        </a>
                     </nav>
 
                     <nav id="mobile-public-menu"
@@ -614,10 +633,10 @@ try {
                         <a href="gallery.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
                             <i class="fa-solid fa-images mr-2 text-xs"></i> แกลเลอรี่
                         </a>
+                        <a href="lodging.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                            <i class="fa-solid fa-hotel mr-2 text-xs"></i> ที่พักแนะนำ
+                        </a>
                         <?php if ($isLoggedIn): ?>
-                            <a href="lodging.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
-                                <i class="fa-solid fa-hotel mr-2 text-xs"></i> ที่พักแนะนำ
-                            </a>
                             <?php if (($currentUser['role'] ?? '') === 'admin'): ?>
                                 <a href="../admin/dashboard.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-brand-orange">
                                     <i class="fa-solid fa-user-shield mr-2 text-xs"></i> ระบบแอดมิน
@@ -709,9 +728,9 @@ try {
                 </div>
                 <div class="relative overflow-hidden rounded-3xl border border-white/20 bg-slate-950/70 shadow-2xl">
                     <div class="promotion-banner-track flex transition-transform duration-700 ease-out">
-                        <?php foreach ($banners as $banner): ?>
+                        <?php foreach ($banners as $bannerIndex => $banner): ?>
                             <article class="promotion-banner-slide relative min-w-full aspect-[16/7] overflow-hidden">
-                                <img src="../assets/<?php echo htmlspecialchars($banner['image_path']); ?>" alt="<?php echo htmlspecialchars($banner['title'] ?: 'แบนเนอร์ประชาสัมพันธ์'); ?>" class="absolute inset-0 h-full w-full object-cover">
+                                <img src="../assets/<?php echo htmlspecialchars($banner['image_path']); ?>" alt="<?php echo htmlspecialchars($banner['title'] ?: 'แบนเนอร์ประชาสัมพันธ์'); ?>" class="absolute inset-0 h-full w-full object-cover" loading="<?php echo $bannerIndex === 0 ? 'eager' : 'lazy'; ?>" fetchpriority="<?php echo $bannerIndex === 0 ? 'high' : 'auto'; ?>" decoding="async">
                             </article>
                         <?php endforeach; ?>
                     </div>
@@ -723,68 +742,6 @@ try {
                 </div>
             </section>
         <?php endif; ?>
-
-        <!-- Cyber HUD Badge Divider -->
-        <div class="hud-divider">
-            <div class="hud-divider-badge">
-                <span></span> สถิติการแข่งขัน <span></span>
-            </div>
-        </div>
-
-        <!-- ================= 4. INFOGRAPHIC LIVE STATS STRIP ================= -->
-        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-20 w-full">
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-
-                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-brand-orange relative overflow-hidden group shadow-lg"
-                    data-aos="fade-up" data-aos-delay="0" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
-                    <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">ทีม</span>
-                        <i
-                            class="fa-solid fa-people-group text-brand-orange text-xl group-hover:scale-110 transition-transform stats-icon"></i>
-                    </div>
-                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm"
-                        data-countup="<?php echo $totalTeams; ?>">0</h3>
-                    <p class="text-xs text-gray-300 mt-1">ทีมสโมสรในระบบ</p>
-                </div>
-
-                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-amber-400 relative overflow-hidden group shadow-lg"
-                    data-aos="fade-up" data-aos-delay="100" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
-                    <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">ผู้เล่น</span>
-                        <i
-                            class="fa-solid fa-gamepad text-amber-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
-                    </div>
-                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm"
-                        data-countup="<?php echo $totalPlayers; ?>">0</h3>
-                    <p class="text-xs text-gray-300 mt-1">นักกีฬาลงทะเบียน</p>
-                </div>
-
-                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-purple-400 relative overflow-hidden group shadow-lg"
-                    data-aos="fade-up" data-aos-delay="200" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
-                    <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">รายการแข่งขัน</span>
-                        <i
-                            class="fa-solid fa-trophy text-purple-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
-                    </div>
-                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm"
-                        data-countup="<?php echo $totalTournaments; ?>">0</h3>
-                    <p class="text-xs text-gray-300 mt-1">รายการแข่งขันทั้งหมด</p>
-                </div>
-
-                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-emerald-400 relative overflow-hidden group shadow-lg"
-                    data-aos="fade-up" data-aos-delay="300" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
-                    <div class="flex items-center justify-between text-gray-200 mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wider">แมตช์</span>
-                        <i
-                            class="fa-solid fa-bolt text-emerald-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
-                    </div>
-                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm"
-                        data-countup="<?php echo $totalMatchesPlayed; ?>">0</h3>
-                    <p class="text-xs text-gray-300 mt-1">แมตช์ที่สมบูรณ์แล้ว</p>
-                </div>
-
-            </div>
-        </section>
 
         <!-- ================= 5. TOURNAMENTS SECTION ================= -->
         <section id="tournaments" data-tournament-count="<?php echo count($tournaments); ?>" class="tournament-carousel-section max-w-[1350px] mx-auto px-4 sm:px-6 lg:px-8 py-1 space-y-2 w-full">
@@ -844,7 +801,7 @@ try {
                     <div class="min-w-full md:min-w-[calc(50%-0.75rem)] lg:min-w-[calc(33.333%-1rem)] overflow-hidden rounded-2xl border border-white/20 bg-[#0b0d14] flex flex-col group shadow-lg tournament-slide-card"
                         data-aos="fade-up" data-aos-delay="<?php echo $index * 100; ?>">
                         <a href="<?php echo htmlspecialchars($registrationUrl); ?>" class="relative block aspect-[16/9] overflow-hidden bg-black/50 group/image" aria-label="สมัครแข่งขัน <?php echo htmlspecialchars($t['name']); ?>">
-                            <img src="<?php echo !empty($t['image_path']) ? '../assets/' . htmlspecialchars($t['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>" alt="<?php echo htmlspecialchars($t['name']); ?>" class="h-full w-full object-cover transition-transform duration-500 group-hover/image:scale-105">
+                            <img src="<?php echo !empty($t['image_path']) ? '../assets/' . htmlspecialchars($t['image_path']) : 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1000&auto=format&fit=crop'; ?>" alt="<?php echo htmlspecialchars($t['name']); ?>" class="h-full w-full object-cover transition-transform duration-500 group-hover/image:scale-105" loading="lazy" decoding="async">
                             <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20"></div>
                             <span class="absolute left-3 top-3 rounded-full bg-pink-600 px-3 py-1 text-[10px] font-black text-white shadow-lg">กำลังรับสมัคร</span>
                             <?php if (!empty($t['prize_pool'])): ?>
@@ -904,6 +861,60 @@ try {
         <!-- Cyber HUD Badge Divider -->
         <div class="hud-divider">
             <div class="hud-divider-badge">
+                <span></span> สถิติการแข่งขัน <span></span>
+            </div>
+        </div>
+
+        <!-- ================= 4. INFOGRAPHIC LIVE STATS STRIP ================= -->
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-20 w-full">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-brand-orange relative overflow-hidden group shadow-lg"
+                    data-aos="fade-up" data-aos-delay="0" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
+                    <div class="flex items-center justify-between text-gray-200 mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider">ทีม</span>
+                        <i class="fa-solid fa-people-group text-brand-orange text-xl group-hover:scale-110 transition-transform stats-icon"></i>
+                    </div>
+                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm" data-countup="<?php echo $totalTeams; ?>">0</h3>
+                    <p class="text-xs text-gray-300 mt-1">ทีมสโมสรในระบบ</p>
+                </div>
+
+                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-amber-400 relative overflow-hidden group shadow-lg"
+                    data-aos="fade-up" data-aos-delay="100" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
+                    <div class="flex items-center justify-between text-gray-200 mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider">ผู้เล่น</span>
+                        <i class="fa-solid fa-gamepad text-amber-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
+                    </div>
+                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm" data-countup="<?php echo $totalPlayers; ?>">0</h3>
+                    <p class="text-xs text-gray-300 mt-1">นักกีฬาลงทะเบียน</p>
+                </div>
+
+                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-purple-400 relative overflow-hidden group shadow-lg"
+                    data-aos="fade-up" data-aos-delay="200" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
+                    <div class="flex items-center justify-between text-gray-200 mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider">รายการแข่งขัน</span>
+                        <i class="fa-solid fa-trophy text-purple-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
+                    </div>
+                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm" data-countup="<?php echo $totalTournaments; ?>">0</h3>
+                    <p class="text-xs text-gray-300 mt-1">รายการแข่งขันทั้งหมด</p>
+                </div>
+
+                <div class="glass-card p-6 rounded-2xl border-l-4 border-l-emerald-400 relative overflow-hidden group shadow-lg"
+                    data-aos="fade-up" data-aos-delay="300" data-tilt data-tilt-glare data-tilt-max-glare="0.15">
+                    <div class="flex items-center justify-between text-gray-200 mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider">แมตช์</span>
+                        <i class="fa-solid fa-bolt text-emerald-400 text-xl group-hover:scale-110 transition-transform stats-icon"></i>
+                    </div>
+                    <h3 class="text-3xl sm:text-4xl font-black font-display text-white drop-shadow-sm" data-countup="<?php echo $totalMatchesPlayed; ?>">0</h3>
+                    <p class="text-xs text-gray-300 mt-1">แมตช์ที่สมบูรณ์แล้ว</p>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Cyber HUD Badge Divider -->
+        <div class="hud-divider">
+            <div class="hud-divider-badge">
                 <span></span> ถ่ายทอดสดและวิดีโอการแข่งขัน <span></span>
             </div>
         </div>
@@ -934,15 +945,14 @@ try {
                         </span>
                     </div>
 
-                    <div class="relative aspect-video overflow-hidden bg-black">
-                        <iframe
-                            src="https://www.youtube.com/embed/<?php echo $liveVideoId; ?>"
-                            title="<?php echo htmlspecialchars($liveVideoTitle); ?>"
-                            class="w-full h-full"
-                            frameborder="0"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            allowfullscreen>
-                        </iframe>
+                    <div class="relative aspect-video overflow-hidden bg-black" data-youtube-facade data-video-id="<?php echo htmlspecialchars($liveVideoId); ?>" data-video-title="<?php echo htmlspecialchars($liveVideoTitle); ?>">
+                        <img src="https://img.youtube.com/vi/<?php echo htmlspecialchars($liveVideoId); ?>/hqdefault.jpg"
+                            alt="<?php echo htmlspecialchars($liveVideoTitle); ?>"
+                            class="h-full w-full object-cover opacity-80"
+                            loading="lazy" decoding="async">
+                        <button type="button" class="absolute left-1/2 top-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-rose-600 text-white shadow-[0_0_30px_rgba(225,29,72,0.65)] transition hover:scale-110 hover:bg-rose-500" data-youtube-play aria-label="เล่นวิดีโอ">
+                            <i class="fa-solid fa-play ml-1 text-xl"></i>
+                        </button>
                     </div>
 
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5">
@@ -1030,6 +1040,11 @@ try {
     <!-- Gamer SFX & Core Animations Script -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            if (document.documentElement.classList.contains('intro-already-seen')) {
+                const skippedIntro = document.getElementById('intro-screen');
+                if (skippedIntro) skippedIntro.remove();
+            }
+
             // อนุภาคไฟลอยหน้า Intro
             const introCanvas = document.getElementById('intro-particles');
             if (introCanvas) {
@@ -1071,20 +1086,32 @@ try {
 
             // Navbar Shrink Effect เมื่อเลื่อนลงมา > 50px
             const navbar = document.getElementById('main-navbar');
+            let scrollFrame = 0;
+            let scrollStopTimer = 0;
             window.addEventListener('scroll', () => {
-                if (window.scrollY > 50) {
-                    navbar.classList.add('shrink');
-                } else {
-                    navbar.classList.remove('shrink');
-                }
-            });
+                if (scrollFrame) return;
+                scrollFrame = requestAnimationFrame(() => {
+                    navbar.classList.toggle('shrink', window.scrollY > 50);
+                    scrollFrame = 0;
+                });
+                clearTimeout(scrollStopTimer);
+                stopParticles();
+                scrollStopTimer = window.setTimeout(startParticles, 140);
+            }, { passive: true });
 
             // Cursor Spotlight Effect ตามเมาส์
             const spotlight = document.getElementById('cursor-spotlight');
+            let spotlightFrame = 0;
+            let spotlightX = 0;
+            let spotlightY = 0;
             window.addEventListener('mousemove', (e) => {
-                const x = e.clientX;
-                const y = e.clientY;
-                spotlight.style.background = `radial-gradient(600px circle at ${x}px ${y}px, rgba(255, 85, 0, 0.08), transparent 70%)`;
+                spotlightX = e.clientX;
+                spotlightY = e.clientY;
+                if (spotlightFrame) return;
+                spotlightFrame = requestAnimationFrame(() => {
+                    spotlight.style.background = `radial-gradient(600px circle at ${spotlightX}px ${spotlightY}px, rgba(255, 85, 0, 0.08), transparent 70%)`;
+                    spotlightFrame = 0;
+                });
             });
 
             // Particles Canvas Engine
@@ -1127,17 +1154,43 @@ try {
                 }
             }
 
-            const particles = Array.from({ length: 45 }, () => new Particle());
+            const particles = Array.from({ length: 25 }, () => new Particle());
+            let particlesRunning = false;
+            let particlesFrame = 0;
 
             function animateParticles() {
+                if (!particlesRunning || document.hidden) {
+                    particlesFrame = 0;
+                    return;
+                }
                 ctx.clearRect(0, 0, widthWin, heightWin);
                 particles.forEach(p => {
                     p.update();
                     p.draw();
                 });
-                requestAnimationFrame(animateParticles);
+                particlesFrame = requestAnimationFrame(animateParticles);
             }
-            animateParticles();
+            function startParticles() {
+                if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+                particlesRunning = true;
+                if (!particlesFrame) particlesFrame = requestAnimationFrame(animateParticles);
+            }
+            function stopParticles() {
+                particlesRunning = false;
+                if (particlesFrame) {
+                    cancelAnimationFrame(particlesFrame);
+                    particlesFrame = 0;
+                }
+            }
+            document.addEventListener('visibilitychange', function () {
+                if (document.hidden) stopParticles();
+                else startParticles();
+            });
+            if ('requestIdleCallback' in window) {
+                window.requestIdleCallback(startParticles, { timeout: 900 });
+            } else {
+                window.setTimeout(startParticles, 250);
+            }
 
             // CountUp Animation Observer & Icon Pulse Sync
             const counters = document.querySelectorAll('[data-countup]');
@@ -1171,23 +1224,51 @@ try {
             }, { threshold: 0.5 });
 
             counters.forEach(c => observer.observe(c));
+
+            document.querySelectorAll('[data-youtube-facade]').forEach(function (facade) {
+                const playButton = facade.querySelector('[data-youtube-play]');
+                if (!playButton) return;
+                playButton.addEventListener('click', function () {
+                    const videoId = facade.dataset.videoId;
+                    const title = facade.dataset.videoTitle || 'YouTube video';
+                    if (!videoId) return;
+                    const iframe = document.createElement('iframe');
+                    iframe.src = 'https://www.youtube.com/embed/' + encodeURIComponent(videoId) + '?autoplay=1';
+                    iframe.title = title;
+                    iframe.className = 'h-full w-full';
+                    iframe.setAttribute('frameborder', '0');
+                    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+                    iframe.setAttribute('allowfullscreen', '');
+                    facade.replaceChildren(iframe);
+                });
+            });
         });
 
         // Function ปิด Intro เข้าสู่อารีนาทันทีเมื่อคลิกที่ใดก็ได้
         function enterArena() {
             const intro = document.getElementById('intro-screen');
-            if (intro) {
-                intro.style.opacity = '0';
-                intro.style.transform = 'scale(1.08)';
-                intro.style.pointerEvents = 'none';
-                setTimeout(() => {
+            if (intro && !intro.classList.contains('intro-leaving')) {
+                intro.classList.add('intro-leaving');
+                try {
+                    window.localStorage.setItem('korat-esport-intro-seen', '1');
+                } catch (error) {
+                    // The transition still works when browser storage is unavailable.
+                }
+                requestAnimationFrame(function () {
+                    intro.style.opacity = '0';
+                    intro.style.transform = 'scale(1.03)';
+                    intro.style.pointerEvents = 'none';
+                });
+                setTimeout(function () {
                     intro.style.display = 'none';
-                }, 700);
+                }, 420);
             }
         }
     </script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
+        if (document.documentElement.classList.contains('intro-already-seen')) return;
+
         const introTournament = document.getElementById('intro-tournament-carousel');
         if (introTournament) {
             const track = introTournament.querySelector('.intro-tournament-track');
@@ -1270,8 +1351,6 @@ try {
         let currentSlide = 0;
 
         if (!section || !header || !track || slides.length === 0) return;
-
-        header.insertAdjacentElement('afterend', section);
 
         if (tournamentCount === 0) {
             if (previous) previous.hidden = true;
@@ -1378,10 +1457,6 @@ try {
 document.addEventListener('DOMContentLoaded', function () {
     const banner = document.getElementById('promotion-banner');
     if (!banner) return;
-    const tournaments = document.getElementById('tournaments');
-    if (tournaments) {
-        tournaments.before(banner);
-    }
     const track = banner.querySelector('.promotion-banner-track');
     const slides = track ? Array.from(track.children) : [];
     const dots = banner.querySelector('.promotion-banner-dots');

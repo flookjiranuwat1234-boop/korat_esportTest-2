@@ -345,7 +345,7 @@ html, body {
                 <div class="flex items-center justify-between h-20">
                     
                     <!-- Logo & Brand Header -->
-                    <a href="index.php" class="flex items-center gap-3 group">
+                    <a href="index.php?intro=1" class="flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(255,85,0,0.4)] group-hover:scale-105 transition-transform" onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
                         <div>
                             <span class="font-display font-black text-xl tracking-wider text-white group-hover:text-brand-orange transition-colors drop-shadow">KORAT <span class="text-brand-orange">ESPORT</span></span>
@@ -450,7 +450,7 @@ html, body {
                     ?>
                         <div class="slide-card <?php echo $index === 0 ? 'active' : ''; ?>" data-index="<?php echo $index; ?>">
                             
-                            <img src="<?php echo $bgImg; ?>" alt="<?php echo htmlspecialchars($n['title']); ?>"
+                            <img src="<?php echo $bgImg; ?>" alt="<?php echo htmlspecialchars($n['title']); ?>" loading="<?php echo $index === 0 ? 'eager' : 'lazy'; ?>" decoding="async">
 
                             <!-- เส้น Progress Bar วิ่งระหว่าง Auto-play -->
                             <div class="slide-progress-bar"></div>
@@ -519,6 +519,7 @@ html, body {
         let currentIndex = 0;
         let autoplayInterval = null;
         let userInteracted = false;
+        let autoplayPaused = document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
         function setActiveCard(index) {
             cards.forEach(c => c.classList.remove('active'));
@@ -526,10 +527,11 @@ html, body {
         }
 
         function startAutoplay() {
-            if (totalCards <= 1 || userInteracted) return;
+            if (totalCards <= 1 || userInteracted || autoplayPaused || autoplayInterval) return;
             autoplayInterval = setInterval(() => {
                 if (userInteracted) {
                     clearInterval(autoplayInterval);
+                    autoplayInterval = null;
                     return;
                 }
                 currentIndex = (currentIndex + 1) % totalCards;
@@ -537,27 +539,37 @@ html, body {
             }, 4500);
         }
 
+        function stopAutoplay() {
+            if (autoplayInterval) {
+                clearInterval(autoplayInterval);
+                autoplayInterval = null;
+            }
+        }
+
         // ผูก Event ทั้ง Mouseenter (Desktop) และ Click/Touch (Mobile & Desktop Fallback)
         cards.forEach((card, index) => {
             card.addEventListener('mouseenter', () => {
                 userInteracted = true;
-                if (autoplayInterval) clearInterval(autoplayInterval);
+                stopAutoplay();
                 currentIndex = index;
                 setActiveCard(currentIndex);
             });
 
             card.addEventListener('click', () => {
                 userInteracted = true;
-                if (autoplayInterval) clearInterval(autoplayInterval);
+                stopAutoplay();
                 currentIndex = index;
                 setActiveCard(currentIndex);
             });
         });
 
         // เริ่มระบบ Auto-Play ทันทีหลังโหลดหน้า
-        if (totalCards > 1) {
-            startAutoplay();
-        }
+        document.addEventListener('visibilitychange', function () {
+            autoplayPaused = document.hidden;
+            if (autoplayPaused) stopAutoplay();
+            else startAutoplay();
+        });
+        if (totalCards > 1) startAutoplay();
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
 <script src="../assets/js/flash-messages.js" defer></script>

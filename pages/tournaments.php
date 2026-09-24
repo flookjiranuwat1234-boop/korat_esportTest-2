@@ -345,7 +345,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                 <div class="flex items-center justify-between h-20">
 
                     <!-- Logo & Brand Header -->
-                    <a href="index.php" class="flex items-center gap-3 group">
+                    <a href="index.php?intro=1" class="flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport"
                             class="h-11 w-auto filter drop-shadow-[0_2px_12px_rgba(255,85,0,0.6)] group-hover:scale-110 transition-transform"
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
@@ -524,7 +524,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                                 <!-- Image & Cyber Badges -->
                                 <div class="aspect-video relative overflow-hidden bg-black/90">
                                     <img src="<?php echo $imgSrc; ?>" alt="<?php echo htmlspecialchars($tTitle); ?>"
-                                        class="w-full h-full object-cover">
+                                        class="w-full h-full object-cover" loading="lazy" decoding="async">
 
                                     <div
                                         class="absolute inset-0 bg-gradient-to-t from-[#0A0A0C] via-black/40 to-transparent opacity-90">

@@ -590,7 +590,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex items-center justify-between h-20">
 
-                    <a href="index.php" class="flex items-center gap-3 group">
+                    <a href="index.php?intro=1" class="flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport"
                             class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(255,85,0,0.4)] group-hover:scale-105 transition-transform"
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
@@ -606,6 +606,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                         <a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-bold text-white bg-brand-orange transition-all shadow-orange-glow"><i class="fa-solid fa-ranking-star text-xs mr-1.5"></i> ตารางคะแนน</a>
                         <a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-newspaper text-xs mr-1.5"></i> ข่าวสาร</a>
                         <a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-images text-xs mr-1.5"></i> แกลเลอรี่</a>
+                        <a href="lodging.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:text-brand-orange hover:bg-white/10 transition-all"><i class="fa-solid fa-hotel text-xs mr-1.5"></i> ที่พักแนะนำ</a>
                     </nav>
 
                     <div class="flex items-center gap-4 text-base font-bold">

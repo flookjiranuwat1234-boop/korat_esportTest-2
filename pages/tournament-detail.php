@@ -699,7 +699,7 @@ function roundName($roundNum, $totalRounds)
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex items-center justify-between h-20">
 
-                    <a href="index.php" class="flex items-center gap-3 group">
+                    <a href="index.php?intro=1" class="flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport"
                             class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(255,85,0,0.4)] group-hover:scale-105 transition-transform"
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
@@ -1152,7 +1152,23 @@ function roundName($roundNum, $totalRounds)
                 }, 250);
             }
         }
-        setInterval(updateSpotlight, 5000);
+        let spotlightTimer = null;
+        function startSpotlightTimer() {
+            if (!spotlightTimer && !document.hidden && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                spotlightTimer = setInterval(updateSpotlight, 5000);
+            }
+        }
+        function stopSpotlightTimer() {
+            if (spotlightTimer) {
+                clearInterval(spotlightTimer);
+                spotlightTimer = null;
+            }
+        }
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) stopSpotlightTimer();
+            else startSpotlightTimer();
+        });
+        startSpotlightTimer();
 
         document.addEventListener('DOMContentLoaded', () => {
             AOS.init({ once: true, duration: 800, easing: 'ease-out-cubic' });

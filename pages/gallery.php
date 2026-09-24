@@ -404,7 +404,7 @@ $galleryPageParams = $selectedAlbumId > 0
                 <div class="flex items-center justify-between h-20">
 
                     <!-- Logo & Brand Header -->
-                    <a href="index.php" class="flex items-center gap-3 group">
+                    <a href="index.php?intro=1" class="flex items-center gap-3 group">
                         <img src="../assets/img/logo.png" alt="Korat Esport"
                             class="h-11 w-auto filter drop-shadow-[0_2px_8px_rgba(255,85,0,0.4)] group-hover:scale-105 transition-transform"
                             onError="this.src='https://placehold.co/100x100/121318/FF5500?text=KE';">
@@ -565,7 +565,8 @@ $galleryPageParams = $selectedAlbumId > 0
                                 onclick="openLightboxFromIndex(<?php echo $imgIndex; ?>)">
 
                                 <img src="../assets/<?php echo htmlspecialchars($img['image_path']); ?>"
-                                    alt="<?php echo htmlspecialchars($img['caption'] ?? 'Gallery Image'); ?>" loading="lazy">
+                                    loading="lazy" decoding="async"
+                                    alt="<?php echo htmlspecialchars($img['caption'] ?? 'Gallery Image'); ?>">
 
                                 <div class="masonry-overlay">
                                     <h3 class="text-lg font-bold text-white"><?php echo htmlspecialchars($img['display_album_name'] ?? 'แกลเลอรี่กิจกรรม'); ?></h3>
@@ -611,7 +612,8 @@ $galleryPageParams = $selectedAlbumId > 0
                                 <div class="relative overflow-hidden w-full h-[260px]">
                                     <?php if (!empty($alb['cover_image']) && file_exists('../assets/' . $alb['cover_image'])): ?>
                                         <img src="../assets/<?php echo htmlspecialchars($alb['cover_image']); ?>"
-                                            alt="<?php echo htmlspecialchars($alb['album_name']); ?>" loading="lazy">
+                                            loading="lazy" decoding="async"
+                                            alt="<?php echo htmlspecialchars($alb['album_name']); ?>">
                                     <?php else: ?>
                                         <div class="w-full h-full flex items-center justify-center bg-slate-900 text-slate-600">
                                             <i class="fa-solid fa-folder text-5xl"></i>

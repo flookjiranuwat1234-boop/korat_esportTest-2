@@ -85,7 +85,7 @@ $teams = $teamStmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="relative z-10 min-h-screen">
         <header class="sticky top-0 z-50 border-b border-brand-orange/30 bg-brand-dark/90 backdrop-blur-xl">
             <div class="mx-auto flex h-20 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-                <a href="index.php" class="flex items-center gap-3">
+                <a href="index.php?intro=1" class="flex items-center gap-3">
                     <img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto" onerror="this.src='https://placehold.co/80x80/121318/FF5500?text=KE';">
                     <span class="hidden font-display text-lg font-black tracking-wider text-white sm:block">KORAT <span class="text-brand-orange">ESPORT</span><small class="mt-[-4px] block font-sans text-[9px] tracking-widest text-gray-400">OFFICIAL ARENA & HUB</small></span>
                 </a>
