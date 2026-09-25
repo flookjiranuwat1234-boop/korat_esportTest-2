@@ -1,4 +1,13 @@
 /* Shared mobile text and layout rules for admin pages. */
+body {
+    font-family: 'Kanit', sans-serif;
+    font-synthesis: none;
+}
+
+body.font-sans {
+    font-family: 'Kanit', sans-serif;
+}
+
 html {
     scrollbar-width: none;
 }
@@ -8,6 +17,37 @@ body::-webkit-scrollbar {
     display: none;
     width: 0;
     height: 0;
+}
+
+@media (max-width: 1023px) {
+    body > aside,
+    aside {
+        position: fixed !important;
+        top: 4.5rem !important;
+        bottom: auto !important;
+        left: 1rem !important;
+        right: 1rem !important;
+        z-index: 80 !important;
+        width: auto !important;
+        max-height: calc(100vh - 5.25rem) !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transform: translateY(-.75rem) !important;
+    }
+
+    aside.admin-mobile-open {
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        transform: translateY(0) !important;
+    }
+
+    html.admin-page-leaving aside,
+    html.admin-page-leaving .admin-mobile-navbar,
+    html.admin-page-leaving .admin-mobile-overlay {
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transition: none !important;
+    }
 }
 
 .members-table {

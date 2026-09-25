@@ -191,6 +191,7 @@ $flashAlert = renderFlashAlert($flash ?: ($error
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>จัดการทีม - <?php echo htmlspecialchars($team['name']); ?></title>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 <body>
     <?php include '../includes/public_nav.php'; ?>
@@ -288,5 +289,6 @@ $flashAlert = renderFlashAlert($flash ?: ($error
         <p><a href="profile.php">&larr; กลับไปหน้าโปรไฟล์</a></p>
     </section>
 <script src="../assets/js/flash-messages.js" defer></script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

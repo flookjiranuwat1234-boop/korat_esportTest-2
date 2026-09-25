@@ -168,6 +168,7 @@ if (!$news) {
             animation: fadeInDown 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
 <body class="font-sans min-h-screen overflow-x-hidden antialiased">

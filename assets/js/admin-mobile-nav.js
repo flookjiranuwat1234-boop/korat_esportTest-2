@@ -142,7 +142,12 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     overlay.addEventListener('click', closeMenu);
     sidebar.querySelectorAll('a').forEach(function (link) {
-        link.addEventListener('click', closeMenu);
+        link.addEventListener('click', function () {
+            document.documentElement.classList.add('admin-page-leaving');
+            sidebar.classList.remove('admin-mobile-open');
+            navbar.classList.remove('is-open');
+            overlay.classList.remove('is-open');
+        });
     });
     window.addEventListener('resize', function () {
         if (window.innerWidth >= 1024) closeMenu();

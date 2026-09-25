@@ -201,6 +201,7 @@ function getRegistrationMatchCount(PDO $pdo, array $registration): int
 
 $tournamentId = (int) ($_GET['tournament_id'] ?? 0);
 $selectedCategoryId = (int) ($_GET['category_id'] ?? 0);
+$hasCategoryFilter = array_key_exists('category_id', $_GET);
 $error = '';
 $success = '';
 $search = trim((string) ($_GET['search'] ?? ''));
@@ -709,7 +710,7 @@ if ($selectedCategoryId && !empty($activeCategories)) {
     }
 }
 
-if (!$selectedCategoryId && !empty($activeCategories)) {
+if (!$hasCategoryFilter && !$selectedCategoryId && !empty($activeCategories)) {
     $selectedCategoryId = (int) ($activeCategories[0]['tournament_category_id'] ?? 0);
 }
 

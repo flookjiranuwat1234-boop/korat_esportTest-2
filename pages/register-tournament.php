@@ -207,6 +207,7 @@ if ($requestedTournamentId > 0 && !$tournaments) {
     <style>
         body{background:#0f1117}.bg-arena{background:linear-gradient(to bottom,rgba(15,17,23,.65),rgba(15,17,23,.96)),url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop');background-size:cover;background-position:center;background-attachment:fixed}.glass-nav{background:rgba(15,17,23,.88);backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,.15)}.glass-panel{background:rgba(255,255,255,.07);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.15)}.grid-bg{background-image:radial-gradient(rgba(255,255,255,.15) 1px,transparent 0);background-size:24px 24px}
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 <body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased">
 <div class="fixed inset-0 bg-arena z-0 pointer-events-none"></div><div class="fixed inset-0 grid-bg opacity-30 z-0 pointer-events-none"></div>
@@ -214,8 +215,9 @@ if ($requestedTournamentId > 0 && !$tournaments) {
 <header class="sticky top-0 z-50 glass-nav"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex items-center justify-between h-20">
     <a href="index.php?intro=1" class="flex items-center gap-3"><img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto" onerror="this.src='https://placehold.co/100x100/121318/FF5500?text=KE'"><div><span class="font-display font-black text-xl text-white">KORAT <span class="text-brand-orange">ESPORT</span></span><span class="block text-[10px] text-gray-300 font-bold uppercase -mt-1">Official Arena &amp; Hub</span></div></a>
     <nav class="hidden md:flex items-center gap-1"><a href="index.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">หน้าแรก</a><a href="tournaments.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-brand-orange bg-white/10">ทัวร์นาเมนต์</a><a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ตารางคะแนน</a><a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ข่าวสาร</a><a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">แกลเลอรี่</a></nav>
-    <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl"><span class="hidden sm:block text-sm font-bold"><?= htmlspecialchars($currentUser['username']) ?></span><a href="profile.php" class="w-9 h-9 rounded-xl bg-brand-orange text-white flex items-center justify-center"><i class="fa-solid fa-user"></i></a><a href="../auth/logout.php" class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center"><i class="fa-solid fa-right-from-bracket"></i></a></div>
-</div></div></header>
+    <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl"><span class="hidden sm:block text-sm font-bold"><?= htmlspecialchars($currentUser['username']) ?></span><a href="profile.php" class="w-9 h-9 rounded-xl bg-brand-orange text-white flex items-center justify-center"><i class="fa-solid fa-user"></i></a><a href="../auth/logout.php" class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center"><i class="fa-solid fa-right-from-bracket"></i></a>    </div>
+    </div>
+    </div></div></header>
 <main class="mx-auto max-w-5xl px-4 sm:px-6 py-12">
     <div class="mb-8 text-center"><div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-orange/20 border border-brand-orange/50 text-brand-orange text-xs font-bold uppercase tracking-widest"><i class="fa-solid fa-trophy"></i> เปิดรับสมัคร</div><h1 class="mt-4 text-3xl sm:text-4xl font-black font-display">สมัครเข้าร่วมการแข่งขัน</h1><p class="mt-2 text-sm text-gray-400">กรอกข้อมูลทีมและเลือกผู้เล่นสำหรับรายการนี้</p></div>
     <?php if ($error): ?><div class="mb-5 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-200"><?= htmlspecialchars($error); ?></div><?php endif; ?>
@@ -345,5 +347,6 @@ document.querySelectorAll('.team-form').forEach((form) => {
     if (category.value) category.dispatchEvent(new Event('change'));
 });
 </script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

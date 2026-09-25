@@ -685,6 +685,7 @@ function roundName($roundNum, $totalRounds)
             section { scroll-margin-top: 5rem; }
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
 <body class="font-sans min-h-screen overflow-x-hidden antialiased">

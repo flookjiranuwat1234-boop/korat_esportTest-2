@@ -500,9 +500,9 @@ try {
         (function () {
             try {
                 const shouldShowIntro = new URLSearchParams(window.location.search).get('intro') === '1';
-                const hasSeenIntro = window.localStorage.getItem('korat-esport-intro-seen-v2') === '1';
+                const hasSeenIntro = window.sessionStorage.getItem('korat-esport-intro-seen-v3') === '1';
                 if (shouldShowIntro) {
-                    window.localStorage.removeItem('korat-esport-intro-seen-v2');
+                    window.sessionStorage.removeItem('korat-esport-intro-seen-v3');
                 } else if (hasSeenIntro) {
                     document.documentElement.classList.add('intro-already-seen');
                 }
@@ -514,6 +514,7 @@ try {
             }
         }());
     </script>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
 <body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased select-none">
@@ -785,7 +786,7 @@ try {
             </div>
 
             <div class="relative">
-                <div class="tournament-carousel-viewport w-full max-w-[1250px] mx-auto overflow-hidden rounded-2xl touch-pan-y">
+                <div class="tournament-carousel-viewport w-full max-w-[1250px] mx-auto overflow-hidden rounded-2xl touch-pan-y" style="touch-action: pan-y;">
                     <div class="tournament-carousel-track flex items-stretch gap-4 transition-transform duration-500 ease-out">
                 <?php if (count($tournaments) == 0): ?>
                     <div class="min-w-full glass-panel p-12 text-center text-gray-200 rounded-2xl" data-aos="fade-up">
@@ -875,10 +876,10 @@ try {
                     </div>
                 </div>
                 <?php if (count($tournaments) > 1): ?>
-                    <button type="button" class="tournament-carousel-prev absolute left-1 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/75 text-white transition hover:bg-brand-orange" aria-label="รายการก่อนหน้า">
+                    <button type="button" class="tournament-carousel-prev pointer-events-auto absolute left-1 top-1/2 z-30 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/75 text-white transition hover:bg-brand-orange" aria-label="รายการก่อนหน้า">
                         <i class="fa-solid fa-chevron-left"></i>
                     </button>
-                    <button type="button" class="tournament-carousel-next absolute right-1 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/75 text-white transition hover:bg-brand-orange" aria-label="รายการถัดไป">
+                    <button type="button" class="tournament-carousel-next pointer-events-auto absolute right-1 top-1/2 z-30 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/75 text-white transition hover:bg-brand-orange" aria-label="รายการถัดไป">
                         <i class="fa-solid fa-chevron-right"></i>
                     </button>
                     <div class="tournament-carousel-page mt-3 flex min-h-3 items-center justify-center gap-2 md:hidden" role="tablist" aria-label="รายการแข่งขัน"></div>
@@ -1278,7 +1279,7 @@ try {
             if (intro && !intro.classList.contains('intro-leaving')) {
                 intro.classList.add('intro-leaving');
                 try {
-                    window.localStorage.setItem('korat-esport-intro-seen-v2', '1');
+                    window.sessionStorage.setItem('korat-esport-intro-seen-v3', '1');
                 } catch (error) {
                     // The transition still works when browser storage is unavailable.
                 }
@@ -1295,10 +1296,8 @@ try {
     </script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        if (document.documentElement.classList.contains('intro-already-seen')) return;
-
         const introTournament = document.getElementById('intro-tournament-carousel');
-        if (introTournament) {
+        if (introTournament && !document.documentElement.classList.contains('intro-already-seen')) {
             const track = introTournament.querySelector('.intro-tournament-track');
             const originalSlides = Array.from(introTournament.querySelectorAll('.intro-tournament-slide'));
             const dots = introTournament.querySelector('.intro-tournament-dots');
@@ -1430,38 +1429,83 @@ try {
         }
 
         if (previous) {
-            previous.addEventListener('click', function () {
+            const goPrevious = function (event) {
+                if (event.type === 'click' && previous.dataset.pointerHandled === 'true') {
+                    previous.dataset.pointerHandled = 'false';
+                    return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
                 const pageCount = Math.max(1, Math.ceil(slides.length / getCardsPerPage()));
                 currentSlide = (currentSlide - 1 + pageCount) % pageCount;
                 updateCarousel();
+            };
+            previous.addEventListener('click', goPrevious);
+            previous.addEventListener('pointerup', function (event) {
+                if (event.pointerType !== 'mouse') {
+                    previous.dataset.pointerHandled = 'true';
+                    goPrevious(event);
+                }
             });
         }
         if (next) {
-            next.addEventListener('click', function () {
+            const goNext = function (event) {
+                if (event.type === 'click' && next.dataset.pointerHandled === 'true') {
+                    next.dataset.pointerHandled = 'false';
+                    return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
                 const pageCount = Math.max(1, Math.ceil(slides.length / getCardsPerPage()));
                 currentSlide = (currentSlide + 1) % pageCount;
                 updateCarousel();
+            };
+            next.addEventListener('click', goNext);
+            next.addEventListener('pointerup', function (event) {
+                if (event.pointerType !== 'mouse') {
+                    next.dataset.pointerHandled = 'true';
+                    goNext(event);
+                }
             });
         }
         if (viewport) {
-            let touchStartX = 0;
-            let touchStartY = 0;
-            viewport.addEventListener('touchstart', function (event) {
-                const touch = event.touches[0];
-                touchStartX = touch.clientX;
-                touchStartY = touch.clientY;
-            }, {passive: true});
-            viewport.addEventListener('touchend', function (event) {
-                const touch = event.changedTouches[0];
-                const deltaX = touch.clientX - touchStartX;
-                const deltaY = touch.clientY - touchStartY;
+            let swipeDetected = false;
+            let pointerActive = false;
+            let pointerStartX = 0;
+            let pointerStartY = 0;
+
+            function moveCarouselFromDelta(deltaX, deltaY) {
                 if (Math.abs(deltaX) < 40 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+                swipeDetected = true;
                 const pageCount = Math.max(1, Math.ceil(slides.length / getCardsPerPage()));
                 currentSlide = deltaX < 0
                     ? (currentSlide + 1) % pageCount
                     : (currentSlide - 1 + pageCount) % pageCount;
                 updateCarousel();
-            }, {passive: true});
+            }
+
+            viewport.addEventListener('pointerdown', function (event) {
+                if (event.pointerType === 'mouse') return;
+                pointerActive = true;
+                pointerStartX = event.clientX;
+                pointerStartY = event.clientY;
+                swipeDetected = false;
+                viewport.setPointerCapture?.(event.pointerId);
+            });
+            viewport.addEventListener('pointerup', function (event) {
+                if (!pointerActive || event.pointerType === 'mouse') return;
+                pointerActive = false;
+                moveCarouselFromDelta(event.clientX - pointerStartX, event.clientY - pointerStartY);
+            });
+            viewport.addEventListener('pointercancel', function () {
+                pointerActive = false;
+            });
+            viewport.addEventListener('click', function (event) {
+                if (!swipeDetected) return;
+                event.preventDefault();
+                event.stopPropagation();
+                swipeDetected = false;
+            }, true);
         }
         window.addEventListener('resize', updateCarousel);
         updateCarousel();

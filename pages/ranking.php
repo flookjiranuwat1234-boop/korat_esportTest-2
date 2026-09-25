@@ -409,6 +409,14 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
         .ranking-score {
             white-space: nowrap;
         }
+        #rankingTable th:last-child,
+        #rankingTable td:last-child {
+            width: 12rem;
+            white-space: nowrap;
+        }
+        #rankingTable .ranking-score > span {
+            min-width: 0;
+        }
         .ranking-stats-values {
             display: inline-flex;
             align-items: center;
@@ -416,48 +424,122 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
             min-width: 4.25rem;
             white-space: nowrap;
         }
+        .ranking-hall-table {
+            table-layout: fixed;
+        }
+        .ranking-hall-table th:first-child {
+            width: 5.5rem;
+            white-space: nowrap;
+        }
+        .mobile-ranking-label { display: none; }
         @media (max-width: 639px) {
-            #rankingTable {
-                table-layout: fixed;
-                min-width: 0;
+            .desktop-ranking-label { display: none; }
+            .mobile-ranking-label {
+                display: inline;
+                white-space: nowrap;
+                font-size: 0.7rem;
             }
-            #rankingTable th,
-            #rankingTable td {
-                padding: 0.9rem 0.45rem;
+            .ranking-hall-table th,
+            .ranking-hall-table td {
+                padding: 0.85rem 0.5rem !important;
                 vertical-align: middle;
             }
-            #rankingTable th:nth-child(1),
-            #rankingTable td:nth-child(1) {
-                width: 14%;
+            .ranking-hall-table th:nth-child(1),
+            .ranking-hall-table td:nth-child(1) { width: 15%; white-space: nowrap; }
+            .ranking-hall-table th:nth-child(2),
+            .ranking-hall-table td:nth-child(2) { width: 39%; }
+            .ranking-hall-table th:nth-child(3),
+            .ranking-hall-table td:nth-child(3) { width: 21%; }
+            .ranking-hall-table th:nth-child(4),
+            .ranking-hall-table td:nth-child(4) {
+                width: 25%;
+                white-space: nowrap;
+                font-size: 0.7rem;
             }
-            #rankingTable th:nth-child(2),
-            #rankingTable td:nth-child(2) {
-                width: 36%;
+            .ranking-hall-table th:nth-child(4) {
+                width: 25%;
+                white-space: nowrap;
             }
+            .ranking-hall-table td:nth-child(2) {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .ranking-hall-table td:nth-child(2) span {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .ranking-hall-table td:nth-child(3) {
+                white-space: nowrap;
+                font-size: 0.7rem;
+            }
+            .ranking-hall-table td:nth-child(4) {
+                padding-left: 0.35rem !important;
+                padding-right: 0.35rem !important;
+                text-align: right !important;
+            }
+            .ranking-hall-table td:nth-child(4) > span {
+                min-width: 0 !important;
+                justify-content: flex-end;
+            }
+            .mobile-score-label { display: none; }
+            #rankingTable { table-layout: fixed; min-width: 0; width: 100%; }
+            #rankingTable th,
+            #rankingTable td {
+                padding: 0.75rem 0.4rem;
+                vertical-align: middle;
+            }
+            #rankingTable.ranking-table-team th:nth-child(1),
+            #rankingTable.ranking-table-team td:nth-child(1),
+            #rankingTable.ranking-table-player th:nth-child(1),
+            #rankingTable.ranking-table-player td:nth-child(1) { width: 20%; white-space: nowrap; }
+            #rankingTable.ranking-table-team th:nth-child(2),
+            #rankingTable.ranking-table-team td:nth-child(2),
+            #rankingTable.ranking-table-player th:nth-child(2),
+            #rankingTable.ranking-table-player td:nth-child(2) { width: 52%; }
             #rankingTable th:nth-last-child(3),
-            #rankingTable td:nth-last-child(3) {
-                width: 19%;
-            }
+            #rankingTable td:nth-last-child(3),
             #rankingTable th:nth-last-child(2),
-            #rankingTable td:nth-last-child(2) {
-                width: 14%;
-            }
+            #rankingTable td:nth-last-child(2) { display: none; }
+            #rankingTable.ranking-table-team th:nth-child(3),
+            #rankingTable.ranking-table-team td:nth-child(3),
+            #rankingTable.ranking-table-team th:nth-child(4),
+            #rankingTable.ranking-table-team td:nth-child(4) { display: none; }
             #rankingTable th:last-child,
-            #rankingTable td:last-child {
-                width: 17%;
+            #rankingTable td:last-child { width: 30%; }
+            #rankingTable th:last-child {
+                padding-left: 0.4rem;
+                padding-right: 0.4rem;
+                font-size: 0.65rem;
+                white-space: nowrap;
+                overflow: visible;
+                text-align: center;
+            }
+            #rankingTable th:last-child .mobile-ranking-label {
+                display: inline-block;
+                white-space: nowrap;
+                min-width: max-content;
+                transform: translateX(-0.8rem);
             }
             .ranking-name {
                 min-width: 0;
-                overflow-wrap: anywhere;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
                 line-height: 1.25;
             }
-            .ranking-stats-values {
-                min-width: 0;
-                gap: 0.1rem;
-            }
             .ranking-score {
-                text-align: center !important;
-                font-size: 1.05rem !important;
+                text-align: right !important;
+                font-size: 1rem !important;
+            }
+            #rankingTable td.ranking-score {
+                padding-left: 0.2rem;
+                padding-right: 0.35rem;
+            }
+            .ranking-score > span {
+                min-width: 0 !important;
+                justify-content: flex-end !important;
             }
         }
         .podium-card:hover {
@@ -576,6 +658,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
             }
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
 <body class="font-sans min-h-screen overflow-x-hidden antialiased">
@@ -741,7 +824,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                         </h3>
                         <div class="glass-panel rounded-2xl overflow-hidden shadow-2xl">
                             <div class="overflow-x-auto">
-                                <table class="w-full text-left text-sm text-gray-200">
+                                <table class="ranking-hall-table w-full text-left text-sm text-gray-200">
                                     <thead class="bg-black/40 text-xs uppercase font-bold text-gray-300 border-b border-white/15 font-display">
                                         <tr><th class="p-4 text-center w-16">อันดับ</th><th class="p-4"><?= $hall['name'] === 'team_name' ? 'ทีม' : 'ผู้เล่น' ?></th><th class="p-4 text-center">สถิติ ชนะ–แพ้</th><th class="p-4 text-right">คะแนน</th></tr>
                                     </thead>
@@ -752,7 +835,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                                 <td class="p-4 text-center font-display font-black text-sm"><?= $i + 1 ?></td>
                                                 <td class="p-4 font-bold text-white text-sm truncate max-w-[180px]"><?= htmlspecialchars($row[$hall['name']]) ?><span class="block text-[10px] text-gray-400 font-normal"><?= htmlspecialchars($row['game_name']) ?></span></td>
                                                 <td class="p-4 text-center font-mono text-xs"><span class="text-emerald-400 font-bold"><?= (int) $row['wins'] ?>W</span>-<span class="text-rose-400 font-bold"><?= (int) $row['losses'] ?>L</span></td>
-                                                <td class="p-4 text-right text-<?= $hall['color'] ?> text-base"><span class="inline-flex min-w-[8rem] items-baseline justify-end gap-1"><span class="font-mono font-black tabular-nums text-base"><?= number_format((int) $row[$hall['score']]) ?></span><span class="font-display font-normal text-xs text-gray-300">คะแนน</span></span></td>
+                                                <td class="p-4 text-right text-<?= $hall['color'] ?> text-base"><span class="inline-flex min-w-[8rem] items-baseline justify-end gap-1"><span class="font-mono font-black tabular-nums text-base"><?= number_format((int) $row[$hall['score']]) ?></span><span class="mobile-score-label font-display font-normal text-xs text-gray-300">คะแนน</span></span></td>
                                             </tr>
                                         <?php endforeach; ?>
                                     </tbody>
@@ -786,7 +869,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             </div>
                             <div class="pt-2 border-t border-white/10 flex items-center justify-between">
                                 <span class="text-xs text-gray-400 uppercase font-bold">คะแนนสะสม</span>
-                                <span class="font-display font-black text-slate-200 text-xl"><span class="podium-counter" data-target="<?php echo $r2['total_points']; ?>">0</span> <span class="text-xs font-normal">คะแนน</span></span>
+                                <span class="font-display font-black text-slate-200 text-xl"><span class="podium-counter" data-target="<?php echo $r2['total_points']; ?>">0</span> <span class="mobile-score-label text-xs font-normal">คะแนน</span></span>
                             </div>
                         </a>
                     <?php endif; ?>
@@ -812,7 +895,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             </div>
                             <div class="pt-3 border-t border-white/15 flex items-center justify-between relative z-10">
                                 <span class="text-xs text-amber-300 uppercase font-bold tracking-wider">คะแนนสะสมสูงสุด</span>
-                                <span class="font-display font-black text-amber-400 text-2xl sm:text-3xl"><span class="podium-counter" data-target="<?php echo $r1['total_points']; ?>">0</span> <span class="text-xs font-normal">คะแนน</span></span>
+                                <span class="font-display font-black text-amber-400 text-2xl sm:text-3xl"><span class="podium-counter" data-target="<?php echo $r1['total_points']; ?>">0</span> <span class="mobile-score-label text-xs font-normal">คะแนน</span></span>
                             </div>
                         </a>
                     <?php endif; ?>
@@ -834,7 +917,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             </div>
                             <div class="pt-2 border-t border-white/10 flex items-center justify-between">
                                 <span class="text-xs text-gray-400 uppercase font-bold">คะแนนสะสม</span>
-                                <span class="font-display font-black text-amber-500 text-xl"><span class="podium-counter" data-target="<?php echo $r3['total_points']; ?>">0</span> <span class="text-xs font-normal">คะแนน</span></span>
+                                <span class="font-display font-black text-amber-500 text-xl"><span class="podium-counter" data-target="<?php echo $r3['total_points']; ?>">0</span> <span class="mobile-score-label text-xs font-normal">คะแนน</span></span>
                             </div>
                         </a>
                     <?php endif; ?>
@@ -847,7 +930,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
         <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 mb-20 w-full">
             <div class="glass-panel rounded-2xl overflow-hidden shadow-2xl border border-white/15">
                 <div class="overflow-x-auto">
-                    <table id="rankingTable" class="w-full text-left text-sm text-gray-200">
+                    <table id="rankingTable" class="ranking-table-<?php echo $type; ?> w-full text-left text-sm text-gray-200">
                         <thead class="bg-black/70 text-xs uppercase font-bold text-gray-300 border-b border-white/15 font-display tracking-wider">
                             <tr>
                                 <th class="p-5 text-center w-20">อันดับ</th>
@@ -858,7 +941,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                 <th class="p-5 text-center">แข่งแล้ว</th>
                                 <th class="p-5 text-center">สถิติ ชนะ–แพ้</th>
                                 <th class="p-5 text-center">อัตราชนะ</th>
-                                <th class="p-5 text-right w-36">คะแนนสะสม</th>
+                                <th class="p-5 text-right w-36"><span class="desktop-ranking-label">คะแนนสะสม</span><span class="mobile-ranking-label">คะแนนสะสม</span></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-white/10 font-medium">
@@ -930,7 +1013,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                             </div>
                                         </td>
                                         <td class="ranking-score p-5 text-right font-display font-black text-brand-orange text-xl">
-                                            <span class="inline-flex min-w-[9rem] items-baseline justify-end gap-1"><span class="font-mono tabular-nums text-lg"><?php echo number_format($r['total_points']); ?></span><span class="font-sans text-xs text-gray-400 font-normal">คะแนน</span></span>
+                                            <span class="inline-flex min-w-[9rem] items-baseline justify-end gap-1"><span class="font-mono tabular-nums text-lg"><?php echo number_format($r['total_points']); ?></span><span class="mobile-score-label font-sans text-xs text-gray-400 font-normal">คะแนน</span></span>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>

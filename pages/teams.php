@@ -33,6 +33,7 @@ $teams = $stmt->fetchAll();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ทีมทั้งหมด - Korat Esport</title>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 <body>
     <?php include '../includes/public_nav.php'; ?>
@@ -69,5 +70,6 @@ $teams = $stmt->fetchAll();
         </div>
     </section>
 <script src="../assets/js/flash-messages.js" defer></script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

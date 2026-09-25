@@ -252,6 +252,7 @@ try {
             transition: all 0.3s ease;
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
 <body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased">

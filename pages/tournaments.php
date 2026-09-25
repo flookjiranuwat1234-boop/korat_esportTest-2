@@ -327,6 +327,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
             transition: background 0.1s ease;
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
 <body class="font-sans min-h-screen overflow-x-hidden antialiased">

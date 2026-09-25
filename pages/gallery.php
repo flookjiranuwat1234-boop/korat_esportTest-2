@@ -388,6 +388,7 @@ $galleryPageParams = $selectedAlbumId > 0
             transform: scale(1);
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
 <body class="font-sans min-h-screen overflow-x-hidden antialiased">

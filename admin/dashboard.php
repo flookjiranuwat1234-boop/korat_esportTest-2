@@ -565,7 +565,7 @@ $openTournaments = $pdo->query("
         <!-- Top Header Panel -->
         <header class="dashboard-header bg-white border-b border-slate-200 px-4 sm:px-8 py-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sticky top-0 z-40 shadow-sm">
             <div class="min-w-0">
-                <h1 class="dashboard-title text-lg sm:text-xl font-extrabold text-slate-900 tracking-wide uppercase flex items-start gap-2">
+                <h1 class="dashboard-title text-lg sm:text-xl font-extrabold font-display text-slate-900 tracking-wide uppercase flex items-start gap-2">
                     <span class="w-2 h-6 bg-brand-orange rounded-full inline-block"></span>
                     <span class="min-w-0">ภาพรวมระบบ <span class="dashboard-title-accent text-brand-orange">(<span class="sm:hidden">ADMIN</span><span class="hidden sm:inline">ADMIN DASHBOARD</span>)</span></span>
                 </h1>

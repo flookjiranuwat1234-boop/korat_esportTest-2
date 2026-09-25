@@ -184,6 +184,13 @@ $csrfToken = generateCsrfToken();
         .auth-site-header a { color: #fff; }
         .auth-site-header nav { display: flex; gap: 0.75rem; align-items: center; }
         .auth-site-header nav a { padding: 0.5rem 0.75rem; font-size: 0.85rem; font-weight: 700; }
+        .auth-site-header nav { display: none !important; }
+        .auth-site-header { min-height: 3rem; padding: .35rem .75rem; }
+        .auth-form-card { padding: 1.25rem !important; }
+        .auth-form > :not([hidden]) ~ :not([hidden]) { margin-top: .8rem !important; }
+        .auth-form input,
+        .auth-form select { padding-top: .65rem !important; padding-bottom: .65rem !important; }
+        .auth-form label { margin-bottom: .25rem !important; }
         .auth-back-button { display: none; }
         @media (max-width: 767px) {
             .auth-site-header { background: transparent; border-bottom: 0; }
@@ -207,18 +214,6 @@ $csrfToken = generateCsrfToken();
 <body class="bg-slate-900 text-gray-100 font-sans h-full min-h-screen overflow-x-hidden antialiased">
 
     <div class="fixed inset-0 bg-esports-arena z-0"></div>
-
-    <header class="auth-site-header">
-        <a href="../pages/index.php" class="font-display font-black tracking-wider">KORAT <span class="text-brand-orange">ESPORT</span></a>
-        <nav class="hidden md:flex">
-            <a href="../pages/index.php">หน้าแรก</a>
-            <a href="../pages/tournaments.php">ทัวร์นาเมนต์</a>
-            <a href="../pages/ranking.php">ตารางคะแนน</a>
-            <a href="../pages/news.php">ข่าวสาร</a>
-            <a href="../pages/gallery.php">แกลเลอรี่</a>
-        </nav>
-        <button class="auth-back-button" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ"><i class="fa-solid fa-arrow-left"></i></button>
-    </header>
 
     <div class="relative z-10 min-h-screen flex flex-col lg:flex-row">
 
@@ -270,7 +265,7 @@ $csrfToken = generateCsrfToken();
 
         <!-- RIGHT SIDE: Login Form -->
         <div class="w-full lg:w-[500px] flex items-center justify-center p-6 sm:p-10 z-10 my-auto min-h-screen">
-            <div class="w-full glass-panel-light p-10 rounded-3xl relative overflow-hidden text-slate-800">
+            <div class="w-full glass-panel-light p-10 rounded-3xl relative overflow-hidden text-slate-800 auth-form-card">
                 <div class="absolute top-0 left-0 right-0 h-1.5 shimmer-line"></div>
 
                 <div class="mb-8">
@@ -299,7 +294,7 @@ $csrfToken = generateCsrfToken();
                     </div>
                 <?php endif; ?>
 
-                <form method="POST" class="space-y-5">
+                <form method="POST" class="space-y-5 auth-form">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                     <?php if ($nextUrl !== ''): ?>
                         <input type="hidden" name="next" value="<?php echo htmlspecialchars($nextUrl, ENT_QUOTES); ?>">
@@ -360,7 +355,8 @@ $csrfToken = generateCsrfToken();
         });
     </script>
     <script>
-        document.querySelector('.auth-back-button').addEventListener('click', function () {
+        const backButton = document.querySelector('.auth-back-button');
+        if (backButton) backButton.addEventListener('click', function () {
             if (window.history.length > 1) {
                 window.history.back();
             } else {

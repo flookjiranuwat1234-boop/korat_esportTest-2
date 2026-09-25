@@ -1,0 +1,155 @@
+@media (max-width: 767px) {
+    #main-navbar #mobile-public-menu {
+        display: flex !important;
+        position: fixed !important;
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        left: auto !important;
+        width: min(78vw, 20rem) !important;
+        height: 100vh;
+        max-height: none !important;
+        overflow-y: auto;
+        justify-content: flex-start;
+        padding: 5.25rem .75rem 1rem !important;
+        border: 0 !important;
+        border-left: 1px solid rgba(255,255,255,.14);
+        border-radius: 1rem 0 0 1rem !important;
+        background: rgba(18,19,24,.98) !important;
+        box-shadow: -1rem 0 2rem rgba(0,0,0,.35);
+        transform: translateX(100%);
+        transition: transform .2s ease;
+        pointer-events: none;
+        visibility: hidden;
+        z-index: 55;
+    }
+
+    #main-navbar #mobile-public-menu.flex {
+        transform: translateX(0);
+        pointer-events: auto;
+        visibility: visible;
+    }
+
+    #main-navbar #mobile-public-menu a {
+        display: flex;
+        min-height: 3.25rem;
+        align-items: center;
+        padding: .75rem 1rem;
+        border-radius: .65rem;
+    }
+
+    .public-nav {
+        position: relative;
+    }
+
+    .public-nav-mobile-toggle {
+        display: flex;
+        position: fixed;
+        top: .75rem;
+        right: .75rem;
+        z-index: 60;
+        width: 3rem;
+        height: 3rem;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(255,255,255,.25);
+        border-radius: .75rem;
+        background: rgba(18,19,24,.85);
+        color: #fff;
+        font-size: 1.15rem;
+    }
+
+    .public-nav.public-nav-mobile {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: auto;
+        z-index: 55;
+        display: flex;
+        width: min(78vw, 20rem);
+        max-height: none;
+        overflow-y: auto;
+        flex-direction: column;
+        align-items: stretch;
+        gap: .35rem;
+        padding: 5.25rem .75rem 1rem;
+        border: 0;
+        border-left: 1px solid rgba(255,255,255,.14);
+        border-radius: 1rem 0 0 1rem;
+        background: rgba(18,19,24,.98);
+        box-shadow: -1rem 0 2rem rgba(0,0,0,.35);
+        transform: translateX(100%);
+        transition: transform .2s ease;
+        pointer-events: none;
+    }
+
+    .public-nav.public-nav-mobile.is-open {
+        transform: translateX(0);
+        pointer-events: auto;
+    }
+
+    .public-nav.public-nav-mobile a,
+    .public-nav.public-nav-mobile span {
+        display: flex;
+        min-height: 3.25rem;
+        align-items: center;
+        padding: .75rem 1rem;
+        border-radius: .65rem;
+        font-size: .95rem;
+    }
+
+    header:has(nav.hidden.md\:flex):not(.shared-mobile-header) .max-w-7xl > div > a:first-child,
+    header:has(nav.hidden.md\:flex):not(.shared-mobile-header) .max-w-7xl > div > div:last-child,
+    header:has(nav.hidden.md\:flex):not(.shared-mobile-header) nav.hidden.md\:flex,
+    header:has(nav.hidden.md\:flex):not(.shared-mobile-header) .shared-desktop-nav {
+        visibility: hidden !important;
+    }
+
+    @media (min-width: 768px) {
+        .public-nav-mobile-toggle {
+            display: none;
+        }
+    }
+
+    header:has(nav.hidden.md\:flex):not(.shared-mobile-header) {
+        visibility: visible;
+        background: transparent !important;
+        border-bottom: 0 !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+
+    .shared-mobile-menu {
+        display: flex !important;
+        position: fixed !important;
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        left: auto !important;
+        width: min(78vw, 20rem) !important;
+        max-height: none !important;
+        overflow-y: auto;
+        padding: 5.25rem .75rem 1rem !important;
+        border: 0 !important;
+        border-left: 1px solid rgba(255,255,255,.14);
+        border-radius: 1rem 0 0 1rem !important;
+        background: rgba(18,19,24,.98) !important;
+        box-shadow: -1rem 0 2rem rgba(0,0,0,.35);
+        transform: translateX(100%);
+        transition: transform .2s ease;
+        pointer-events: none;
+        visibility: hidden;
+    }
+
+    .shared-mobile-menu.is-open {
+        transform: translateX(0);
+        pointer-events: auto;
+        visibility: visible;
+    }
+
+    .shared-mobile-menu-toggle {
+        z-index: 60 !important;
+    }
+}

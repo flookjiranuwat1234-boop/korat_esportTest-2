@@ -1,5 +1,33 @@
 // Shared mobile navigation for public pages with a Tailwind header.
 document.addEventListener('DOMContentLoaded', function () {
+    var legacyPublicNav = document.querySelector('nav.public-nav');
+    if (legacyPublicNav && window.innerWidth < 768 && !document.querySelector('.public-nav-mobile-toggle')) {
+        legacyPublicNav.classList.add('public-nav-mobile');
+        var legacyToggle = document.createElement('button');
+        legacyToggle.type = 'button';
+        legacyToggle.className = 'public-nav-mobile-toggle';
+        legacyToggle.setAttribute('aria-expanded', 'false');
+        legacyToggle.setAttribute('aria-label', 'เปิดเมนู');
+        legacyToggle.innerHTML = '<i class="fa-solid fa-bars"></i>';
+        document.body.appendChild(legacyToggle);
+        legacyToggle.addEventListener('click', function () {
+            var isOpen = legacyPublicNav.classList.toggle('is-open');
+            legacyToggle.setAttribute('aria-expanded', String(isOpen));
+            legacyToggle.setAttribute('aria-label', isOpen ? 'ปิดเมนู' : 'เปิดเมนู');
+            legacyToggle.innerHTML = isOpen
+                ? '<i class="fa-solid fa-xmark"></i>'
+                : '<i class="fa-solid fa-bars"></i>';
+        });
+        legacyPublicNav.querySelectorAll('a').forEach(function (link) {
+            link.addEventListener('click', function () {
+                legacyPublicNav.classList.remove('is-open');
+                legacyToggle.setAttribute('aria-expanded', 'false');
+                legacyToggle.setAttribute('aria-label', 'เปิดเมนู');
+                legacyToggle.innerHTML = '<i class="fa-solid fa-bars"></i>';
+            });
+        });
+    }
+
     if (window.innerWidth >= 768) return;
 
     var styles = document.createElement('style');
@@ -51,7 +79,7 @@ document.addEventListener('DOMContentLoaded', function () {
     document.head.appendChild(styles);
 
     document.querySelectorAll('header').forEach(function (header, index) {
-        var desktopNav = header.querySelector('nav.hidden.md\\:flex');
+        var desktopNav = header.querySelector('nav.hidden.md\\:flex') || header.querySelector('nav:not(.public-nav)');
         if (!desktopNav || header.querySelector('.shared-mobile-menu-toggle')) return;
 
         var menuId = 'shared-mobile-menu-' + index;
@@ -71,13 +99,32 @@ document.addEventListener('DOMContentLoaded', function () {
         Array.prototype.forEach.call(desktopNav.querySelectorAll('a'), function (link) {
             var item = link.cloneNode(true);
             item.className = 'shared-mobile-menu-link';
+            var href = link.getAttribute('href') || '';
+            if (!item.querySelector('i')) {
+                var iconClass = href.indexOf('index.php') !== -1
+                    ? 'fa-house'
+                    : href.indexOf('tournaments.php') !== -1
+                        ? 'fa-trophy'
+                        : href.indexOf('ranking.php') !== -1
+                            ? 'fa-ranking-star'
+                            : href.indexOf('news.php') !== -1
+                                ? 'fa-newspaper'
+                                : href.indexOf('gallery.php') !== -1
+                                    ? 'fa-images'
+                                    : '';
+                if (iconClass) {
+                    item.innerHTML = '<i class="fa-solid ' + iconClass + '"></i> ' + item.textContent.trim();
+                }
+            }
             mobileMenu.appendChild(item);
         });
 
         var userLinks = Array.prototype.filter.call(header.querySelectorAll('a[href]'), function (link) {
             var href = link.getAttribute('href') || '';
+            if (link.closest('nav') === desktopNav) return false;
             return href.indexOf('profile.php') !== -1
                 || href.indexOf('logout') !== -1
+                || /(?:^|\/)(?:login|register)\.php/.test(href)
                 || href.indexOf('../admin/') !== -1
                 || href.indexOf('/admin/') !== -1;
         });
@@ -92,6 +139,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 mobileLabel = 'ออกจากระบบ';
             } else if (!mobileLabel && href.indexOf('profile.php') !== -1) {
                 mobileLabel = 'โปรไฟล์ของฉัน';
+            } else if (!mobileLabel && /(?:^|\/)login\.php/.test(href)) {
+                mobileLabel = 'เข้าสู่ระบบ';
+            } else if (!mobileLabel && /(?:^|\/)register\.php/.test(href)) {
+                mobileLabel = 'สมัครสมาชิก';
             }
             if (mobileLabel) {
                 if (mobileLabel === 'ระบบแอดมิน') {
@@ -99,7 +150,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 } else if (mobileLabel === 'ออกจากระบบ') {
                     item.classList.add('shared-mobile-logout-link');
                 }
-                item.appendChild(document.createTextNode(' ' + mobileLabel));
+                if (mobileLabel === 'เข้าสู่ระบบ') {
+                    item.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> ' + mobileLabel;
+                } else if (mobileLabel === 'สมัครสมาชิก') {
+                    item.innerHTML = '<i class="fa-solid fa-user-plus"></i> ' + mobileLabel;
+                } else {
+                    item.appendChild(document.createTextNode(' ' + mobileLabel));
+                }
             }
             mobileMenu.appendChild(item);
         });

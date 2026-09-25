@@ -265,6 +265,7 @@ $accommodations = $accommodationStmt->fetchAll(PDO::FETCH_ASSOC);
             opacity: 0;
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 <body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased">
 

@@ -79,6 +79,7 @@ $teams = $teamStmt->fetchAll(PDO::FETCH_ASSOC);
         .player-card { background: linear-gradient(145deg, rgba(25,27,35,.92), rgba(12,13,17,.96)); border: 1px solid rgba(255,255,255,.12); transition: .25s ease; }
         .player-card:hover { transform: translateY(-4px); border-color: rgba(255,85,0,.7); box-shadow: 0 12px 28px rgba(255,85,0,.18); }
     </style>
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 <body class="font-sans min-h-screen antialiased">
     <div class="fixed inset-0 arena-bg pointer-events-none"></div>
