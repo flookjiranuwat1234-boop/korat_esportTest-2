@@ -161,9 +161,11 @@ $flashAlert = renderFlashAlert($flash ?: ($error
                     </nav>
 
                     <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl">
-                        <a href="profile.php" class="text-sm font-bold text-white hover:text-brand-orange transition-colors">
-                            <i class="fa-solid fa-user text-xs mr-1 text-brand-orange"></i> โปรไฟล์ของฉัน
-                        </a>
+                        <?php if (($currentUser['role'] ?? '') !== 'admin'): ?>
+                            <a href="profile.php" class="text-sm font-bold text-white hover:text-brand-orange transition-colors">
+                                <i class="fa-solid fa-user text-xs mr-1 text-brand-orange"></i> โปรไฟล์ของฉัน
+                            </a>
+                        <?php endif; ?>
                         <a href="../auth/logout.php" title="ออกจากระบบ"
                             class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center hover:bg-rose-600 hover:text-white">
                             <i class="fa-solid fa-right-from-bracket"></i>

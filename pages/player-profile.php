@@ -382,7 +382,7 @@ $flashAlert = renderFlashAlert($flash ?: ($error
     <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 </head>
 
-<body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased">
+<body class="text-gray-100 font-sans min-h-screen overflow-x-hidden antialiased" data-admin-user="<?php echo ($isLoggedIn && ($currentUser['role'] ?? '') === 'admin') ? '1' : '0'; ?>">
 
     <div class="fixed inset-0 bg-esports-arena z-0 pointer-events-none"></div>
     <div class="fixed inset-0 grid-bg opacity-30 z-0 pointer-events-none"></div>

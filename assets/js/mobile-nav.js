@@ -1,5 +1,27 @@
 // Shared mobile navigation for public pages with a Tailwind header.
 document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.auth-mobile-nav').forEach(function (container) {
+        var toggle = container.querySelector('.auth-mobile-menu-toggle');
+        var menu = container.querySelector('.auth-mobile-menu');
+        if (!toggle || !menu) return;
+        toggle.addEventListener('click', function () {
+            var isOpen = menu.classList.toggle('is-open');
+            toggle.setAttribute('aria-expanded', String(isOpen));
+            toggle.setAttribute('aria-label', isOpen ? 'ปิดเมนู' : 'เปิดเมนู');
+            toggle.innerHTML = isOpen
+                ? '<i class="fa-solid fa-xmark"></i>'
+                : '<i class="fa-solid fa-bars"></i>';
+        });
+        menu.querySelectorAll('a').forEach(function (link) {
+            link.addEventListener('click', function () {
+                menu.classList.remove('is-open');
+                toggle.setAttribute('aria-expanded', 'false');
+                toggle.setAttribute('aria-label', 'เปิดเมนู');
+                toggle.innerHTML = '<i class="fa-solid fa-bars"></i>';
+            });
+        });
+    });
+
     var legacyPublicNav = document.querySelector('nav.public-nav');
     if (legacyPublicNav && window.innerWidth < 768 && !document.querySelector('.public-nav-mobile-toggle')) {
         legacyPublicNav.classList.add('public-nav-mobile');
@@ -95,6 +117,12 @@ document.addEventListener('DOMContentLoaded', function () {
         mobileMenu.id = menuId;
         mobileMenu.className = 'shared-mobile-menu';
         mobileMenu.setAttribute('aria-label', 'เมนูหลัก');
+        var isAdminPage = window.location.pathname.indexOf('/admin/') !== -1
+            || document.body.getAttribute('data-admin-user') === '1';
+        var pageHasAdminLink = Array.prototype.some.call(header.querySelectorAll('a[href]'), function (link) {
+            var href = link.getAttribute('href') || '';
+            return /(?:^|\/)admin\//.test(href);
+        });
 
         Array.prototype.forEach.call(desktopNav.querySelectorAll('a'), function (link) {
             var item = link.cloneNode(true);
@@ -122,6 +150,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var userLinks = Array.prototype.filter.call(header.querySelectorAll('a[href]'), function (link) {
             var href = link.getAttribute('href') || '';
             if (link.closest('nav') === desktopNav) return false;
+            if ((isAdminPage || pageHasAdminLink) && /(?:^|\/)profile\.php/.test(href)) return false;
             return href.indexOf('profile.php') !== -1
                 || href.indexOf('logout') !== -1
                 || /(?:^|\/)(?:login|register)\.php/.test(href)
@@ -137,7 +166,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 mobileLabel = 'ระบบแอดมิน';
             } else if (!mobileLabel && href.indexOf('logout') !== -1) {
                 mobileLabel = 'ออกจากระบบ';
-            } else if (!mobileLabel && href.indexOf('profile.php') !== -1) {
+            } else if (!mobileLabel && href.indexOf('profile.php') !== -1 && !isAdminPage && !pageHasAdminLink) {
                 mobileLabel = 'โปรไฟล์ของฉัน';
             } else if (!mobileLabel && /(?:^|\/)login\.php/.test(href)) {
                 mobileLabel = 'เข้าสู่ระบบ';
@@ -167,7 +196,11 @@ document.addEventListener('DOMContentLoaded', function () {
         var hasLogoutLink = userLinks.some(function (link) {
             return (link.getAttribute('href') || '').indexOf('logout') !== -1;
         });
-        if (!hasProfileLink && hasLogoutLink) {
+        var hasAdminLink = userLinks.some(function (link) {
+            var href = link.getAttribute('href') || '';
+            return /(?:^|\/)admin\//.test(href);
+        });
+        if (!hasProfileLink && hasLogoutLink && !hasAdminLink && !isAdminPage) {
             var profileItem = document.createElement('a');
             profileItem.href = 'profile.php';
             profileItem.className = 'shared-mobile-menu-link';
@@ -178,6 +211,13 @@ document.addEventListener('DOMContentLoaded', function () {
             } else {
                 mobileMenu.appendChild(profileItem);
             }
+
+        }
+
+        if (isAdminPage || pageHasAdminLink) {
+            mobileMenu.querySelectorAll('a[href*="profile.php"]').forEach(function (link) {
+                link.remove();
+            });
         }
 
         desktopNav.classList.add('shared-desktop-nav');

@@ -92,6 +92,7 @@ $questions = securityQuestionOptions();
         href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,300;0,400;0,600;0,700;1,800&family=Orbitron:wght@700;900&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../assets/css/mobile-nav.css">
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com/3.4.17"></script>
@@ -280,6 +281,21 @@ $questions = securityQuestionOptions();
 </head>
 
 <body class="bg-slate-900 text-gray-100 font-sans h-full min-h-screen overflow-x-hidden antialiased">
+
+    <div class="auth-mobile-nav">
+        <button type="button" class="auth-mobile-menu-toggle" aria-expanded="false" aria-controls="auth-mobile-menu" aria-label="เปิดเมนู">
+            <i class="fa-solid fa-bars"></i>
+        </button>
+        <nav id="auth-mobile-menu" class="auth-mobile-menu" aria-label="เมนูหลัก">
+            <a href="../pages/index.php"><i class="fa-solid fa-house"></i> หน้าแรก</a>
+            <a href="../pages/tournaments.php"><i class="fa-solid fa-trophy"></i> ทัวร์นาเมนต์</a>
+            <a href="../pages/ranking.php"><i class="fa-solid fa-ranking-star"></i> อันดับ</a>
+            <a href="../pages/news.php"><i class="fa-solid fa-newspaper"></i> ข่าวสาร</a>
+            <a href="../pages/gallery.php"><i class="fa-solid fa-images"></i> แกลเลอรี่</a>
+            <a href="login.php"><i class="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ</a>
+            <a href="register.php"><i class="fa-solid fa-user-plus"></i> สมัครสมาชิก</a>
+        </nav>
+    </div>
 
     <div class="fixed inset-0 bg-esports-arena z-0"></div>
 
@@ -530,5 +546,6 @@ $questions = securityQuestionOptions();
         });
     </script>
 <script src="../assets/js/flash-messages.js" defer></script>
+<script src="../assets/js/mobile-nav.js" defer></script>
 </body>
 </html>

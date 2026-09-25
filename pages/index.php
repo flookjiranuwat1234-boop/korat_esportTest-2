@@ -671,9 +671,11 @@ try {
                                     <i class="fa-solid fa-user-shield mr-2 text-xs"></i> ระบบแอดมิน
                                 </a>
                             <?php endif; ?>
-                            <a href="profile.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
-                                <i class="fa-solid fa-user mr-2 text-xs"></i> โปรไฟล์ของฉัน
-                            </a>
+                            <?php if (($currentUser['role'] ?? '') !== 'admin'): ?>
+                                <a href="profile.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-gray-200">
+                                    <i class="fa-solid fa-user mr-2 text-xs"></i> โปรไฟล์ของฉัน
+                                </a>
+                            <?php endif; ?>
                             <a href="../auth/logout.php" class="rounded-lg px-4 py-3 text-sm font-semibold text-rose-300">
                                 <i class="fa-solid fa-right-from-bracket mr-2 text-xs"></i> ออกจากระบบ
                             </a>
