@@ -21,6 +21,45 @@ $csrfToken = generateCsrfToken();
 $error = '';
 $success = '';
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'mark_profile_notifications_read') {
+    header('Content-Type: application/json; charset=utf-8');
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'คำขอไม่ถูกต้อง']);
+        exit;
+    }
+
+    $notificationIds = $_POST['notification_ids'] ?? [];
+    if (!is_array($notificationIds)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'รายการแจ้งเตือนไม่ถูกต้อง']);
+        exit;
+    }
+    if (count($notificationIds) > 100) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'มีรายการแจ้งเตือนมากเกินไป']);
+        exit;
+    }
+
+    foreach ($notificationIds as $notificationId) {
+        if (!is_string($notificationId) || !preg_match('/^(?:checkin|match|approved):[1-9]\d*(?::[1-9]\d*)?$/D', $notificationId)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'รายการแจ้งเตือนไม่ถูกต้อง']);
+            exit;
+        }
+    }
+
+    $readNotificationIds = is_array($_SESSION['read_profile_notifications'] ?? null)
+        ? $_SESSION['read_profile_notifications']
+        : [];
+    $_SESSION['read_profile_notifications'] = array_slice(
+        array_values(array_unique(array_merge($readNotificationIds, $notificationIds))),
+        -100
+    );
+    echo json_encode(['success' => true]);
+    exit;
+}
+
 $displayName = $player['display_name'] ?? '';
 $bio = $player['bio'] ?? '';
 $avatarPath = $player['avatar_path'] ?? ($player['image_path'] ?? '');
@@ -299,6 +338,12 @@ $upcomingMatchesStmt->execute(['pid' => $playerId]);
 $upcomingMatches = $upcomingMatchesStmt->fetchAll();
 
 $importantNotifications = [];
+$readNotificationIds = array_fill_keys(
+    is_array($_SESSION['read_profile_notifications'] ?? null)
+        ? $_SESSION['read_profile_notifications']
+        : [],
+    true
+);
 $nowTimestamp = time();
 foreach ($myRegistrations as $registration) {
     if ($registration['status'] !== 'approved') {
@@ -308,18 +353,37 @@ foreach ($myRegistrations as $registration) {
     $openTimestamp = !empty($registration['checkin_open_at']) ? strtotime($registration['checkin_open_at']) : false;
     if ($openTimestamp && $closeTimestamp && $nowTimestamp >= $openTimestamp && $nowTimestamp < $closeTimestamp && empty($registration['checked_in'])) {
         $minutesLeft = max(1, (int) ceil(($closeTimestamp - $nowTimestamp) / 60));
-        $importantNotifications[] = ['type' => 'warning', 'icon' => 'fa-hourglass-half', 'message' => 'เหลือเวลาเช็กอิน ' . $minutesLeft . ' นาที · ' . $registration['tournament_name']];
+        $importantNotifications[] = [
+            'id' => 'checkin:' . (int) $registration['tournament_registration_id'] . ':' . (int) $openTimestamp,
+            'type' => 'warning',
+            'icon' => 'fa-hourglass-half',
+            'message' => 'เหลือเวลาเช็กอิน ' . $minutesLeft . ' นาที · ' . $registration['tournament_name'],
+        ];
     }
 }
 foreach ($upcomingMatches as $upcomingMatch) {
     if (!empty($upcomingMatch['scheduled_at']) && date('Y-m-d', strtotime($upcomingMatch['scheduled_at'])) === date('Y-m-d')) {
-        $importantNotifications[] = ['type' => 'info', 'icon' => 'fa-calendar-day', 'message' => 'มีแมตช์แข่งวันนี้ · ' . $upcomingMatch['tournament_name']];
+        $importantNotifications[] = [
+            'id' => 'match:' . (int) $upcomingMatch['match_id'],
+            'type' => 'info',
+            'icon' => 'fa-calendar-day',
+            'message' => 'มีแมตช์แข่งวันนี้ · ' . $upcomingMatch['tournament_name'],
+        ];
         break;
     }
 }
 foreach ($myRegistrations as $registration) {
-    if ($registration['status'] === 'approved' && count($importantNotifications) < 3) {
-        $importantNotifications[] = ['type' => 'success', 'icon' => 'fa-circle-check', 'message' => 'การสมัครได้รับอนุมัติแล้ว · ' . $registration['tournament_name']];
+    $notificationId = 'approved:' . (int) $registration['tournament_registration_id'];
+    if (
+        $registration['status'] === 'approved'
+        && count($importantNotifications) < 3
+    ) {
+        $importantNotifications[] = [
+            'id' => $notificationId,
+            'type' => 'success',
+            'icon' => 'fa-circle-check',
+            'message' => 'การสมัครได้รับอนุมัติแล้ว · ' . $registration['tournament_name'],
+        ];
         break;
     }
 }
@@ -390,7 +454,41 @@ $flashAlert = renderFlashAlert($flash);
         #particles-canvas {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1;
         }
+        .profile-registration-card > summary {
+            list-style: none;
+        }
+        .profile-registration-card > summary::-webkit-details-marker {
+            display: none;
+        }
+        .profile-registration-chevron {
+            transition: transform .2s ease;
+        }
+        .profile-registration-card[open] .profile-registration-chevron {
+            transform: rotate(180deg);
+        }
+        #manageTeamModal > .manage-team-dialog {
+            display: flex;
+            flex-direction: column;
+            max-height: calc(100vh - 2rem);
+            max-height: calc(100dvh - 2rem);
+            overflow: hidden;
+        }
+        #manageTeamModal > .manage-team-dialog > form {
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
         @media (max-width: 639px) {
+            #manageTeamModal {
+                align-items: flex-start;
+                overflow-y: auto;
+                padding: 0.5rem;
+            }
+            #manageTeamModal > .manage-team-dialog {
+                max-height: calc(100vh - 1rem);
+                max-height: calc(100dvh - 1rem);
+                padding: 1rem;
+            }
             .profile-match-history-table {
                 table-layout: fixed;
             }
@@ -446,6 +544,7 @@ $flashAlert = renderFlashAlert($flash);
                         <a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ตารางคะแนน</a>
                         <a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ข่าวสาร</a>
                         <a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">แกลเลอรี่</a>
+                        <a href="lodging.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange"><i class="fa-solid fa-hotel text-xs mr-1.5"></i> ที่พักแนะนำ</a>
                     </nav>
 
                     <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl">
@@ -462,19 +561,21 @@ $flashAlert = renderFlashAlert($flash);
 
             <?php echo $flashAlert; ?>
 
-            <?php if ($importantNotifications): ?>
-                <div class="relative flex justify-end">
-                    <button type="button" id="notification-toggle" aria-expanded="false" aria-controls="important-notifications" class="relative px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold transition-all">
+                <div id="profile-notification-container" class="relative flex justify-end">
+                    <button type="button" id="notification-toggle" data-user-id="<?= (int) $_SESSION['user_id'] ?>" data-csrf-token="<?= htmlspecialchars($csrfToken) ?>" aria-expanded="false" aria-controls="important-notifications" class="relative px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold transition-all">
                         <i class="fa-solid fa-bell text-brand-orange mr-1.5" aria-hidden="true"></i>
                         ดูการแจ้งเตือน
-                        <span id="notification-count" class="ml-1 inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-brand-orange px-1.5 text-[10px]"><?= count($importantNotifications) ?></span>
+                        <span id="notification-count" class="ml-1 inline-flex min-w-5 h-5 items-center justify-center rounded-full <?= $importantNotifications ? 'bg-brand-orange' : 'bg-slate-600' ?> px-1.5 text-[10px]"><?= count($importantNotifications) ?></span>
                     </button>
                 <section id="important-notifications" class="hidden absolute right-0 top-full z-40 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border border-white/15 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl" aria-hidden="true">
                     <h2 class="mb-3 text-xs font-bold uppercase tracking-wider text-brand-orange flex items-center gap-2">
                         <i class="fa-solid fa-bell"></i> แจ้งเตือนสำคัญ
                     </h2>
                     <div class="grid grid-cols-1 gap-3">
-                        <?php foreach ($importantNotifications as $notification): ?>
+                        <?php if (!$importantNotifications): ?>
+                            <p class="text-xs text-gray-400">ไม่มีการแจ้งเตือนใหม่</p>
+                        <?php else: ?>
+                            <?php foreach ($importantNotifications as $notification): ?>
                             <?php
                                 $notificationStyle = [
                                     'success' => ['box' => 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100', 'icon' => 'text-emerald-300'],
@@ -483,15 +584,25 @@ $flashAlert = renderFlashAlert($flash);
                                     'info' => ['box' => 'border-cyan-400/40 bg-cyan-500/15 text-cyan-100', 'icon' => 'text-cyan-300'],
                                 ][$notification['type']];
                             ?>
-                            <div class="rounded-2xl border px-4 py-3 text-xs font-bold <?= $notificationStyle['box'] ?>">
+                            <?php $notificationIsRead = isset($readNotificationIds[$notification['id']]); ?>
+                            <div
+                                data-notification-id="<?= htmlspecialchars($notification['id']) ?>"
+                                data-notification-type="<?= htmlspecialchars($notification['type']) ?>"
+                                data-notification-icon="<?= htmlspecialchars($notification['icon']) ?>"
+                                data-notification-message="<?= htmlspecialchars($notification['message']) ?>"
+                                data-read="<?= $notificationIsRead ? 'true' : 'false' ?>"
+                                class="rounded-2xl border px-4 py-3 text-xs font-bold <?= $notificationStyle['box'] ?> <?= $notificationIsRead ? 'opacity-60' : '' ?>">
                                 <i class="fa-solid <?= $notification['icon'] ?> <?= $notificationStyle['icon'] ?> mr-1.5" aria-hidden="true"></i>
                                 <?= htmlspecialchars($notification['message']) ?>
+                                <?php if ($notificationIsRead): ?>
+                                    <span class="notification-read-status ml-2 inline-flex rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-bold text-gray-300">อ่านแล้ว</span>
+                                <?php endif; ?>
                             </div>
-                        <?php endforeach; ?>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
                     </div>
                 </section>
                 </div>
-            <?php endif; ?>
 
             <?php if (count($myInvites) > 0): ?>
                 <div class="glass-panel p-6 rounded-3xl border-2 border-brand-orange/50 shadow-orange-glow space-y-4 bg-gradient-to-r from-brand-orange/10 via-transparent to-transparent">
@@ -518,7 +629,6 @@ $flashAlert = renderFlashAlert($flash);
                                         <i class="fa-solid fa-check mr-1"></i> ตอบรับ
                                     </button></form>
                                     <form method="POST" class="inline" onsubmit="return confirm('ปฏิเสธคำเชิญนี้ใช่หรือไม่?')"><input type="hidden" name="csrf_token" value="<?= htmlspecialchars(generateCsrfToken()) ?>"><input type="hidden" name="action" value="reject_invite"><input type="hidden" name="team_member_id" value="<?= (int) $inv['team_member_id'] ?>"><button type="submit" class="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-rose-600 text-gray-300 hover:text-white text-xs font-bold transition-all">
-                                       onclick="return confirm('ปฏิเสธคำเชิญนี้ใช่หรือไม่?')"
                                         <i class="fa-solid fa-xmark"></i>
                                     </button></form>
                                 </div>
@@ -694,8 +804,8 @@ $flashAlert = renderFlashAlert($flash);
                 <?php else: ?>
                     <div class="space-y-6">
                         <?php foreach ($myRegistrations as $reg): ?>
-                            <div class="glass-card p-6 rounded-3xl border border-white/15 shadow-xl space-y-4">
-                                <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-white/10 pb-4">
+                            <details class="profile-registration-card glass-card p-6 rounded-3xl border border-white/15 shadow-xl space-y-4">
+                                <summary class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-white/10 pb-4 cursor-pointer">
                                     <div>
                                         <span class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-white/15 text-brand-orange mr-2">
                                             <?= htmlspecialchars($reg['game_name']) ?>
@@ -725,9 +835,11 @@ $flashAlert = renderFlashAlert($flash);
                                                 <i class="fa-solid fa-clock"></i> รออนุมัติคำขอ
                                             </span>
                                         <?php endif; ?>
+                                        <i class="profile-registration-chevron fa-solid fa-chevron-down text-gray-300 ml-2" aria-hidden="true"></i>
                                     </div>
-                                </div>
+                                </summary>
 
+                                <div class="profile-registration-details space-y-4 pt-4">
                                 <?php foreach ($upcomingMatches as $upcoming): ?>
                                     <?php if ((int) $upcoming['match_id'] === 0 || (int) $upcoming['tournament_id'] !== (int) $reg['tournament_id']) continue; ?>
                                     <div class="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4">
@@ -844,6 +956,7 @@ $flashAlert = renderFlashAlert($flash);
                                     </div>
                                 <?php endif; ?>
                             </div>
+                            </details>
                         <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
@@ -967,13 +1080,13 @@ $flashAlert = renderFlashAlert($flash);
         </div>
 
         <div id="manageTeamModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
-            <div class="glass-panel max-w-xl w-full rounded-3xl p-6 border border-white/20 shadow-2xl space-y-4">
-                <div class="flex items-center justify-between border-b border-white/15 pb-3">
-                    <h3 class="text-lg font-bold font-display text-white uppercase flex items-center gap-2">
+            <div class="manage-team-dialog glass-panel max-w-xl w-full rounded-3xl p-6 border border-white/20 shadow-2xl space-y-4">
+                <div class="flex shrink-0 items-center justify-between gap-3 border-b border-white/15 pb-3">
+                    <h3 class="min-w-0 text-lg font-bold font-display text-white uppercase flex items-center gap-2">
                         <i class="fa-solid fa-users-gear text-brand-orange"></i> จัดการทีม <span id="modalTeamName" class="text-brand-orange"></span>
                     </h3>
-                    <button onclick="toggleModal('manageTeamModal')" class="text-gray-400 hover:text-white text-lg cursor-pointer">
-                        <i class="fa-solid fa-xmark"></i>
+                    <button type="button" onclick="toggleModal('manageTeamModal')" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-xl text-gray-200 hover:bg-white/20 hover:text-white cursor-pointer" aria-label="ปิดหน้าต่างจัดการทีม" title="ปิดหน้าต่าง">
+                        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
                     </button>
                 </div>
 
@@ -1283,17 +1396,197 @@ $flashAlert = renderFlashAlert($flash);
 const notificationToggle = document.getElementById('notification-toggle');
 const importantNotifications = document.getElementById('important-notifications');
 if (notificationToggle && importantNotifications) {
+    const notificationCount = document.getElementById('notification-count');
+    const notificationList = importantNotifications.querySelector('.grid');
+    const notificationStorageKey = `koratEsport:readProfileNotifications:${notificationToggle.dataset.userId}`;
+    const notificationStyles = {
+        success: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100',
+        warning: 'border-amber-400/40 bg-amber-500/15 text-amber-100',
+        error: 'border-rose-400/40 bg-rose-500/15 text-rose-100',
+        info: 'border-cyan-400/40 bg-cyan-500/15 text-cyan-100'
+    };
+    const notificationIconStyles = {
+        success: 'text-emerald-300',
+        warning: 'text-amber-300',
+        error: 'text-rose-300',
+        info: 'text-cyan-300'
+    };
+    const notificationRecords = new Map();
+    let notificationsMarkedRead = false;
+    let markingNotificationsRead = false;
+
+    try {
+        const savedIds = JSON.parse(localStorage.getItem(notificationStorageKey) || '[]');
+        if (Array.isArray(savedIds)) {
+            savedIds.forEach(saved => {
+                if (typeof saved === 'string') {
+                    const notification = importantNotifications.querySelector(
+                        `[data-notification-id="${CSS.escape(saved)}"]`
+                    );
+                    if (notification) {
+                        notificationRecords.set(saved, {
+                            id: saved,
+                            type: notification.dataset.notificationType,
+                            icon: notification.dataset.notificationIcon,
+                            message: notification.dataset.notificationMessage,
+                            read: true
+                        });
+                    }
+                } else if (
+                    saved && typeof saved.id === 'string'
+                    && typeof saved.type === 'string'
+                    && typeof saved.icon === 'string'
+                    && typeof saved.message === 'string'
+                ) {
+                    notificationRecords.set(saved.id, { ...saved, read: true });
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Could not load read notification state from this browser.', error);
+    }
+
+    importantNotifications.querySelectorAll('[data-notification-id]').forEach(notification => {
+        const id = notification.dataset.notificationId;
+        const previous = notificationRecords.get(id);
+        notificationRecords.set(id, {
+            id,
+            type: notification.dataset.notificationType,
+            icon: notification.dataset.notificationIcon,
+            message: notification.dataset.notificationMessage,
+            read: notification.dataset.read === 'true' || Boolean(previous?.read)
+        });
+    });
+
+    const renderNotification = notification => {
+        const item = document.createElement('div');
+        const type = Object.hasOwn(notificationStyles, notification.type) ? notification.type : 'info';
+        item.dataset.notificationId = notification.id;
+        item.dataset.notificationType = type;
+        item.dataset.notificationIcon = notification.icon;
+        item.dataset.notificationMessage = notification.message;
+        item.dataset.read = String(notification.read);
+        item.className = `rounded-2xl border px-4 py-3 text-xs font-bold ${notificationStyles[type]}`;
+
+        const icon = document.createElement('i');
+        icon.className = `fa-solid ${notification.icon} ${notificationIconStyles[type]} mr-1.5`;
+        icon.setAttribute('aria-hidden', 'true');
+        item.append(icon, document.createTextNode(notification.message));
+
+        if (notification.read) {
+            item.classList.add('opacity-60');
+            const status = document.createElement('span');
+            status.className = 'notification-read-status ml-2 inline-flex rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-bold text-gray-300';
+            status.textContent = 'อ่านแล้ว';
+            item.appendChild(status);
+        }
+        return item;
+    };
+
+    notificationList.replaceChildren(...Array.from(notificationRecords.values(), renderNotification));
+    const unreadNotifications = Array.from(notificationRecords.values()).filter(notification => !notification.read);
+    if (notificationCount) {
+        notificationCount.textContent = String(unreadNotifications.length);
+        notificationCount.classList.toggle('bg-brand-orange', unreadNotifications.length > 0);
+        notificationCount.classList.toggle('bg-slate-600', unreadNotifications.length === 0);
+    }
+    if (unreadNotifications.length === 0) {
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'text-xs text-gray-400';
+        emptyMessage.textContent = notificationRecords.size
+            ? 'ไม่มีการแจ้งเตือนใหม่'
+            : 'ไม่มีการแจ้งเตือน';
+        notificationList.appendChild(emptyMessage);
+    }
+
     notificationToggle.addEventListener('click', () => {
         const isHidden = importantNotifications.classList.toggle('hidden');
         notificationToggle.setAttribute('aria-expanded', String(!isHidden));
         importantNotifications.setAttribute('aria-hidden', String(isHidden));
-        if (!isHidden) {
-            const notificationCount = document.getElementById('notification-count');
+        if (isHidden || notificationsMarkedRead || markingNotificationsRead) return;
+
+        const unreadRecords = Array.from(notificationRecords.values()).filter(notification => !notification.read);
+        const notificationIds = unreadRecords.map(notification => notification.id);
+        if (notificationIds.length === 0) {
+            notificationsMarkedRead = true;
+            return;
+        }
+        let browserStateSaved = false;
+        try {
+            unreadRecords.forEach(notification => {
+                notification.read = true;
+                notificationRecords.set(notification.id, notification);
+            });
+            localStorage.setItem(
+                notificationStorageKey,
+                JSON.stringify(Array.from(notificationRecords.values()).slice(-100))
+            );
+            browserStateSaved = true;
+        } catch (error) {
+            console.error('Could not save read notification state in this browser.', error);
+        }
+        unreadRecords.forEach(notification => {
+            const item = notificationList.querySelector(
+                `[data-notification-id="${CSS.escape(notification.id)}"]`
+            );
+            if (item) {
+                item.dataset.read = 'true';
+                item.classList.add('opacity-60');
+                if (!item.querySelector('.notification-read-status')) {
+                    const status = document.createElement('span');
+                    status.className = 'notification-read-status ml-2 inline-flex rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-bold text-gray-300';
+                    status.textContent = 'อ่านแล้ว';
+                    item.appendChild(status);
+                }
+            }
+        });
+        if (!notificationList.querySelector('p')) {
+            const emptyMessage = document.createElement('p');
+            emptyMessage.className = 'text-xs text-gray-400';
+            emptyMessage.textContent = 'ไม่มีการแจ้งเตือนใหม่';
+            notificationList.appendChild(emptyMessage);
+        }
+
+        const formData = new FormData();
+        formData.set('action', 'mark_profile_notifications_read');
+        formData.set('csrf_token', notificationToggle.dataset.csrfToken || '');
+        notificationIds.forEach(id => formData.append('notification_ids[]', id));
+        markingNotificationsRead = true;
+
+        fetch(window.location.href, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' }
+        }).then(response => {
+            if (!response.ok) throw new Error('บันทึกสถานะการแจ้งเตือนไม่สำเร็จ');
+            return response.json();
+        }).then(result => {
+            if (!result.success) throw new Error(result.message || 'บันทึกสถานะการแจ้งเตือนไม่สำเร็จ');
+            notificationsMarkedRead = true;
+            markingNotificationsRead = false;
             if (notificationCount) {
                 notificationCount.textContent = '0';
                 notificationCount.classList.remove('bg-brand-orange');
                 notificationCount.classList.add('bg-slate-600');
             }
+        }).catch(error => {
+            console.error(error);
+            markingNotificationsRead = false;
+            if (browserStateSaved) {
+                notificationsMarkedRead = true;
+                return;
+            }
+            const errorMessage = document.createElement('p');
+            errorMessage.className = 'mt-3 text-xs font-bold text-rose-300';
+            errorMessage.textContent = 'บันทึกการอ่านไม่สำเร็จ กรุณาลองอีกครั้ง';
+            importantNotifications.appendChild(errorMessage);
+        });
+        notificationsMarkedRead = browserStateSaved;
+        if (notificationCount) {
+            notificationCount.textContent = '0';
+            notificationCount.classList.remove('bg-brand-orange');
+            notificationCount.classList.add('bg-slate-600');
         }
     });
 }

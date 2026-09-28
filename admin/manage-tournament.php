@@ -1473,6 +1473,14 @@ $csrfToken = generateCsrfToken();
         .tournament-step { display:flex; align-items:flex-start; flex:1 0 110px; min-width:110px; }
         .tournament-step:last-child { flex:0 0 auto; }
         .tournament-step-line { height:2px; flex:1; margin:1rem 0.5rem 0; background:#cbd5e1; }
+        #createModal .tournament-stepper { position:relative; width:100%; overflow:hidden; }
+        #createModal .tournament-step { position:relative; flex:1 1 0; min-width:0; }
+        #createModal .tournament-step:last-child { flex:1 1 0; }
+        #createModal .tournament-step > div { position:relative; z-index:1; display:flex; width:max-content; max-width:100%; flex:0 0 auto; flex-direction:column; align-items:center; margin:0 auto; }
+        #createModal .tournament-step-line { position:absolute; top:1rem; left:calc(50% + 1rem); width:calc(100% - 2rem); height:2px; margin:0; }
+        @media (max-width: 639px) {
+            #createModal .tournament-step-label { max-width:100%; white-space:normal; text-align:center; overflow-wrap:anywhere; line-height:1.2; }
+        }
         .tournament-step.is-active .tournament-step-circle { background:#f97316; color:white; border-color:#f97316; }
         .tournament-step.is-complete .tournament-step-circle { background:#0f172a; color:white; border-color:#0f172a; }
         .tournament-step-circle { width:2rem; height:2rem; border:2px solid #cbd5e1; border-radius:9999px; display:flex; align-items:center; justify-content:center; flex:0 0 auto; font-size:0.75rem; font-weight:800; background:white; color:#64748b; }
@@ -1609,12 +1617,44 @@ $csrfToken = generateCsrfToken();
         }
 
         function openCreateModal() {
-            document.getElementById('createModal').classList.remove('hidden');
-            document.getElementById('createModal').classList.add('flex');
+            resetCreateTournamentDraft();
+            const modal = document.getElementById('createModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
         }
         function closeCreateModal() {
-            document.getElementById('createModal').classList.add('hidden');
-            document.getElementById('createModal').classList.remove('flex');
+            resetCreateTournamentDraft();
+            const modal = document.getElementById('createModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function resetCreateTournamentDraft() {
+            const form = document.querySelector('#createModal form');
+            if (!form) return;
+
+            form.querySelectorAll('input, select, textarea').forEach(input => { input.disabled = false; });
+            form.reset();
+            document.getElementById('createDays')?.replaceChildren();
+            form.querySelectorAll('.timeline-error').forEach(error => error.remove());
+            form.querySelectorAll('.border-rose-500').forEach(input => input.classList.remove('border-rose-500'));
+
+            form.querySelectorAll('input[name="category_codes[]"], select[name^="category_format["]').forEach(input => {
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            form.querySelectorAll('input[type="datetime-local"]').forEach(input => {
+                if (!input._flatpickr) return;
+                input._flatpickr.clear(false);
+                if (input.value) input._flatpickr.setDate(input.value, false, 'Y-m-d\\TH:i');
+            });
+
+            form.querySelector('[data-step-summary]')?.replaceChildren();
+            form.resetTournamentSchedule?.();
+            form.resetTournamentWizard?.();
+            delete form.dataset.submitting;
+            const submitButton = form.querySelector('button[type="submit"]');
+            if (submitButton) submitButton.disabled = false;
+            document.querySelectorAll('[data-tournament-draft-modal="create"]').forEach(modal => modal.remove());
         }
 
         function safeSetValue(id, value) {
@@ -1697,10 +1737,16 @@ $csrfToken = generateCsrfToken();
         function prepareTournamentDayForms() {
             const createForm = document.querySelector('#createModal form');
             const editForm = document.querySelector('#editModal form');
-            if (createForm) createForm.addEventListener('submit', () => collectTournamentDays('createDays', 'create_tournament_days_json'));
-            if (editForm) editForm.addEventListener('submit', () => collectTournamentDays('editDays', 'edit_tournament_days_json'));
-            setupTournamentStepper(createForm, 'create');
-            setupTournamentStepper(editForm, 'edit');
+            if (createForm && createForm.dataset.tournamentFormsPrepared !== '1') {
+                createForm.dataset.tournamentFormsPrepared = '1';
+                createForm.addEventListener('submit', () => collectTournamentDays('createDays', 'create_tournament_days_json'));
+                setupTournamentStepper(createForm, 'create');
+            }
+            if (editForm && editForm.dataset.tournamentFormsPrepared !== '1') {
+                editForm.dataset.tournamentFormsPrepared = '1';
+                editForm.addEventListener('submit', () => collectTournamentDays('editDays', 'edit_tournament_days_json'));
+                setupTournamentStepper(editForm, 'edit');
+            }
         }
 
         function rebuildStepperForm(form, type) {
@@ -1809,7 +1855,8 @@ $csrfToken = generateCsrfToken();
         }
 
         function setupTournamentStepper(form, type) {
-            if (!form) return;
+            if (!form || form.dataset.stepperReady === '1') return;
+            form.dataset.stepperReady = '1';
             rebuildStepperForm(form, type);
             let currentStep = 1;
             const totalSteps = 5;
@@ -1822,10 +1869,13 @@ $csrfToken = generateCsrfToken();
                 const next = document.createElement('button'); next.type = 'button'; next.dataset.stepNext = '1'; next.className = 'rounded-xl bg-brand-orange px-5 py-2.5 text-xs font-bold text-white'; next.textContent = 'ถัดไป'; next.onclick = () => { if (validateStep()) { currentStep++; renderStep(); } };
                 footer.insertBefore(back, footer.firstChild); footer.insertBefore(next, submitButton);
             }
-            const summary = document.createElement('div');
-            summary.dataset.stepSummary = '1';
-            summary.className = 'hidden rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700';
-            form.querySelector('[data-form-step="5"]').appendChild(summary);
+            let summary = form.querySelector('[data-step-summary]');
+            if (!summary) {
+                summary = document.createElement('div');
+                summary.dataset.stepSummary = '1';
+                summary.className = 'hidden rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700';
+                form.querySelector('[data-form-step="5"]').appendChild(summary);
+            }
             setupScheduleValidation(form);
 
             function validateStep() {
@@ -1868,7 +1918,42 @@ $csrfToken = generateCsrfToken();
                     summary.innerHTML = `<b class="block mb-2 text-sm text-slate-900">สรุปก่อนบันทึก Tournament</b><div class="grid grid-cols-1 sm:grid-cols-2 gap-2"><span><b>ชื่อ:</b> ${escapeHtml(value('name'))}</span><span><b>เกม:</b> ${escapeHtml(form.querySelector('[name="game_id"] option:checked')?.textContent || '-')}</span><span><b>Best of:</b> ${escapeHtml(value('best_of'))}</span><span><b>ประเภท:</b> ${escapeHtml(categories)}</span><span><b>รับสมัคร:</b> ${escapeHtml(value('registration_start'))} ถึง ${escapeHtml(value('registration_end'))}</span><span><b>Lock Roster:</b> ${escapeHtml(value('roster_lock_at'))}</span><span><b>แข่งขัน:</b> ${escapeHtml(value('start_date'))} ถึง ${escapeHtml(value('end_date'))}</span><span><b>Check-in:</b> ${escapeHtml(value('checkin_open_at'))} ถึง ${escapeHtml(value('checkin_close_at'))}</span><span><b>สถานที่:</b> ${escapeHtml(value('venue_address'))}</span><span><b>แผนที่:</b> ${escapeHtml(value('venue_lat_lng'))}</span></div><div class="mt-3 space-y-2"><b class="text-slate-900">รายละเอียดแต่ละประเภท</b>${categorySummary}</div>`;
                 } else summary.classList.add('hidden');
             }
-            form.addEventListener('submit', event => { if (currentStep !== totalSteps) { event.preventDefault(); if (validateStep()) { currentStep = totalSteps; renderStep(); } } else { form.querySelectorAll('input, select, textarea').forEach(input => input.disabled = false); form.querySelectorAll('input[name="category_codes[]"]').forEach(input => { const card = input.closest('.rounded-lg'); if (card) card.querySelectorAll('input, select, textarea').forEach(field => { if (field !== input) field.disabled = !input.checked; }); }); collectTournamentDays(type === 'create' ? 'createDays' : 'editDays', type === 'create' ? 'create_tournament_days_json' : 'edit_tournament_days_json'); } });
+            form.addEventListener('submit', event => {
+                if (form.dataset.submitting === '1') {
+                    event.preventDefault();
+                    return;
+                }
+                if (currentStep !== totalSteps) {
+                    event.preventDefault();
+                    if (validateStep()) {
+                        currentStep = totalSteps;
+                        renderStep();
+                    }
+                    return;
+                }
+
+                form.querySelectorAll('input, select, textarea').forEach(input => { input.disabled = false; });
+                form.querySelectorAll('input[name="category_codes[]"]').forEach(input => {
+                    const card = input.closest('.rounded-lg');
+                    if (card) card.querySelectorAll('input, select, textarea').forEach(field => { if (field !== input) field.disabled = !input.checked; });
+                });
+                collectTournamentDays(type === 'create' ? 'createDays' : 'editDays', type === 'create' ? 'create_tournament_days_json' : 'edit_tournament_days_json');
+                form.dataset.submitting = '1';
+                if (submitButton) submitButton.disabled = true;
+            });
+            form.resetTournamentWizard = () => {
+                currentStep = 1;
+                summary.replaceChildren();
+                summary.classList.add('hidden');
+                delete form.dataset.submitting;
+                if (submitButton) submitButton.disabled = false;
+                const nextButton = form.querySelector('[data-step-next]');
+                if (nextButton) {
+                    nextButton.disabled = false;
+                    nextButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+                renderStep();
+            };
             renderStep();
         }
 
@@ -1911,10 +1996,22 @@ $csrfToken = generateCsrfToken();
                 const labels = { registration_start: 'เปิดรับสมัคร', registration_end: 'ปิดรับสมัคร', roster_lock_at: 'Lock Roster', checkin_open_at: 'เปิด Check-in', checkin_close_at: 'ปิด Check-in', start_date: 'เริ่มแข่งขัน', end_date: 'สิ้นสุดการแข่งขัน' };
                 const modal = document.createElement('div');
                 modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4';
+                modal.dataset.tournamentDraftModal = form.closest('#createModal') ? 'create' : 'edit';
                 modal.innerHTML = `<div class="w-full max-w-2xl rounded-2xl bg-white shadow-2xl"><div class="border-b border-slate-200 px-5 py-4"><h3 class="font-bold text-slate-900">${title}</h3><p class="mt-1 text-xs text-slate-500">ตรวจสอบค่าเดิมและค่าใหม่ก่อนนำไปใช้</p></div><div class="max-h-[55vh] overflow-y-auto p-5"><table class="w-full text-left text-xs"><thead><tr class="border-b border-slate-200 text-slate-500"><th class="p-2">รายการ</th><th class="p-2">เวลาเดิม</th><th class="p-2">เวลาใหม่</th></tr></thead><tbody>${changes.map(name => `<tr class="border-b border-slate-100"><td class="p-2 font-bold">${labels[name]}</td><td class="p-2">${displayValue(field(name)?.value || '')}</td><td class="p-2 font-bold text-brand-orange">${displayValue(next[name] || '')}</td></tr>`).join('')}</tbody></table></div><div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-4"><button type="button" data-cancel class="rounded-lg bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700">ยกเลิก</button><button type="button" data-apply class="rounded-lg bg-brand-orange px-4 py-2 text-xs font-bold text-white">ยืนยันใช้เวลานี้</button></div></div>`;
                 document.body.appendChild(modal);
                 modal.querySelector('[data-cancel]').onclick = () => modal.remove();
-                modal.querySelector('[data-apply]').onclick = () => { previousValues = originalValues(); apply(next); modal.remove(); refresh(); validateSchedule(form); };
+                const applyButton = modal.querySelector('[data-apply]');
+                let applied = false;
+                applyButton.onclick = () => {
+                    if (applied) return;
+                    applied = true;
+                    applyButton.disabled = true;
+                    previousValues = originalValues();
+                    apply(next);
+                    modal.remove();
+                    refresh();
+                    validateSchedule(form);
+                };
             };
             if (end && !form.querySelector('[data-single-day]')) {
                 const label = document.createElement('label'); label.dataset.singleDay = '1'; label.className = 'mt-1 block text-[10px] text-slate-500'; label.innerHTML = '<input type="checkbox" data-single-day> แข่งขันวันเดียว'; end.parentElement.appendChild(label);
@@ -1982,8 +2079,8 @@ $csrfToken = generateCsrfToken();
                     if (confirm('ยืนยันล้างวันเวลาทั้งหมด? ฟิลด์ที่จะถูกล้าง: วันเปิดรับสมัคร, วันปิดรับสมัคร, Lock Roster, เปิด/ปิด Check-in, วันเริ่มและวันสิ้นสุดการแข่งขัน')) request(Object.fromEntries(names.map(name => [name, ''])), 'ล้างวันเวลาทั้งหมด');
                 }
             };
-            const showShiftModal = current => { const options = [['5', 'เลื่อนไปข้างหน้า 5 นาที'], ['15', 'เลื่อนไปข้างหน้า 15 นาที'], ['30', 'เลื่อนไปข้างหน้า 30 นาที'], ['60', 'เลื่อนไปข้างหน้า 1 ชั่วโมง'], ['1440', 'เลื่อนไปข้างหน้า 1 วัน'], ['custom', 'กำหนดเอง']]; const modal = document.createElement('div'); modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4'; modal.innerHTML = `<div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h3 class="font-bold">เลื่อนเวลาทั้งหมด</h3><p class="mt-1 text-xs text-slate-500">ปรับทุกเวลาโดยรักษาระยะห่างเดิม</p><select class="mt-4 w-full rounded-lg border p-2 text-sm">${options.map(item => `<option value="${item[0]}">${item[1]}</option>`).join('')}</select><input type="number" min="1" placeholder="นาที กรณีกำหนดเอง" class="mt-2 hidden w-full rounded-lg border p-2 text-sm"><div class="mt-4 flex justify-end gap-2"><button data-cancel class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">ยกเลิก</button><button data-apply class="rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white">แสดงตัวอย่าง</button></div></div>`; document.body.appendChild(modal); const select = modal.querySelector('select'); const custom = modal.querySelector('input'); select.onchange = () => custom.classList.toggle('hidden', select.value !== 'custom'); modal.querySelector('[data-cancel]').onclick = () => modal.remove(); modal.querySelector('[data-apply]').onclick = () => { const minutes = select.value === 'custom' ? Number(custom.value) : Number(select.value); if (!minutes) return; const next = {...current}; names.forEach(name => { if (next[name]) next[name] = addMinutes(next[name], minutes); }); modal.remove(); request(next, 'เลื่อนเวลาทั้งหมด'); }; };
-            const showExtendModal = current => { const options = [['15', '15 นาที'], ['30', '30 นาที'], ['60', '1 ชั่วโมง'], ['1440', '1 วัน'], ['custom', 'กำหนดเอง']]; const modal = document.createElement('div'); modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4'; modal.innerHTML = `<div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h3 class="font-bold">ขยายเวลารับสมัคร</h3><p class="mt-1 text-xs text-slate-500">เปลี่ยนเฉพาะเวลาปิดรับสมัคร หากชนขั้นตอนถัดไป ระบบจะเสนอให้เลื่อนตาม</p><select class="mt-4 w-full rounded-lg border p-2 text-sm">${options.map(item => `<option value="${item[0]}">${item[1]}</option>`).join('')}</select><input type="number" min="1" placeholder="นาที กรณีกำหนดเอง" class="mt-2 hidden w-full rounded-lg border p-2 text-sm"><div class="mt-4 flex justify-end gap-2"><button data-cancel class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">ยกเลิก</button><button data-apply class="rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white">แสดงตัวอย่าง</button></div></div>`; document.body.appendChild(modal); const select = modal.querySelector('select'); const custom = modal.querySelector('input'); select.onchange = () => custom.classList.toggle('hidden', select.value !== 'custom'); modal.querySelector('[data-cancel]').onclick = () => modal.remove(); modal.querySelector('[data-apply]').onclick = () => { const minutes = select.value === 'custom' ? Number(custom.value) : Number(select.value); if (!minutes || !current.registration_end) return; const next = {...current, registration_end: addMinutes(current.registration_end, minutes)}; if (current.roster_lock_at && next.registration_end >= current.roster_lock_at) { if (confirm('เวลาปิดรับสมัครใหม่ทับกับขั้นตอนถัดไป ต้องการเลื่อนเวลาขั้นตอนถัดไปตามหรือไม่?')) { const shift = Math.max(5, Math.ceil((parse(next.registration_end) - parse(current.roster_lock_at)) / 60000) + 5); names.slice(2).forEach(name => { if (next[name]) next[name] = addMinutes(next[name], shift); }); } else { alert('ยกเลิกการขยายเวลา เพราะเวลาจะขัดแย้งกับขั้นตอนถัดไป'); return; } } modal.remove(); request(next, 'ขยายเวลารับสมัคร'); }; };
+            const showShiftModal = current => { const options = [['5', 'เลื่อนไปข้างหน้า 5 นาที'], ['15', 'เลื่อนไปข้างหน้า 15 นาที'], ['30', 'เลื่อนไปข้างหน้า 30 นาที'], ['60', 'เลื่อนไปข้างหน้า 1 ชั่วโมง'], ['1440', 'เลื่อนไปข้างหน้า 1 วัน'], ['custom', 'กำหนดเอง']]; const modal = document.createElement('div'); modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4'; modal.dataset.tournamentDraftModal = form.closest('#createModal') ? 'create' : 'edit'; modal.innerHTML = `<div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h3 class="font-bold">เลื่อนเวลาทั้งหมด</h3><p class="mt-1 text-xs text-slate-500">ปรับทุกเวลาโดยรักษาระยะห่างเดิม</p><select class="mt-4 w-full rounded-lg border p-2 text-sm">${options.map(item => `<option value="${item[0]}">${item[1]}</option>`).join('')}</select><input type="number" min="1" placeholder="นาที กรณีกำหนดเอง" class="mt-2 hidden w-full rounded-lg border p-2 text-sm"><div class="mt-4 flex justify-end gap-2"><button data-cancel class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">ยกเลิก</button><button data-apply class="rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white">แสดงตัวอย่าง</button></div></div>`; document.body.appendChild(modal); const select = modal.querySelector('select'); const custom = modal.querySelector('input'); select.onchange = () => custom.classList.toggle('hidden', select.value !== 'custom'); modal.querySelector('[data-cancel]').onclick = () => modal.remove(); modal.querySelector('[data-apply]').onclick = () => { const minutes = select.value === 'custom' ? Number(custom.value) : Number(select.value); if (!minutes) return; const next = {...current}; names.forEach(name => { if (next[name]) next[name] = addMinutes(next[name], minutes); }); modal.remove(); request(next, 'เลื่อนเวลาทั้งหมด'); }; };
+            const showExtendModal = current => { const options = [['15', '15 นาที'], ['30', '30 นาที'], ['60', '1 ชั่วโมง'], ['1440', '1 วัน'], ['custom', 'กำหนดเอง']]; const modal = document.createElement('div'); modal.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4'; modal.dataset.tournamentDraftModal = form.closest('#createModal') ? 'create' : 'edit'; modal.innerHTML = `<div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h3 class="font-bold">ขยายเวลารับสมัคร</h3><p class="mt-1 text-xs text-slate-500">เปลี่ยนเฉพาะเวลาปิดรับสมัคร หากชนขั้นตอนถัดไป ระบบจะเสนอให้เลื่อนตาม</p><select class="mt-4 w-full rounded-lg border p-2 text-sm">${options.map(item => `<option value="${item[0]}">${item[1]}</option>`).join('')}</select><input type="number" min="1" placeholder="นาที กรณีกำหนดเอง" class="mt-2 hidden w-full rounded-lg border p-2 text-sm"><div class="mt-4 flex justify-end gap-2"><button data-cancel class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">ยกเลิก</button><button data-apply class="rounded-lg bg-brand-orange px-3 py-2 text-xs font-bold text-white">แสดงตัวอย่าง</button></div></div>`; document.body.appendChild(modal); const select = modal.querySelector('select'); const custom = modal.querySelector('input'); select.onchange = () => custom.classList.toggle('hidden', select.value !== 'custom'); modal.querySelector('[data-cancel]').onclick = () => modal.remove(); modal.querySelector('[data-apply]').onclick = () => { const minutes = select.value === 'custom' ? Number(custom.value) : Number(select.value); if (!minutes || !current.registration_end) return; const next = {...current, registration_end: addMinutes(current.registration_end, minutes)}; if (current.roster_lock_at && next.registration_end >= current.roster_lock_at) { if (confirm('เวลาปิดรับสมัครใหม่ทับกับขั้นตอนถัดไป ต้องการเลื่อนเวลาขั้นตอนถัดไปตามหรือไม่?')) { const shift = Math.max(5, Math.ceil((parse(next.registration_end) - parse(current.roster_lock_at)) / 60000) + 5); names.slice(2).forEach(name => { if (next[name]) next[name] = addMinutes(next[name], shift); }); } else { alert('ยกเลิกการขยายเวลา เพราะเวลาจะขัดแย้งกับขั้นตอนถัดไป'); return; } } modal.remove(); request(next, 'ขยายเวลารับสมัคร'); }; };
             form.querySelectorAll('.schedule-command-btn').forEach(button => button.addEventListener('click', () => command(button.dataset.command)));
             const toolBar = form.querySelector('.schedule-tools');
             if (toolBar && !toolBar.querySelector('[data-advanced-schedule-tools]')) {
@@ -2022,6 +2119,11 @@ $csrfToken = generateCsrfToken();
                 validateSchedule(form);
             });
             [regStart, regEnd, lock, checkinOpen, checkinClose, end].forEach(input => { if (input) input.addEventListener('change', () => { refresh(); validateSchedule(form); }); });
+            form.resetTournamentSchedule = () => {
+                previousValues = null;
+                if (singleDay && end) end.readOnly = singleDay.checked;
+                refresh();
+            };
             refresh();
         }
 
@@ -2085,8 +2187,6 @@ $csrfToken = generateCsrfToken();
             prepareTournamentDayForms();
             setupThaiDateTimePickers();
         });
-// ...existing code...
-        document.addEventListener('DOMContentLoaded', prepareTournamentDayForms);
 
         function loadEditFormData(tournamentId) {
             fetch(`?ajax_get_tournament_form_data=${tournamentId}`)

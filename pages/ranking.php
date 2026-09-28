@@ -424,6 +424,21 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
             min-width: 4.25rem;
             white-space: nowrap;
         }
+        .ranking-mobile-stats {
+            display: none;
+        }
+        .ranking-mobile-content,
+        .ranking-mobile-heading {
+            min-width: 0;
+        }
+        .ranking-mobile-heading {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .ranking-mobile-score {
+            display: none;
+        }
         .ranking-hall-table {
             table-layout: fixed;
         }
@@ -484,62 +499,13 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                 justify-content: flex-end;
             }
             .mobile-score-label { display: none; }
-            #rankingTable { table-layout: fixed; min-width: 0; width: 100%; }
-            #rankingTable th,
-            #rankingTable td {
-                padding: 0.75rem 0.4rem;
-                vertical-align: middle;
-            }
-            #rankingTable.ranking-table-team th:nth-child(1),
-            #rankingTable.ranking-table-team td:nth-child(1),
-            #rankingTable.ranking-table-player th:nth-child(1),
-            #rankingTable.ranking-table-player td:nth-child(1) { width: 20%; white-space: nowrap; }
-            #rankingTable.ranking-table-team th:nth-child(2),
-            #rankingTable.ranking-table-team td:nth-child(2),
-            #rankingTable.ranking-table-player th:nth-child(2),
-            #rankingTable.ranking-table-player td:nth-child(2) { width: 52%; }
-            #rankingTable th:nth-last-child(3),
-            #rankingTable td:nth-last-child(3),
-            #rankingTable th:nth-last-child(2),
-            #rankingTable td:nth-last-child(2) { display: none; }
-            #rankingTable.ranking-table-team th:nth-child(3),
-            #rankingTable.ranking-table-team td:nth-child(3),
-            #rankingTable.ranking-table-team th:nth-child(4),
-            #rankingTable.ranking-table-team td:nth-child(4) { display: none; }
-            #rankingTable th:last-child,
-            #rankingTable td:last-child { width: 30%; }
-            #rankingTable th:last-child {
-                padding-left: 0.4rem;
-                padding-right: 0.4rem;
-                font-size: 0.65rem;
+        }
+        @media (max-width: 768px) {
+            .desktop-ranking-label { display: none; }
+            .mobile-ranking-label {
+                display: inline;
                 white-space: nowrap;
-                overflow: visible;
-                text-align: center;
-            }
-            #rankingTable th:last-child .mobile-ranking-label {
-                display: inline-block;
-                white-space: nowrap;
-                min-width: max-content;
-                transform: translateX(-0.8rem);
-            }
-            .ranking-name {
-                min-width: 0;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                line-height: 1.25;
-            }
-            .ranking-score {
-                text-align: right !important;
-                font-size: 1rem !important;
-            }
-            #rankingTable td.ranking-score {
-                padding-left: 0.2rem;
-                padding-right: 0.35rem;
-            }
-            .ranking-score > span {
-                min-width: 0 !important;
-                justify-content: flex-end !important;
+                font-size: 0.7rem;
             }
         }
         .podium-card:hover {
@@ -587,7 +553,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
             }
         }
 
-        @media (max-width: 767px) {
+        @media (max-width: 768px) {
             .glass-panel table {
                 table-layout: fixed;
                 width: 100%;
@@ -628,34 +594,116 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                 white-space: nowrap;
             }
 
-            #rankingTable th:nth-child(3),
-            #rankingTable td:nth-child(3),
-            #rankingTable th:nth-child(4),
-            #rankingTable td:nth-child(4),
-            #rankingTable th:nth-child(6),
-            #rankingTable td:nth-child(6) {
-                display: none;
+            #rankingTable {
+                table-layout: fixed;
+                min-width: 0;
+                width: 100%;
             }
 
-            #rankingTable th:nth-child(1),
-            #rankingTable td:nth-child(1) {
-                width: 17%;
+            #rankingTable th,
+            #rankingTable td {
+                padding: 0.55rem 0.4rem;
+                vertical-align: middle;
+            }
+
+            #rankingTable th:first-child,
+            #rankingTable td:first-child {
+                width: 14%;
+                white-space: nowrap;
             }
 
             #rankingTable th:nth-child(2),
             #rankingTable td:nth-child(2) {
-                width: 48%;
+                width: 66%;
             }
 
-            #rankingTable th:nth-child(5),
-            #rankingTable td:nth-child(5) {
-                width: 17%;
+            #rankingTable th:nth-child(n+3):not(:last-child),
+            #rankingTable td:nth-child(n+3):not(:last-child) {
+                display: none;
             }
 
-            #rankingTable th:nth-child(7),
-            #rankingTable td:nth-child(7) {
-                width: 18%;
+            #rankingTable th:last-child,
+            #rankingTable td:last-child {
+                display: table-cell;
+                width: 20%;
+                padding-left: 0.2rem;
+                padding-right: 0.5rem;
+                white-space: nowrap;
             }
+
+            #rankingTable th:last-child {
+                font-size: 0.65rem;
+                letter-spacing: 0;
+                text-align: right;
+            }
+
+            #rankingTable td:nth-child(2) {
+                overflow: hidden;
+            }
+
+            #rankingTable .ranking-mobile-heading {
+                display: flex;
+                min-width: 0;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            #rankingTable .ranking-name {
+                min-width: 0;
+                flex: 1 1 auto;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                line-height: 1.25;
+                font-size: 0.9rem;
+            }
+
+            #rankingTable .ranking-mobile-score {
+                display: none;
+            }
+
+            #rankingTable .ranking-mobile-stats {
+                display: flex;
+                min-width: 0;
+                align-items: center;
+                gap: 0.55rem;
+                margin-top: 0.4rem;
+                overflow: hidden;
+                color: #9ca3af;
+                font-size: 0.68rem;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+
+            #rankingTable .ranking-mobile-stats > span {
+                flex: 0 0 auto;
+            }
+
+            #rankingTable .ranking-mobile-stats strong {
+                margin-left: 0.15rem;
+                color: #e5e7eb;
+                font-family: 'Share Tech Mono', monospace;
+                font-size: 0.7rem;
+                font-weight: 700;
+            }
+
+            #rankingTable .ranking-mobile-stats .mobile-wins { color: #34d399; }
+            #rankingTable .ranking-mobile-stats .mobile-losses { color: #fb7185; }
+
+            #rankingTable .ranking-score {
+                display: table-cell;
+                color: #ff5500;
+                text-align: right !important;
+                font-size: 1rem !important;
+            }
+
+            #rankingTable td.ranking-score > span {
+                width: 100%;
+                min-width: 0;
+                justify-content: flex-end;
+                font-size: 1rem;
+            }
+
         }
     </style>
     <link rel="stylesheet" href="../assets/css/mobile-nav.css">
@@ -941,7 +989,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                 <th class="p-5 text-center">แข่งแล้ว</th>
                                 <th class="p-5 text-center">สถิติ ชนะ–แพ้</th>
                                 <th class="p-5 text-center">อัตราชนะ</th>
-                                <th class="p-5 text-right w-36"><span class="desktop-ranking-label">คะแนนสะสม</span><span class="mobile-ranking-label">คะแนนสะสม</span></th>
+                                <th class="p-5 text-right w-36"><span class="desktop-ranking-label">คะแนนสะสม</span><span class="mobile-ranking-label">คะแนน</span></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-white/10 font-medium">
@@ -973,17 +1021,30 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                         data-search-name="<?php echo strtolower(htmlspecialchars($name)); ?>">
                                         <td class="p-5 text-center font-display font-bold text-gray-400 text-sm"><?php echo $actualRank; ?></td>
                                         <td class="p-5 font-bold text-white text-base">
-                                            <div class="flex items-center gap-3">
-                                                <?php if ($type == 'team'): ?>
-                                                    <div class="w-8 h-8 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center text-brand-orange shrink-0">
-                                                        <i class="fa-solid fa-shield-halved text-xs"></i>
-                                                    </div>
-                                                <?php else: ?>
-                                                    <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-                                                        <i class="fa-solid fa-user text-xs"></i>
-                                                    </div>
-                                                <?php endif; ?>
-                                                <span class="ranking-name hover:text-brand-orange transition-colors"><?php echo htmlspecialchars($name); ?></span>
+                                            <div class="ranking-mobile-content">
+                                                <div class="ranking-mobile-heading">
+                                                    <?php if ($type == 'team'): ?>
+                                                        <div class="w-8 h-8 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center text-brand-orange shrink-0">
+                                                            <i class="fa-solid fa-shield-halved text-xs"></i>
+                                                        </div>
+                                                    <?php else: ?>
+                                                        <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+                                                            <i class="fa-solid fa-user text-xs"></i>
+                                                        </div>
+                                                    <?php endif; ?>
+                                                    <span class="ranking-name hover:text-brand-orange transition-colors"><?php echo htmlspecialchars($name); ?></span>
+                                                    <span class="ranking-mobile-score">
+                                                        <span class="ranking-mobile-score-label">คะแนนสะสม</span>
+                                                        <span class="ranking-mobile-score-value"><?php echo number_format($r['total_points']); ?></span>
+                                                    </span>
+                                                </div>
+                                                <div class="ranking-mobile-stats">
+                                                    <span>แข่ง<strong><?php echo (int) $r['matches_played']; ?></strong></span>
+                                                    <span>
+                                                        <strong><span class="mobile-wins"><?php echo $wins; ?>W</span>-<span class="mobile-losses"><?php echo (int) $r['losses']; ?>L</span></strong>
+                                                    </span>
+                                                    <span>ชนะ<strong><?php echo $winRate; ?>%</strong></span>
+                                                </div>
                                             </div>
                                         </td>
                                         <?php if ($type === 'team'): ?>
