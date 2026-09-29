@@ -215,7 +215,11 @@ if ($requestedTournamentId > 0 && !$tournaments) {
 <header class="sticky top-0 z-50 glass-nav"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex items-center justify-between h-20">
     <a href="index.php?intro=1" class="flex items-center gap-3"><img src="../assets/img/logo.png" alt="Korat Esport" class="h-11 w-auto" onerror="this.src='https://placehold.co/100x100/121318/FF5500?text=KE'"><div><span class="font-display font-black text-xl text-white">KORAT <span class="text-brand-orange">ESPORT</span></span><span class="block text-[10px] text-gray-300 font-bold uppercase -mt-1">Official Arena &amp; Hub</span></div></a>
     <nav class="hidden md:flex items-center gap-1"><a href="index.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">หน้าแรก</a><a href="tournaments.php" class="px-4 py-2 rounded-xl text-sm font-semibold text-brand-orange bg-white/10">ทัวร์นาเมนต์</a><a href="ranking.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ตารางคะแนน</a><a href="news.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">ข่าวสาร</a><a href="gallery.php" class="px-4 py-2 rounded-xl text-sm font-semibold hover:text-brand-orange">แกลเลอรี่</a></nav>
-    <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl"><span class="hidden sm:block text-sm font-bold"><?= htmlspecialchars($currentUser['username']) ?></span><a href="profile.php" class="w-9 h-9 rounded-xl bg-brand-orange text-white flex items-center justify-center"><i class="fa-solid fa-user"></i></a><a href="../auth/logout.php" class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center"><i class="fa-solid fa-right-from-bracket"></i></a>    </div>
+    <?php if ($isLoggedIn): ?>
+        <div class="flex items-center gap-3 bg-white/10 p-1.5 pl-3.5 rounded-2xl"><span class="hidden sm:block text-sm font-bold"><?= htmlspecialchars($currentUser['username']) ?></span><a href="profile.php" class="w-9 h-9 rounded-xl bg-brand-orange text-white flex items-center justify-center" aria-label="โปรไฟล์"><i class="fa-solid fa-user"></i></a><a href="../auth/logout.php" class="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 flex items-center justify-center" aria-label="ออกจากระบบ"><i class="fa-solid fa-right-from-bracket"></i></a></div>
+    <?php else: ?>
+        <a href="../auth/login.php" class="text-brand-orange transition-colors hover:text-brand-glow">เข้าสู่ระบบ</a>
+    <?php endif; ?>
     </div>
     </div></header>
 <main class="mx-auto max-w-5xl px-4 sm:px-6 py-12">
@@ -228,7 +232,6 @@ if ($requestedTournamentId > 0 && !$tournaments) {
         <?php $tournamentCategories = $categories[$id] ?? []; $fixedCategoryId = count($tournamentCategories) === 1 ? (int) $tournamentCategories[0]['tournament_category_id'] : 0; ?>
         <?php $hasDescription = trim((string) ($tournament['description'] ?? '')) !== ''; ?>
         <?php $hasRules = trim((string) ($tournament['rules'] ?? '')) !== ''; ?>
-        <?php $loginUrl = '../auth/login.php?next=' . urlencode('../pages/register-tournament.php?id=' . $id); ?>
         <section class="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl">
             <h2 class="text-2xl font-bold"><?= htmlspecialchars($tournament['name']); ?> <span class="text-orange-400">(<?= htmlspecialchars($tournament['game_name']); ?>)</span></h2>
             <div class="mt-5 grid items-start gap-4 lg:grid-cols-2">
@@ -273,11 +276,11 @@ if ($requestedTournamentId > 0 && !$tournaments) {
                         <button class="rounded-lg bg-orange-500 px-5 py-3 font-bold">สมัคร Solo</button>
                     </form>
                 <?php else: ?>
-                    <a href="<?= htmlspecialchars($loginUrl); ?>" class="mt-5 inline-flex rounded-lg bg-orange-500 px-5 py-3 font-bold">เข้าสู่ระบบเพื่อสมัครแข่งขัน</a>
+                    <a href="../auth/register.php" class="mt-5 inline-flex rounded-lg bg-orange-500 px-5 py-3 font-bold">สมัครสมาชิกเพื่อเข้าแข่งขัน</a>
                 <?php endif; ?>
             <?php else: ?>
                 <?php if (!$isLoggedIn): ?>
-                    <a href="<?= htmlspecialchars($loginUrl); ?>" class="mt-5 inline-flex rounded-lg bg-orange-500 px-5 py-3 font-bold">เข้าสู่ระบบเพื่อสมัครแข่งขัน</a>
+                    <a href="../auth/register.php" class="mt-5 inline-flex rounded-lg bg-orange-500 px-5 py-3 font-bold">สมัครสมาชิกเพื่อเข้าแข่งขัน</a>
                 <?php else: ?>
                 <form method="post" enctype="multipart/form-data" class="team-form mt-5 space-y-5" data-tournament="<?= $id; ?>">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken); ?>"><input type="hidden" name="tournament_id" value="<?= $id; ?>"><input type="hidden" name="mode" value="team">
