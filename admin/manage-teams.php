@@ -91,6 +91,24 @@ function statusBadge(string $status, string $type = 'approval'): string
     return '<span class="registration-status-badge inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ' . $info['class'] . '">' . $info['label'] . '</span>';
 }
 
+function tournamentCategoryColorClass(?string $categoryCode, bool $active = false): string
+{
+    return match (strtolower(trim((string) $categoryCode))) {
+        'male' => $active
+            ? 'bg-blue-600 text-white'
+            : 'bg-blue-50 text-blue-700 hover:bg-blue-100',
+        'female' => $active
+            ? 'bg-pink-600 text-white'
+            : 'bg-pink-50 text-pink-700 hover:bg-pink-100',
+        'open' => $active
+            ? 'bg-emerald-600 text-white'
+            : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+        default => $active
+            ? 'bg-brand-orange text-white'
+            : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+    };
+}
+
 function getCheckinCompletion(PDO $pdo, int $registrationId): array
 {
     $stmt = $pdo->prepare("
@@ -201,7 +219,6 @@ function getRegistrationMatchCount(PDO $pdo, array $registration): int
 
 $tournamentId = (int) ($_GET['tournament_id'] ?? 0);
 $selectedCategoryId = (int) ($_GET['category_id'] ?? 0);
-$hasCategoryFilter = array_key_exists('category_id', $_GET);
 $error = '';
 $success = '';
 $search = trim((string) ($_GET['search'] ?? ''));
@@ -600,6 +617,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, ['change_registra
                     try {
                         $pdo->beginTransaction();
                         if ($newParticipationStatus === 'withdrawn' && !empty($registration['player_id'])) {
+                            $tournamentLock = $pdo->prepare('SELECT tournament_id FROM tournaments WHERE tournament_id = :tournament_id FOR UPDATE');
+                            $tournamentLock->execute(['tournament_id' => (int) $registration['tournament_id']]);
+                            if (!$tournamentLock->fetchColumn()) {
+                                throw new RuntimeException('ไม่พบ Tournament สำหรับถอนผู้เข้าแข่งขัน');
+                            }
                             $withdrawnMatchStmt = $pdo->prepare("SELECT match_id, team1_id, team2_id FROM matches
                                 WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id
                                   AND status NOT IN ('completed', 'walkover', 'cancelled')
@@ -708,10 +730,6 @@ if ($selectedCategoryId && !empty($activeCategories)) {
     if (!in_array($selectedCategoryId, $allowedIds, true)) {
         $selectedCategoryId = 0;
     }
-}
-
-if (!$hasCategoryFilter && !$selectedCategoryId && !empty($activeCategories)) {
-    $selectedCategoryId = (int) ($activeCategories[0]['tournament_category_id'] ?? 0);
 }
 
 $registrationAction = trim((string) ($_GET['registration_action'] ?? 'detail'));
@@ -1097,11 +1115,12 @@ if ($flash) {
             <?php if ($tournament): ?>
                 <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 overflow-x-auto scrollbar-thin">
                     <div class="flex flex-nowrap items-center gap-2 min-w-max">
-                        <a href="?tournament_id=<?= $tournamentId ?>&category_id=0" class="px-4 py-2 rounded-xl text-xs font-bold <?= !$selectedCategoryId ? 'bg-brand-orange text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200' ?>">
+                        <a href="?tournament_id=<?= $tournamentId ?>&category_id=0" class="px-4 py-2 rounded-xl text-xs font-bold <?= !$selectedCategoryId ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200' ?>">
                             ทั้งหมด
                         </a>
                         <?php foreach ($activeCategories as $category): ?>
-                            <a href="?tournament_id=<?= $tournamentId ?>&category_id=<?= (int) $category['tournament_category_id'] ?>" class="px-4 py-2 rounded-xl text-xs font-bold <?= ((int) $category['tournament_category_id'] === $selectedCategoryId) ? 'bg-brand-orange text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200' ?>">
+                            <?php $categoryCode = strtolower(trim((string) $category['category_code'])); ?>
+                            <a href="?tournament_id=<?= $tournamentId ?>&category_id=<?= (int) $category['tournament_category_id'] ?>" class="px-4 py-2 rounded-xl text-xs font-bold <?= tournamentCategoryColorClass($categoryCode, (int) $category['tournament_category_id'] === $selectedCategoryId) ?>">
                                 <?= htmlspecialchars($category['label'] ?: $category['category_code']) ?>
                             </a>
                         <?php endforeach; ?>
@@ -1217,7 +1236,7 @@ if ($flash) {
                                                 </div>
                                             </td>
                                             <td class="px-4 py-3">
-                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-700">
+                                                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold <?= tournamentCategoryColorClass((string) ($row['category_code'] ?? 'open')) ?>">
                                                     <?= htmlspecialchars($row['category_label'] ?: $row['category_code'] ?: 'Open') ?>
                                                 </span>
                                             </td>
@@ -1476,9 +1495,7 @@ if ($flash) {
                 </div>
                 <div class="border-t border-slate-200 bg-slate-50 px-6 py-4 flex justify-end gap-2">
                     <button type="button" id="registrationDetailCloseFooter" class="inline-flex items-center rounded-xl bg-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-300">ปิด</button>
-                    <?php if ($registrationAction === 'detail'): ?>
-                        <button type="button" id="registrationManageAction" data-registration-id="<?= (int) $autoOpenRegistrationId ?>" class="inline-flex items-center rounded-xl bg-brand-orange px-4 py-2 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-list-check mr-1"></i>จัดการใบสมัคร</button>
-                    <?php elseif ($registrationAction === 'view_checkin'): ?>
+                    <?php if ($registrationAction === 'view_checkin'): ?>
                         <a href="checkin-teams.php?tournament_id=<?= (int) $tournamentId ?>" class="inline-flex items-center rounded-xl bg-brand-orange px-4 py-2 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-user-check mr-1"></i>เปิดหน้าจัดการ Check-in</a>
                     <?php elseif ($registrationAction === 'show_qr'): ?>
                         <?php if ($autoOpenRegistration && $autoOpenRegistration['status'] === 'approved' && !empty($autoOpenRegistration['qr_code_token'])): ?><button type="button" onclick="window.print()" class="inline-flex items-center rounded-xl bg-brand-orange px-4 py-2 text-xs font-bold text-white hover:bg-brand-glow"><i class="fa-solid fa-print mr-1"></i>พิมพ์ QR</button><?php endif; ?>

@@ -131,16 +131,42 @@ function generateGroupStage(PDO $pdo, int $tournamentId): int
 function generateGroupPlayoff(PDO $pdo, int $tournamentId): int
 {
     ensureTournamentCategorySchema($pdo);
-    $pending = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tournament_id
-        AND group_id IS NOT NULL AND status NOT IN ('completed', 'walkover', 'cancelled')");
+    $ownsTransaction = !$pdo->inTransaction();
+    if ($ownsTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $lockTournament = $pdo->prepare('SELECT tournament_id FROM tournaments WHERE tournament_id = :tournament_id FOR UPDATE');
+        $lockTournament->execute(['tournament_id' => $tournamentId]);
+        if (!$lockTournament->fetchColumn()) {
+            throw new RuntimeException('ไม่พบ Tournament สำหรับสร้างสาย Playoff');
+        }
+        $rounds = generateGroupPlayoffMatches($pdo, $tournamentId);
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        return $rounds;
+    } catch (Throwable $exception) {
+        if ($ownsTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
+}
+
+function generateGroupPlayoffMatches(PDO $pdo, int $tournamentId): int
+{
+    $pending = $pdo->prepare("SELECT match_id FROM matches WHERE tournament_id = :tournament_id
+        AND group_id IS NOT NULL AND status NOT IN ('completed', 'walkover', 'cancelled') LIMIT 1 FOR UPDATE");
     $pending->execute(['tournament_id' => $tournamentId]);
-    if ((int) $pending->fetchColumn() > 0) {
+    if ($pending->fetchColumn() !== false) {
         throw new Exception('ยังมี Match รอบแบ่งกลุ่มที่ไม่เสร็จ');
     }
 
-    $existingPlayoff = $pdo->prepare('SELECT COUNT(*) FROM matches WHERE tournament_id = :tournament_id AND group_id IS NULL');
+    $existingPlayoff = $pdo->prepare('SELECT match_id FROM matches WHERE tournament_id = :tournament_id AND group_id IS NULL LIMIT 1 FOR UPDATE');
     $existingPlayoff->execute(['tournament_id' => $tournamentId]);
-    if ((int) $existingPlayoff->fetchColumn() > 0) {
+    if ($existingPlayoff->fetchColumn() !== false) {
         throw new Exception('Tournament นี้สร้างสาย Playoff แล้ว');
     }
 

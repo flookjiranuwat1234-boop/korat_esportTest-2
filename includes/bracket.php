@@ -3,65 +3,84 @@
 // ระบบจัดการสายการแข่งขันแบบ Single Elimination, Double Elimination และ Playoff พร้อมระบบแยกประเภท (ชาย, หญิง, Open) อัตโนมัติ
 require_once __DIR__ . '/tournament_categories.php';
 
-function ensureDoubleElimSchema($pdo)
+function ensureDoubleElimSchema(PDO $pdo): void
 {
-    try {
+    $tableExists = $pdo->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :table_name');
+    $tableExists->execute(['table_name' => 'bracket_edges']);
+    if ($tableExists->fetchColumn() === false) {
         $pdo->exec("
-            CREATE TABLE IF NOT EXISTS bracket_edges (
-                match_id INT NOT NULL PRIMARY KEY,
-                next_match_id INT NULL,
+            CREATE TABLE bracket_edges (
+                match_id INT(10) UNSIGNED NOT NULL PRIMARY KEY,
+                next_match_id INT(10) UNSIGNED NULL,
                 next_slot VARCHAR(10) NULL,
-                loser_next_match_id INT NULL,
+                loser_next_match_id INT(10) UNSIGNED NULL,
                 loser_next_slot VARCHAR(10) NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
+    }
 
-        $tCols = $pdo->query("SHOW COLUMNS FROM tournaments")->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('best_of', $tCols)) {
-            $pdo->exec("ALTER TABLE tournaments ADD COLUMN best_of TINYINT NOT NULL DEFAULT 1 AFTER format");
-        }
+    $tCols = $pdo->query("SHOW COLUMNS FROM tournaments")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('best_of', $tCols, true)) {
+        $pdo->exec("ALTER TABLE tournaments ADD COLUMN best_of TINYINT NOT NULL DEFAULT 1 AFTER format");
+    }
 
-        $mCols = $pdo->query("SHOW COLUMNS FROM matches")->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('bracket_type', $mCols)) {
-            $pdo->exec("ALTER TABLE matches ADD COLUMN bracket_type VARCHAR(20) NOT NULL DEFAULT 'single' AFTER group_id");
-        }
-        if (!in_array('best_of', $mCols)) {
-            $pdo->exec("ALTER TABLE matches ADD COLUMN best_of TINYINT NOT NULL DEFAULT 1 AFTER bracket_type");
-        }
-        if (!in_array('reset_match_id', $mCols)) {
-            $pdo->exec("ALTER TABLE matches ADD COLUMN reset_match_id INT NULL AFTER bracket_type");
-        }
-        try {
-            $pdo->exec("ALTER TABLE matches MODIFY COLUMN status VARCHAR(20) NOT NULL DEFAULT 'scheduled'");
-        } catch (Exception $e) {}
+    $mColumnRows = $pdo->query("SHOW COLUMNS FROM matches")->fetchAll(PDO::FETCH_ASSOC);
+    $mCols = array_column($mColumnRows, 'Field');
+    $mColumnTypes = [];
+    foreach ($mColumnRows as $column) {
+        $mColumnTypes[$column['Field']] = strtolower((string) $column['Type']);
+    }
+    if (!in_array('bracket_type', $mCols, true)) {
+        $pdo->exec("ALTER TABLE matches ADD COLUMN bracket_type VARCHAR(20) NOT NULL DEFAULT 'single' AFTER group_id");
+    }
+    if (!in_array('best_of', $mCols, true)) {
+        $pdo->exec("ALTER TABLE matches ADD COLUMN best_of TINYINT NOT NULL DEFAULT 1 AFTER bracket_type");
+    }
+    if (!in_array('reset_match_id', $mCols, true)) {
+        $pdo->exec("ALTER TABLE matches ADD COLUMN reset_match_id INT UNSIGNED NULL AFTER bracket_type");
+    }
+    if (($mColumnTypes['status'] ?? '') !== 'varchar(20)') {
+        $pdo->exec("ALTER TABLE matches MODIFY COLUMN status VARCHAR(20) NOT NULL DEFAULT 'scheduled'");
+    }
+    if (isset($mColumnTypes['reset_match_id']) && strpos($mColumnTypes['reset_match_id'], 'unsigned') === false) {
+        $pdo->exec("ALTER TABLE matches MODIFY COLUMN reset_match_id INT(10) UNSIGNED NULL");
+    }
 
-        $eCols = $pdo->query("SHOW COLUMNS FROM bracket_edges")->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('loser_next_match_id', $eCols)) {
-            $pdo->exec("ALTER TABLE bracket_edges ADD COLUMN loser_next_match_id INT NULL AFTER next_slot");
+    $eColumnRows = $pdo->query("SHOW COLUMNS FROM bracket_edges")->fetchAll(PDO::FETCH_ASSOC);
+    $eCols = array_column($eColumnRows, 'Field');
+    $eColumnTypes = [];
+    foreach ($eColumnRows as $column) {
+        $eColumnTypes[$column['Field']] = strtolower((string) $column['Type']);
+    }
+    if (!in_array('loser_next_match_id', $eCols, true)) {
+        $pdo->exec("ALTER TABLE bracket_edges ADD COLUMN loser_next_match_id INT(10) UNSIGNED NULL AFTER next_slot");
+    }
+    if (!in_array('loser_next_slot', $eCols, true)) {
+        $pdo->exec("ALTER TABLE bracket_edges ADD COLUMN loser_next_slot VARCHAR(10) NULL AFTER loser_next_match_id");
+    }
+    foreach (['match_id', 'next_match_id', 'loser_next_match_id'] as $column) {
+        if (isset($eColumnTypes[$column]) && strpos($eColumnTypes[$column], 'unsigned') === false) {
+            $nullable = $column === 'match_id' ? 'NOT NULL' : 'NULL';
+            $pdo->exec("ALTER TABLE bracket_edges MODIFY COLUMN {$column} INT(10) UNSIGNED {$nullable}");
         }
-        if (!in_array('loser_next_slot', $eCols)) {
-            $pdo->exec("ALTER TABLE bracket_edges ADD COLUMN loser_next_slot VARCHAR(10) NULL AFTER loser_next_match_id");
-        }
+    }
 
-        try {
-            $pdo->exec("ALTER TABLE bracket_edges MODIFY COLUMN next_match_id INT(10) UNSIGNED NULL");
-            $pdo->exec("ALTER TABLE bracket_edges MODIFY COLUMN next_slot VARCHAR(10) NULL");
-        } catch (Exception $e) {}
-
+    $tableExists->execute(['table_name' => 'match_games']);
+    if ($tableExists->fetchColumn() === false) {
         $pdo->exec("
-            CREATE TABLE IF NOT EXISTS match_games (
-                match_game_id INT AUTO_INCREMENT PRIMARY KEY,
-                match_id INT NOT NULL,
-                game_number TINYINT NOT NULL,
+            CREATE TABLE match_games (
+                match_game_id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                match_id INT(10) UNSIGNED NOT NULL,
+                game_number TINYINT UNSIGNED NOT NULL,
                 team1_score INT NOT NULL DEFAULT 0,
                 team2_score INT NOT NULL DEFAULT 0,
-                winner_team_id INT NULL,
+                winner_team_id INT(10) UNSIGNED NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE KEY uniq_match_game (match_id, game_number),
                 FOREIGN KEY (match_id) REFERENCES matches(match_id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
-    } catch (Exception $e) {}
+    }
 }
 
 function generateSingleEliminationBracket($pdo, $tournamentId)
@@ -576,28 +595,48 @@ function upsertLoserEdge(PDO $pdo, int $matchId, int $nextMatchId, string $nextS
 
 function maybeAutoGenerateGroupPlayoff(PDO $pdo, int $tournamentId): void
 {
-    $pendingStmt = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tournament_id AND group_id IS NOT NULL AND status NOT IN ('completed', 'walkover', 'cancelled')");
-    $pendingStmt->execute(['tournament_id' => $tournamentId]);
-    if ((int) $pendingStmt->fetchColumn() > 0) {
-        return;
+    $ownsTransaction = !$pdo->inTransaction();
+    if ($ownsTransaction) {
+        $pdo->beginTransaction();
     }
 
-    $existingPlayoffStmt = $pdo->prepare('SELECT COUNT(*) FROM matches WHERE tournament_id = :tournament_id AND group_id IS NULL');
-    $existingPlayoffStmt->execute(['tournament_id' => $tournamentId]);
-    if ((int) $existingPlayoffStmt->fetchColumn() > 0) {
-        return;
-    }
+    try {
+        $lockTournament = $pdo->prepare('SELECT tournament_id FROM tournaments WHERE tournament_id = :tournament_id FOR UPDATE');
+        $lockTournament->execute(['tournament_id' => $tournamentId]);
+        if (!$lockTournament->fetchColumn()) {
+            throw new RuntimeException('ไม่พบ Tournament สำหรับสร้างสาย Playoff');
+        }
 
-    $groupStmt = $pdo->prepare('SELECT COUNT(*) FROM tournament_groups WHERE tournament_id = :tournament_id');
-    $groupStmt->execute(['tournament_id' => $tournamentId]);
-    if ((int) $groupStmt->fetchColumn() === 0) {
-        return;
-    }
+        $pendingStmt = $pdo->prepare("SELECT match_id FROM matches WHERE tournament_id = :tournament_id AND group_id IS NOT NULL AND status NOT IN ('completed', 'walkover', 'cancelled') LIMIT 1 FOR UPDATE");
+        $pendingStmt->execute(['tournament_id' => $tournamentId]);
+        if ($pendingStmt->fetchColumn() !== false) {
+            if ($ownsTransaction) $pdo->commit();
+            return;
+        }
 
-    // Group playoff generation lives with the round-robin workflow. Load it
-    // lazily here to avoid the circular include between both modules.
-    require_once __DIR__ . '/group_stage.php';
-    generateGroupPlayoff($pdo, $tournamentId);
+        $existingPlayoffStmt = $pdo->prepare('SELECT match_id FROM matches WHERE tournament_id = :tournament_id AND group_id IS NULL LIMIT 1 FOR UPDATE');
+        $existingPlayoffStmt->execute(['tournament_id' => $tournamentId]);
+        if ($existingPlayoffStmt->fetchColumn() !== false) {
+            if ($ownsTransaction) $pdo->commit();
+            return;
+        }
+
+        $groupStmt = $pdo->prepare('SELECT tournament_group_id FROM tournament_groups WHERE tournament_id = :tournament_id LIMIT 1 FOR UPDATE');
+        $groupStmt->execute(['tournament_id' => $tournamentId]);
+        if ($groupStmt->fetchColumn() === false) {
+            if ($ownsTransaction) $pdo->commit();
+            return;
+        }
+
+        require_once __DIR__ . '/group_stage.php';
+        generateGroupPlayoff($pdo, $tournamentId);
+        if ($ownsTransaction) $pdo->commit();
+    } catch (Throwable $exception) {
+        if ($ownsTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
 }
 
 function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)

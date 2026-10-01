@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
     } else {
         $matchId = (int) $_POST['match_id'];
 
-        $checkStmt = $pdo->prepare("SELECT status, tournament_id, tournament_category_id FROM matches WHERE match_id = :id");
+        $checkStmt = $pdo->prepare("SELECT status, tournament_id, tournament_category_id, group_id FROM matches WHERE match_id = :id");
         $checkStmt->execute(['id' => $matchId]);
         $matchOwnership = $checkStmt->fetch();
         $currentMatchStatus = $matchOwnership['status'] ?? false;
@@ -99,6 +99,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                         if (!$pdo->inTransaction()) {
                             $pdo->beginTransaction();
                         }
+                        if (!empty($matchOwnership['group_id'])) {
+                            $tournamentLock = $pdo->prepare('SELECT tournament_id FROM tournaments WHERE tournament_id = :tournament_id FOR UPDATE');
+                            $tournamentLock->execute(['tournament_id' => $tournamentId]);
+                            if (!$tournamentLock->fetchColumn()) {
+                                throw new RuntimeException('ไม่พบ Tournament สำหรับบันทึกผล');
+                            }
+                        }
 
                         $scoreUpdate = $pdo->prepare("
                             UPDATE matches
@@ -113,30 +120,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                         if (function_exists('updateRankingsAfterMatch')) {
                                     try { updateRankingsAfterMatch($pdo, $matchId, true); } catch (Exception $ex) { throw new RuntimeException('บันทึก Ranking ไม่สำเร็จ: ' . $ex->getMessage(), 0, $ex); }
                         }
-                        $advanceAlreadySaved = false;
-                        try {
-                            if ($winnerId) {
-                                advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
-                            }
-                        } catch (Exception $e) {
-                            $verify = $pdo->prepare("SELECT winner_team_id, status FROM matches WHERE match_id = :id");
-                            $verify->execute(['id' => $matchId]);
-                            $savedMatch = $verify->fetch(PDO::FETCH_ASSOC);
-                            if (($savedMatch['winner_team_id'] ?? null) !== null && in_array(($savedMatch['status'] ?? ''), ['completed', 'walkover'], true)) {
-                                $advanceAlreadySaved = true;
-                            } else {
-                                throw $e;
-                            }
+                        if ($winnerId) {
+                            advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
                         }
 
                         if ($pdo->inTransaction()) {
                             $pdo->commit();
                         }
                         $success = 'บันทึกผลการแข่งขันเรียบร้อยแล้ว';
-                        if ($advanceAlreadySaved) {
-                            $success = 'บันทึกผลการแข่งขันเรียบร้อยแล้ว';
-                        }
-                    } catch (Exception $e) {
+                    } catch (Throwable $e) {
                         if ($pdo->inTransaction()) {
                             $pdo->rollBack();
                         }
@@ -197,6 +189,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                         if (!$pdo->inTransaction()) {
                             $pdo->beginTransaction();
                         }
+                        if (!empty($matchOwnership['group_id'])) {
+                            $tournamentLock = $pdo->prepare('SELECT tournament_id FROM tournaments WHERE tournament_id = :tournament_id FOR UPDATE');
+                            $tournamentLock->execute(['tournament_id' => $tournamentId]);
+                            if (!$tournamentLock->fetchColumn()) {
+                                throw new RuntimeException('ไม่พบ Tournament สำหรับบันทึกผล');
+                            }
+                        }
 
                         foreach ($gamesToInsert as $g) {
                             $pdo->prepare("
@@ -222,28 +221,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             throw new RuntimeException('แมตช์นี้ถูกบันทึกผลไปแล้ว');
                         }
                         if (function_exists('updateRankingsAfterMatch')) updateRankingsAfterMatch($pdo, $matchId, true);
-                        $advanceAlreadySaved = false;
-                        try {
-                            advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
-                        } catch (Exception $e) {
-                            $verify = $pdo->prepare("SELECT winner_team_id, status FROM matches WHERE match_id = :id");
-                            $verify->execute(['id' => $matchId]);
-                            $savedMatch = $verify->fetch(PDO::FETCH_ASSOC);
-                            if (($savedMatch['winner_team_id'] ?? null) !== null && in_array(($savedMatch['status'] ?? ''), ['completed', 'walkover'], true)) {
-                                $advanceAlreadySaved = true;
-                            } else {
-                                throw $e;
-                            }
-                        }
+                        advanceMatchResult($pdo, $matchId, $winnerId, $loserId);
 
                         if ($pdo->inTransaction()) {
                             $pdo->commit();
                         }
                         $success = "บันทึกผล Best of {$bestOf} เรียบร้อยแล้ว ({$team1GamesWon}-{$team2GamesWon})";
-                        if ($advanceAlreadySaved) {
-                            $success = "บันทึกผล Best of {$bestOf} เรียบร้อยแล้ว ({$team1GamesWon}-{$team2GamesWon})";
-                        }
-                    } catch (Exception $e) {
+                    } catch (Throwable $e) {
                         if ($pdo->inTransaction()) {
                             $pdo->rollBack();
                         }

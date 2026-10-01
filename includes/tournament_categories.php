@@ -52,6 +52,7 @@ function ensureTournamentCategorySchema(PDO $pdo): void
         'max_participants' => "ALTER TABLE tournament_categories ADD COLUMN max_participants INT UNSIGNED NULL",
         'format' => "ALTER TABLE tournament_categories ADD COLUMN format VARCHAR(30) NULL",
         'group_size' => "ALTER TABLE tournament_categories ADD COLUMN group_size INT UNSIGNED NULL",
+        'teams_advance_per_group' => "ALTER TABLE tournament_categories ADD COLUMN teams_advance_per_group INT UNSIGNED NULL",
         'starters_count' => "ALTER TABLE tournament_categories ADD COLUMN starters_count INT UNSIGNED NULL",
         'substitutes_count' => "ALTER TABLE tournament_categories ADD COLUMN substitutes_count INT UNSIGNED NULL",
         'checkin_required_roles' => "ALTER TABLE tournament_categories ADD COLUMN checkin_required_roles VARCHAR(255) NULL",
@@ -300,7 +301,28 @@ function qualifyCompletedCheckins(PDO $pdo, int $tournamentId): int
 function applyCheckinWalkovers(PDO $pdo, int $tournamentId): int
 {
     ensureTournamentCategorySchema($pdo);
-    $tStmt = $pdo->prepare('SELECT checkin_close_at FROM tournaments WHERE tournament_id = :tid');
+    $ownsTransaction = !$pdo->inTransaction();
+    if ($ownsTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $applied = applyCheckinWalkoversInTransaction($pdo, $tournamentId);
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        return $applied;
+    } catch (Throwable $exception) {
+        if ($ownsTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
+}
+
+function applyCheckinWalkoversInTransaction(PDO $pdo, int $tournamentId): int
+{
+    $tStmt = $pdo->prepare('SELECT checkin_close_at FROM tournaments WHERE tournament_id = :tid FOR UPDATE');
     $tStmt->execute(['tid' => $tournamentId]);
     $checkinCloseAt = $tStmt->fetchColumn();
     if (!$checkinCloseAt || strtotime($checkinCloseAt) > time()) {
@@ -308,7 +330,8 @@ function applyCheckinWalkovers(PDO $pdo, int $tournamentId): int
     }
 
     $matchStmt = $pdo->prepare("SELECT match_id, team1_id, team2_id FROM matches
-        WHERE tournament_id = :tid AND status = 'scheduled' AND team1_id IS NOT NULL AND team2_id IS NOT NULL");
+        WHERE tournament_id = :tid AND status = 'scheduled' AND team1_id IS NOT NULL AND team2_id IS NOT NULL
+        FOR UPDATE");
     $matchStmt->execute(['tid' => $tournamentId]);
 
     $regStmt = $pdo->prepare('SELECT tournament_registration_id FROM tournament_registrations
@@ -338,7 +361,7 @@ function applyCheckinWalkovers(PDO $pdo, int $tournamentId): int
             ->execute(['reason' => $reason, 'winner' => $winnerId, 'match_id' => $match['match_id']]);
 
         if (function_exists('advanceMatchResult')) {
-            try { @advanceMatchResult($pdo, $match['match_id'], $winnerId, $loserId); } catch (Exception $e) {}
+            advanceMatchResult($pdo, $match['match_id'], $winnerId, $loserId);
         }
         $applied++;
     }
