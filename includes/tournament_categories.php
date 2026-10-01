@@ -183,19 +183,14 @@ function getTournamentCategoryId(PDO $pdo, int $tournamentId, string $categoryCo
         return (int) $id;
     }
 
-    $label = ['male' => 'ชาย', 'female' => 'หญิง', 'open' => 'Open'][$categoryCode] ?? $categoryCode;
+    $label = ['male' => 'ชาย', 'female' => 'หญิง', 'open' => 'ทั่วไป'][$categoryCode] ?? $categoryCode;
     $tournamentStmt = $pdo->prepare('SELECT max_teams, format FROM tournaments WHERE tournament_id = :tournament_id');
     $tournamentStmt->execute(['tournament_id' => $tournamentId]);
     $tournament = $tournamentStmt->fetch();
     if (!$tournament) return null;
     $categoryFields = $pdo->query('SHOW COLUMNS FROM tournament_categories')->fetchAll(PDO::FETCH_COLUMN);
-    $insert = in_array('code', $categoryFields, true)
-        ? $pdo->prepare('INSERT INTO tournament_categories
-            (tournament_id, category_code, code, label, max_participants, format)
-            VALUES (:tournament_id, :category_code, :legacy_code, :label, :max_participants, :format)')
-        : $pdo->prepare('INSERT INTO tournament_categories
-            (tournament_id, category_code, label, max_participants, format)
-            VALUES (:tournament_id, :category_code, :label, :max_participants, :format)');
+    $columns = ['tournament_id', 'category_code'];
+    $values = [':tournament_id', ':category_code'];
     $insertParams = [
         'tournament_id' => $tournamentId,
         'category_code' => $categoryCode,
@@ -203,7 +198,20 @@ function getTournamentCategoryId(PDO $pdo, int $tournamentId, string $categoryCo
         'max_participants' => $tournament['max_teams'],
         'format' => $tournament['format'] ?: 'single_elimination',
     ];
-    if (in_array('code', $categoryFields, true)) $insertParams['legacy_code'] = $categoryCode;
+    if (in_array('name', $categoryFields, true)) {
+        $columns[] = 'name';
+        $values[] = ':legacy_name';
+        $insertParams['legacy_name'] = $label;
+    }
+    if (in_array('code', $categoryFields, true)) {
+        $columns[] = 'code';
+        $values[] = ':legacy_code';
+        $insertParams['legacy_code'] = $categoryCode;
+    }
+    array_push($columns, 'label', 'max_participants', 'format');
+    array_push($values, ':label', ':max_participants', ':format');
+    $insert = $pdo->prepare('INSERT INTO tournament_categories (' . implode(', ', $columns) . ')
+        VALUES (' . implode(', ', $values) . ')');
     $insert->execute($insertParams);
     return (int) $pdo->lastInsertId();
 }
