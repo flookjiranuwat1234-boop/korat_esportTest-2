@@ -214,7 +214,7 @@ function generateGroupPlayoff(PDO $pdo, int $tournamentId): int
             $tournamentId,
             $teamIds,
             max(1, (int) $tournament['best_of']),
-            'playoff_' . $categoryId,
+            'single',
             (int) $categoryId
         ));
     }

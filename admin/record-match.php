@@ -593,7 +593,11 @@ if ($tournamentId) {
     $categoryStmt->execute(['id' => $tournamentId]);
     $availableCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
     $categoryMap = [];
-    foreach ($availableCategories as $category) $categoryMap[$category['category_code']] = (int) $category['tournament_category_id'];
+    $categoryCodeById = [];
+    foreach ($availableCategories as $category) {
+        $categoryMap[$category['category_code']] = (int) $category['tournament_category_id'];
+        $categoryCodeById[(int) $category['tournament_category_id']] = strtolower(trim((string) $category['category_code']));
+    }
     $summaryStmt = $pdo->prepare("SELECT COUNT(*) AS total,
         SUM(status = 'scheduled') AS scheduled, SUM(status = 'ongoing') AS ongoing,
         SUM(status = 'completed') AS completed, SUM(status = 'walkover') AS walkover
@@ -665,18 +669,19 @@ if ($tournamentId) {
 
     // จัดหมวดหมู่แมตช์ตาม Category ที่เลือก (Male, Female, Open) โดยไม่ทำให้ทีมตกหาย
     foreach ($rawMatches as $m) {
-        if ($selectedCategoryId && !empty($m['match_category_id']) && (int) $m['match_category_id'] !== $selectedCategoryId) {
-            continue;
-        }
         $bt = strtolower($m['bracket_type'] ?? '');
-        $c1 = strtolower($m['team1_cat'] ?? 'open');
-        $c2 = strtolower($m['team2_cat'] ?? 'open');
+        $matchCategoryCode = $categoryCodeById[(int) ($m['match_category_id'] ?? 0)] ?? '';
+        $c1 = strtolower((string) ($m['team1_cat'] ?? ''));
+        $c2 = strtolower((string) ($m['team2_cat'] ?? ''));
 
-        $matchCat = 'open';
-        if (strpos($bt, 'male') !== false || $c1 === 'male' || $c2 === 'male') {
+        if (in_array($matchCategoryCode, ['male', 'female', 'open'], true)) {
+            $matchCat = $matchCategoryCode;
+        } elseif (strpos($bt, 'male') !== false || $c1 === 'male' || $c2 === 'male') {
             $matchCat = 'male';
         } elseif (strpos($bt, 'female') !== false || $c1 === 'female' || $c2 === 'female') {
             $matchCat = 'female';
+        } else {
+            $matchCat = 'open';
         }
 
         // หากตรงกับหมวดที่เลือก (หรือถ้าเลือก all ให้แสดงทั้งหมด)
@@ -718,10 +723,11 @@ if ($tournamentId) {
         }
         $bt = $m['bracket_type'] ?? 'single';
         $catLabel = '';
-        $c1 = strtolower($m['team1_cat'] ?? 'open');
+        $matchCategoryCode = $categoryCodeById[(int) ($m['match_category_id'] ?? 0)] ?? '';
+        $c1 = strtolower((string) ($m['team1_cat'] ?? ''));
         
-        if (strpos($bt, 'male') !== false || $c1 === 'male') $catLabel = ' [ประเภททีมชาย]';
-        elseif (strpos($bt, 'female') !== false || $c1 === 'female') $catLabel = ' [ประเภททีมหญิง]';
+        if ($matchCategoryCode === 'male' || strpos($bt, 'male') !== false || $c1 === 'male') $catLabel = ' [ประเภททีมชาย]';
+        elseif ($matchCategoryCode === 'female' || strpos($bt, 'female') !== false || $c1 === 'female') $catLabel = ' [ประเภททีมหญิง]';
         else $catLabel = ' [ประเภท Open]';
 
         $stageName = $m['group_id'] ? 'Group Stage' : ($m['bracket_type'] ?? 'Knockout');

@@ -1176,7 +1176,7 @@ if ($flash) {
                     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 p-4 border-b border-slate-200 bg-slate-50/60">
                         <h2 class="text-sm font-bold uppercase tracking-[0.2em] text-slate-700">รายการสมัคร</h2>
                         <button type="button" id="openAddSoloPlayerModal" class="inline-flex items-center gap-2 rounded-xl bg-brand-orange px-4 py-2 text-sm font-bold text-white hover:bg-brand-glow">
-                            <i class="fa-solid fa-plus"></i> + เพิ่มทีม/ผู้แข่งขัน
+                            <i class="fa-solid fa-plus"></i> เพิ่มทีม/ผู้แข่งขัน
                         </button>
                     </div>
 
@@ -1317,9 +1317,9 @@ if ($flash) {
     <?php endif; ?>
 
     <?php if ($autoOpenRegistrationId): ?>
-        <div id="registrationDetailModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4" data-registration-id="<?= (int) $autoOpenRegistrationId ?>" data-tournament-id="<?= (int) $tournamentId ?>" data-category-id="<?= (int) $selectedCategoryId ?>">
-            <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
-                <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
+        <div id="registrationDetailModal" class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/70 p-4" data-registration-id="<?= (int) $autoOpenRegistrationId ?>" data-tournament-id="<?= (int) $tournamentId ?>" data-category-id="<?= (int) $selectedCategoryId ?>">
+            <div class="my-auto flex max-h-[calc(100dvh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div class="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
                     <div>
                         <p class="text-[10px] uppercase tracking-[0.2em] text-slate-500"><?= htmlspecialchars($registrationActionTitle) ?></p>
                         <h3 class="text-lg font-black text-slate-900">
@@ -1328,7 +1328,7 @@ if ($flash) {
                     </div>
                     <button type="button" id="registrationDetailClose" class="text-slate-400 hover:text-slate-600 p-1" aria-label="ปิดรายละเอียดใบสมัคร"><i class="fa-solid fa-xmark text-xl"></i></button>
                 </div>
-                <div class="overflow-y-auto p-6 space-y-5">
+                <div class="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
                     <?php if (!$autoOpenRegistration): ?>
                         <div class="p-8 text-center text-slate-500">ไม่พบข้อมูล Registration ที่เลือก</div>
                     <?php else: ?>
@@ -1433,7 +1433,7 @@ if ($flash) {
                                 <div class="space-y-2 text-sm text-slate-700">
                                     <div class="flex justify-between gap-3"><span class="text-slate-500">Tournament</span><span class="font-bold text-slate-900"><?= htmlspecialchars($autoOpenRegistration['tournament_name'] ?? '-') ?></span></div>
                                     <div class="flex justify-between gap-3"><span class="text-slate-500">สถานะการอนุมัติ</span><span><?= statusBadge((string) ($autoOpenRegistration['status'] ?? 'pending'), 'approval') ?></span></div>
-                                    <div class="flex justify-between gap-3"><span class="text-slate-500">สถานะพร้อมจัดสาย</span><span class="font-bold"><?= htmlspecialchars(($autoOpenRegistration['participation_status'] ?: 'registered') === 'registered' ? 'รอ Check-in' : ($autoOpenRegistration['participation_status'] ?: 'registered')) ?></span></div>
+                                    <div class="flex justify-between gap-3"><span class="text-slate-500">สถานะพร้อมจัดสาย</span><span><?= statusBadge((string) ($autoOpenRegistration['participation_status'] ?: 'registered'), 'participation') ?></span></div>
                                     <div class="flex justify-between gap-3"><span class="text-slate-500">สมัครเมื่อ</span><span class="font-bold"><?= !empty($autoOpenRegistration['registered_at']) ? date('d/m/Y H:i', strtotime($autoOpenRegistration['registered_at'])) : '-' ?></span></div>
                                 </div>
                             </div>
@@ -1465,9 +1465,6 @@ if ($flash) {
                                                 <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold <?= $memberStatus === 'checked_in' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700' ?>">
                                                     <?= $memberStatus === 'checked_in' ? (strtolower((string) ($member['checkin_status'] ?? '')) === 'waived' ? 'อนุโลม' : 'Check-in') : 'ยังไม่ Check-in' ?>
                                                 </span>
-                                                <?php if ($member['is_required_for_checkin']): ?>
-                                                    <span class="inline-flex items-center rounded-full bg-orange-100 text-orange-700 px-2.5 py-1 text-[10px] font-bold">ต้องเช็กอิน</span>
-                                                <?php endif; ?>
                                             </div>
                                         </div>
                                     <?php endforeach; ?>

@@ -967,9 +967,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
     } else {
         $name = trim($_POST['name'] ?? '');
         $demoRequested = ($_POST['demo_mode'] ?? '') === '1';
-        if ($demoRequested && !isTournamentDemoEnvironment()) {
-            $error = 'โหมดทดสอบเปิดได้เฉพาะ Local/Test และต้องตั้ง ENABLE_TOURNAMENT_DEMO_MODE=true';
-        }
         $gameId = trim($_POST['game_id'] ?? '');
         $categoryForm = selectedCategoryFormData($_POST);
         $format = $categoryForm['format'];
@@ -988,15 +985,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
         $startDate = !empty($_POST['start_date']) ? $_POST['start_date'] : null;
         $endDate = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
 
-        $imagePath = uploadTournamentImage($_FILES['tournament_image'] ?? null);
-
         $adminId = $_SESSION['user_id'] ?? $_SESSION['id'] ?? null;
         if (!$adminId) {
             $fallbackAdmin = $pdo->query("SELECT user_id FROM users LIMIT 1")->fetch();
             $adminId = $fallbackAdmin['user_id'] ?? 1;
         }
 
-        if ($name == '' || empty($gameId) || $maxTeams < 1 || !$categoryForm['codes']) {
+        if ($demoRequested && !isTournamentDemoEnvironment()) {
+            $error = 'โหมดทดสอบเปิดได้เฉพาะ Local/Test และต้องตั้ง ENABLE_TOURNAMENT_DEMO_MODE=true';
+        } elseif ($name == '' || empty($gameId) || $maxTeams < 1 || !$categoryForm['codes']) {
             $error = 'กรุณากรอกชื่อทัวร์นาเมนต์ เลือกเกม และกำหนดจำนวนทีมให้ถูกต้อง';
         } elseif (($categoryError = validateCategoryForm($_POST)) !== null) {
             $error = $categoryError;
@@ -1023,6 +1020,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
         } elseif ($checkinOpen && $checkinClose && substr($checkinClose, 0, 10) !== substr($startDate, 0, 10)) {
             $error = 'Check-in ต้องอยู่ในวันเริ่มการแข่งขัน';
         } else {
+            $imagePath = uploadTournamentImage($_FILES['tournament_image'] ?? null);
             try {
                 $stmt = $pdo->prepare("
                     INSERT INTO tournaments (name, is_demo, game_id, format, best_of, max_teams, prize_pool, venue_address, venue_lat_lng, image_path, rules, description, registration_start, registration_end, roster_lock_at, checkin_open_at, checkin_close_at, start_date, end_date, status, created_by)
@@ -1369,6 +1367,7 @@ $tournamentSql = "
         (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.tournament_id AND participation_status = 'qualified_for_draw') AS qualified_count,
         (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id AND status IN ('completed', 'walkover')) AS completed_matches_count,
         (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id) AS total_matches_count,
+        (SELECT COUNT(*) FROM matches WHERE tournament_id = t.tournament_id AND group_id IS NULL) AS playoff_matches_count,
         (SELECT COUNT(*) FROM tournament_days WHERE tournament_id = t.tournament_id) AS tournament_days_count,
         (SELECT COUNT(*) FROM tournament_groups WHERE tournament_id = t.tournament_id) AS group_count,
         (SELECT COALESCE(MAX(round_number), 0) FROM matches WHERE tournament_id = t.tournament_id) AS current_round
@@ -2021,11 +2020,14 @@ $csrfToken = generateCsrfToken();
             const request = (next, title, beforeApply = null) => showPreview({...originalValues(), ...next}, title, values => { if (beforeApply) beforeApply(values); commit(values); });
             const command = commandName => {
                 const current = originalValues();
+                if (commandName !== 'test-now') {
+                    const demoField = form.querySelector('[name="demo_mode"]');
+                    if (demoField) demoField.value = '0';
+                }
                 if (commandName === 'test-now') {
                     const now = roundedNow(); const base = format(now);
                     const demoField = form.querySelector('[name="demo_mode"]');
-                    if (demoField) demoField.value = '1';
-                    request({ registration_start: base, registration_end: addMinutes(base, 15), roster_lock_at: addMinutes(base, 20), checkin_open_at: addMinutes(base, 25), checkin_close_at: addMinutes(base, 35), start_date: addMinutes(base, 40), end_date: addMinutes(base, 120) }, 'ทดสอบตอนนี้ (สำหรับทดสอบ)');
+                    request({ registration_start: base, registration_end: addMinutes(base, 15), roster_lock_at: addMinutes(base, 20), checkin_open_at: addMinutes(base, 25), checkin_close_at: addMinutes(base, 35), start_date: addMinutes(base, 40), end_date: addMinutes(base, 120) }, 'ทดสอบตอนนี้ (สำหรับทดสอบ)', () => { if (demoField) demoField.value = '1'; });
                 } else if (commandName === 'open-registration') {
                     const now = format(roundedNow()); const next = { registration_start: now };
                     if (!current.registration_end || current.registration_end <= now) next.registration_end = addMinutes(now, 60);
@@ -2828,7 +2830,7 @@ $csrfToken = generateCsrfToken();
                                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-sm">
                                             <i class="fa-solid fa-sitemap"></i> จัดสายอัตโนมัติ
                                         </button>
-                                    <?php elseif ($t['status'] == 'bracket_generated' && $t['format'] == 'group_playoff'): ?>
+                                    <?php elseif (in_array($t['status'], ['bracket_generated', 'ongoing'], true) && $t['format'] == 'group_playoff' && (int) $t['group_count'] > 0 && (int) $t['playoff_matches_count'] === 0): ?>
                                         <form method="POST" onsubmit="return confirm('ยืนยันสร้างสาย Playoff จากอันดับ Group?')">
                                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>">
                                             <input type="hidden" name="action" value="generate_playoff">

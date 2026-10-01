@@ -1,5 +1,9 @@
 <?php
-// Local-only demo mode. It bypasses clock windows, not workflow validation.
+// Temporary hosted demo access for pre-launch testing. Disable after testing.
+if (!defined('ALLOW_HOSTED_TOURNAMENT_DEMO')) {
+    define('ALLOW_HOSTED_TOURNAMENT_DEMO', true);
+}
+
 if (!defined('ENABLE_TOURNAMENT_DEMO_MODE')) {
     define('ENABLE_TOURNAMENT_DEMO_MODE', false);
 }
@@ -8,8 +12,10 @@ function isTournamentDemoEnvironment(): bool
 {
     $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? ''));
     $host = preg_replace('/:\d+$/', '', $host);
-    return in_array($host, ['localhost', '127.0.0.1', '::1'], true)
-        && (ENABLE_TOURNAMENT_DEMO_MODE || PHP_SAPI !== 'cli');
+    $isLocal = in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+
+    return ALLOW_HOSTED_TOURNAMENT_DEMO
+        || ($isLocal && (ENABLE_TOURNAMENT_DEMO_MODE || PHP_SAPI !== 'cli'));
 }
 
 function isDemoTournament(array $tournament): bool

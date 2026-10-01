@@ -112,7 +112,7 @@ function generateSingleEliminationBracket($pdo, $tournamentId)
         if (count($categoryTeamIds) >= 2) {
             $categoryId = $categoryTeamIds[0]['category_id'] ?? null;
             $categoryIds = array_column($categoryTeamIds, 'competitor_id');
-            $rounds = generateEliminationForCategory($pdo, $tournamentId, $categoryIds, $bestOf, 'single_' . $category, $categoryId);
+            $rounds = generateEliminationForCategory($pdo, $tournamentId, $categoryIds, $bestOf, 'single', $categoryId);
             if ($rounds > $maxRounds) {
                 $maxRounds = $rounds;
             }
@@ -608,6 +608,7 @@ function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
 
     if (!isset($match['round_number'], $match['match_index'])) return;
     if (!empty($match['group_id'])) {
+        maybeAutoGenerateGroupPlayoff($pdo, (int) $match['tournament_id']);
         return;
     }
 
@@ -698,7 +699,4 @@ function advanceMatchResult($pdo, $matchId, $winnerId, $loserId = null)
         resolveByeIfNeeded($pdo, $loserNextMatchId);
     }
 
-    if (!empty($match['group_id'])) {
-        maybeAutoGenerateGroupPlayoff($pdo, (int) $match['tournament_id']);
-    }
 }
