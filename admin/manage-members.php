@@ -110,7 +110,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = trim($_POST['username'] ?? '');
             $email = trim($_POST['email'] ?? '');
             $displayName = trim($_POST['display_name'] ?? '');
-            $realName = trim($_POST['real_name'] ?? '');
             $gender = trim($_POST['gender'] ?? '');
             $birthDate = trim($_POST['birth_date'] ?? '');
             $province = trim($_POST['province'] ?? '');
@@ -126,11 +125,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $playerStmt->execute(['id' => $userId]);
                     $playerId = $playerStmt->fetchColumn();
                     if ($playerId) {
-                        $pdo->prepare('UPDATE players SET display_name = :display_name, real_name = :real_name,
+                        $pdo->prepare('UPDATE players SET display_name = :display_name,
                             gender = :gender, birth_date = :birth_date, province = :province WHERE player_id = :player_id')
                             ->execute([
                                 'display_name' => $displayName,
-                                'real_name' => $realName !== '' ? $realName : null,
                                 'gender' => $gender !== '' ? $gender : null,
                                 'birth_date' => $birthDate !== '' ? $birthDate : null,
                                 'province' => $province !== '' ? $province : null,
@@ -337,7 +335,7 @@ $lastLoginGroup = $supportsLastLoginAt ? ', u.last_login_at' : '';
 $sql = "
     SELECT u.user_id, u.username, u.email, u.role, u.status, u.created_at, {$lastLoginSelect},
         u.suspended_at, u.suspended_by, suspended_admin.username AS suspended_by_username, u.suspension_reason, u.reactivated_at,
-        p.player_id AS player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province, p.avatar_path,
+        p.player_id AS player_id, p.display_name, p.gender, p.birth_date, p.province, p.avatar_path,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN t.name END ORDER BY t.name SEPARATOR ', ') AS team_names,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN t.team_id END ORDER BY t.name SEPARATOR ',') AS team_ids,
         GROUP_CONCAT(DISTINCT CASE WHEN tm.is_active = 1 THEN g.name END ORDER BY g.name SEPARATOR ', ') AS game_names,
@@ -357,7 +355,7 @@ $sql = "
 ";
 $params = [];
 if ($q !== '') {
-    $sql .= " AND (u.username LIKE :q OR u.email LIKE :q OR p.display_name LIKE :q OR p.real_name LIKE :q
+    $sql .= " AND (u.username LIKE :q OR u.email LIKE :q OR p.display_name LIKE :q
         OR g.name LIKE :q
         OR EXISTS (SELECT 1 FROM team_members tm2 JOIN teams t2 ON t2.team_id = tm2.team_id
             WHERE tm2.player_id = p.player_id AND tm2.is_active = 1
@@ -426,7 +424,7 @@ if ($profileFilter === 'none') {
         AND p.ever_competed = 0";
 }
 $sql .= " GROUP BY u.user_id, u.username, u.email, u.role, u.status, u.created_at{$lastLoginGroup}, suspended_admin.username,
-    p.player_id, p.display_name, p.real_name, p.gender, p.birth_date, p.province, p.avatar_path
+    p.player_id, p.display_name, p.gender, p.birth_date, p.province, p.avatar_path
     ORDER BY u.created_at DESC";
 
 $countSql = preg_replace('/^\s*SELECT.*?FROM users u/s', 'SELECT COUNT(DISTINCT u.user_id) FROM users u', $sql);
@@ -465,7 +463,7 @@ if ($teamIds) {
     $teamStmt->execute(array_values($teamIds));
     while ($row = $teamStmt->fetch()) {
     $memStmt = $pdo->prepare("
-        SELECT tm.team_member_id, tm.team_id, tm.player_id, tm.in_game_role AS role_in_team, p.display_name, p.real_name, u.username
+        SELECT tm.team_member_id, tm.team_id, tm.player_id, tm.in_game_role AS role_in_team, p.display_name, u.username
         FROM team_members tm
         JOIN players p ON p.player_id = tm.player_id
         JOIN users u ON u.user_id = p.user_id
@@ -824,8 +822,8 @@ if ($flash) {
                     <table class="members-table w-full text-left text-sm text-slate-600">
                         <thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
                             <tr>
-                                <th class="p-4">สมาชิก</th>
-                                <th class="p-4">Username / Email</th>
+                                <th class="p-4">Username</th>
+                                <th class="p-4">Email</th>
                                 <th class="p-4 text-center">บทบาท</th>
                                 <th class="p-4">นักกีฬา / เกม</th>
                                 <th class="p-4">ทีมปัจจุบัน / บทบาท</th>
@@ -854,7 +852,7 @@ if ($flash) {
                                                 <i class="fa-regular fa-user"></i>
                                             </span>
                                             <span>
-                                                <span class="block"><?php echo htmlspecialchars($m['real_name'] ?: $m['username']); ?></span>
+                                                <span class="block"><?php echo htmlspecialchars($m['username']); ?></span>
                                                 <?php if (!empty($m['display_name'])): ?><span class="block text-[10px] font-normal text-slate-400"><?php echo htmlspecialchars($m['display_name']); ?></span><?php endif; ?>
                                             </span>
                                         </a>
@@ -869,8 +867,7 @@ if ($flash) {
                                 </td>
 
                                 <td class="p-4 text-xs font-medium text-slate-600">
-                                    <div><?php echo htmlspecialchars($m['username']); ?></div>
-                                    <div class="text-[11px] text-slate-400"><?php echo htmlspecialchars($m['email']); ?></div>
+                                    <div><?php echo htmlspecialchars($m['email']); ?></div>
                                 </td>
 
                                 <td class="p-4 text-center">
@@ -950,7 +947,7 @@ if ($flash) {
                                                     </form>
                                                     <div class="my-1 border-t border-slate-100"></div>
                                                     <div class="admin-action-group">สถานะบัญชี</div>
-                                                    <form method="POST" data-member-name="<?= htmlspecialchars($m['real_name'] ?: $m['username'], ENT_QUOTES) ?>" onsubmit="return <?php echo $m['status'] === 'active' ? 'openSuspendModal(this)' : "confirm('ต้องการเปิดใช้งานบัญชีนี้ใช่หรือไม่?')"; ?>">
+                                                    <form method="POST" data-member-name="<?= htmlspecialchars($m['username'], ENT_QUOTES) ?>" onsubmit="return <?php echo $m['status'] === 'active' ? 'openSuspendModal(this)' : "confirm('ต้องการเปิดใช้งานบัญชีนี้ใช่หรือไม่?')"; ?>">
                                                         <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>"><input type="hidden" name="action" value="toggle_status"><input type="hidden" name="target_status" value="<?php echo $m['status'] === 'active' ? 'suspended' : 'active'; ?>"><input type="hidden" name="user_id" value="<?php echo (int) $m['user_id']; ?>">
                                                         <button type="submit" class="admin-action-item <?php echo $m['status'] === 'active' ? 'text-red-600 hover:bg-red-50' : 'text-emerald-700 hover:bg-emerald-50'; ?>"><i class="fa-solid <?php echo $m['status'] === 'active' ? 'fa-user-slash' : 'fa-user-check'; ?>"></i><?php echo $m['status'] === 'active' ? 'ระงับบัญชี' : 'เปิดใช้งานอีกครั้ง'; ?></button>
                                                     </form>
@@ -1017,7 +1014,6 @@ if ($flash) {
                     <label class="text-xs font-bold text-slate-700">Username<input name="username" id="editMemberUsername" required class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
                     <label class="text-xs font-bold text-slate-700">Email<input type="email" name="email" id="editMemberEmail" required class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
                     <label class="text-xs font-bold text-slate-700">ชื่อในเกม<input name="display_name" id="editMemberDisplayName" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
-                    <label class="text-xs font-bold text-slate-700">ชื่อ-นามสกุล<input name="real_name" id="editMemberRealName" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
                     <label class="text-xs font-bold text-slate-700">เพศ<input name="gender" id="editMemberGender" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
                     <label class="text-xs font-bold text-slate-700">วันเกิด<input type="date" name="birth_date" id="editMemberBirthDate" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
                     <label class="text-xs font-bold text-slate-700 md:col-span-2">จังหวัด<input name="province" id="editMemberProvince" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900"></label>
@@ -1167,7 +1163,7 @@ if ($flash) {
             const rankings = rankingData[playerId] || [];
             let html = '';
             if (tab === 'overview') {
-                html = `<div class="grid grid-cols-1 md:grid-cols-3 gap-4"><div class="rounded-xl bg-slate-50 p-4 text-center"><div class="mx-auto flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-orange-100 text-2xl font-black text-brand-orange">${member.avatar_path ? `<img src="../${escapeHtml(member.avatar_path)}" alt="" class="h-full w-full object-cover">` : '<i class="fa-solid fa-user"></i>'}</div><div class="mt-3 font-bold text-slate-900">${detailValue(member.real_name || member.username)}</div><div class="text-xs text-slate-500">${detailValue(member.display_name)}</div></div><div class="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs"><div><b>Username</b><div>${detailValue(member.username)}</div></div><div><b>Email</b><div>${detailValue(member.email)}</div></div><div><b>วันเกิด</b><div>${detailValue(member.birth_date)}</div></div><div><b>เพศ</b><div>${detailValue(member.gender)}</div></div><div><b>จังหวัด</b><div>${detailValue(member.province)}</div></div><div><b>วันที่สมัคร</b><div>${detailValue(member.created_at)}</div></div><div><b>เข้าใช้งานล่าสุด</b><div>${detailValue(member.last_login_at)}</div></div><div><b>สถานะบัญชี</b><div>${detailValue(member.status)}</div></div></div></div>`;
+                html = `<div class="grid grid-cols-1 md:grid-cols-3 gap-4"><div class="rounded-xl bg-slate-50 p-4 text-center"><div class="mx-auto flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-orange-100 text-2xl font-black text-brand-orange">${member.avatar_path ? `<img src="../${escapeHtml(member.avatar_path)}" alt="" class="h-full w-full object-cover">` : '<i class="fa-solid fa-user"></i>'}</div><div class="mt-3 font-bold text-slate-900">${detailValue(member.username)}</div><div class="text-xs text-slate-500">${detailValue(member.display_name)}</div></div><div class="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs"><div><b>Username</b><div>${detailValue(member.username)}</div></div><div><b>Email</b><div>${detailValue(member.email)}</div></div><div><b>วันเกิด</b><div>${detailValue(member.birth_date)}</div></div><div><b>เพศ</b><div>${detailValue(member.gender)}</div></div><div><b>จังหวัด</b><div>${detailValue(member.province)}</div></div><div><b>วันที่สมัคร</b><div>${detailValue(member.created_at)}</div></div><div><b>เข้าใช้งานล่าสุด</b><div>${detailValue(member.last_login_at)}</div></div><div><b>สถานะบัญชี</b><div>${detailValue(member.status)}</div></div></div></div>`;
             } else if (tab === 'teams') {
                 html = teams.length ? `<div class="space-y-3">${teams.map(team => `<div class="rounded-xl border border-slate-200 p-4"><div class="flex items-center justify-between gap-3"><div><b class="text-slate-900">${detailValue(team.team_name)}</b><div class="text-xs text-slate-500">${detailValue(team.game_name)}</div></div><span class="rounded-full px-2 py-1 text-[10px] font-bold ${Number(team.is_active) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${Number(team.is_active) ? 'สมาชิกปัจจุบัน' : 'สิ้นสุดแล้ว'}</span></div><div class="mt-2 text-xs text-slate-600">บทบาท: ${detailValue(team.member_roles || team.in_game_role)}<br>เข้าร่วม: ${detailValue(team.joined_at)} | ออกจากทีม: ${detailValue(team.left_at)}</div><button type="button" onclick="openTeamModal(${Number(team.team_id)})" class="mt-3 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"><i class="fa-solid fa-users"></i> เปิดรายละเอียดทีม</button></div>`).join('')}</div>` : '<div class="rounded-xl bg-slate-50 p-8 text-center text-slate-500">ยังไม่มีประวัติทีม</div>';
             } else if (tab === 'tournaments') {
@@ -1260,7 +1256,6 @@ if ($flash) {
             document.getElementById('editMemberUsername').value = member.username || '';
             document.getElementById('editMemberEmail').value = member.email || '';
             document.getElementById('editMemberDisplayName').value = member.display_name || '';
-            document.getElementById('editMemberRealName').value = member.real_name || '';
             document.getElementById('editMemberGender').value = member.gender || '';
             document.getElementById('editMemberBirthDate').value = member.birth_date || '';
             document.getElementById('editMemberProvince').value = member.province || '';

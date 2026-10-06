@@ -71,11 +71,10 @@ $selectedGameName = '';
 $selectedGameStmt = $pdo->prepare('SELECT name FROM games WHERE game_id = :game_id LIMIT 1');
 $selectedGameStmt->execute(['game_id' => $gameId]);
 $selectedGameName = trim((string) $selectedGameStmt->fetchColumn());
-$gameFamilyName = trim((string) preg_replace('/\s*-\s*รุ่น.*$/u', '', $selectedGameName));
 $rankingGameIds = [$gameId];
-if ($gameFamilyName !== '') {
-    $familyStmt = $pdo->prepare('SELECT game_id FROM games WHERE name LIKE :family_name');
-    $familyStmt->execute(['family_name' => $gameFamilyName . '%']);
+if ($selectedGameName !== '') {
+    $familyStmt = $pdo->prepare('SELECT game_id FROM games WHERE name = :game_name');
+    $familyStmt->execute(['game_name' => $selectedGameName]);
     $rankingGameIds = array_values(array_unique(array_map('intval', $familyStmt->fetchAll(PDO::FETCH_COLUMN))));
 }
 $rankingGameIds = array_values(array_filter($rankingGameIds, static fn (int $id): bool => $id > 0));
@@ -145,9 +144,9 @@ if ($isOpenGame) {
 $search = trim($_GET['search'] ?? '');
 $categoryOptions = $isOpenGame ? null : $pdo->prepare($type === 'player'
     ? "SELECT DISTINCT CASE WHEN LOWER(TRIM(category)) IN ('male', 'female') THEN LOWER(TRIM(category)) ELSE 'open' END AS category
-       FROM player_rankings WHERE game_id IN ($rankingGameIdList) AND LOWER(TRIM(category)) <> 'open' ORDER BY category"
+       FROM player_rankings WHERE game_id IN ($rankingGameIdList) AND LOWER(TRIM(category)) IN ('male', 'female') ORDER BY category"
     : "SELECT DISTINCT CASE WHEN LOWER(TRIM(category)) IN ('male', 'female') THEN LOWER(TRIM(category)) ELSE 'open' END AS category
-       FROM team_rankings WHERE game_id IN ($rankingGameIdList) AND LOWER(TRIM(category)) <> 'open' ORDER BY category");
+       FROM team_rankings WHERE game_id IN ($rankingGameIdList) AND LOWER(TRIM(category)) IN ('male', 'female') ORDER BY category");
 $categoryOptions = $categoryOptions ? (function ($stmt) {
     $stmt->execute();
     return $stmt->fetchAll(PDO::FETCH_COLUMN);
@@ -169,14 +168,9 @@ if ($type === 'team') {
                 WHERE rh.game_id IN ($rankingGameIdList)
                   AND LOWER(TRIM(rh.category)) = 'open'
             ";
-            $params = [];
-            if ($search !== '') {
-                $sql .= " AND t.name LIKE :search";
-                $params['search'] = "%{$search}%";
-            }
             $sql .= " GROUP BY t.team_id, t.name, t.logo_path ORDER BY total_points DESC, wins DESC";
             $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
+            $stmt->execute();
             $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
             goto rankings_loaded;
         }
@@ -188,25 +182,21 @@ if ($type === 'team') {
                    $teamCategorySql AS team_category,
                    SUM(tr.points) AS total_points, SUM(tr.matches_played) AS matches_played,
                    SUM(tr.wins) AS wins, SUM(tr.losses) AS losses
-            FROM team_rankings tr
-            JOIN teams t ON t.team_id = tr.team_id
-            WHERE tr.game_id IN ($rankingGameIdList)
+                   FROM team_rankings tr
+                   JOIN teams t ON t.team_id = tr.team_id
+                   WHERE tr.game_id IN ($rankingGameIdList)
         ";
-        $params = [];
 
         if ($category !== 'all' && !empty($category)) {
-            $sql .= " AND CASE WHEN LOWER(TRIM(tr.category)) IN ('male', 'female') THEN LOWER(TRIM(tr.category)) ELSE 'open' END = :category";
-            $params['category'] = $category;
-        }
-        if ($search !== '') {
-            $sql .= " AND t.name LIKE :search";
-            $params['search'] = "%{$search}%";
+                   $sql .= " AND CASE WHEN LOWER(TRIM(tr.category)) IN ('male', 'female') THEN LOWER(TRIM(tr.category)) ELSE 'open' END = :category";
+        } else {
+            $sql .= " AND LOWER(TRIM(tr.category)) IN ('male', 'female')";
         }
 
         $sql .= " GROUP BY t.team_id, t.name, t.logo_path, $teamCategorySql";
         $sql .= " ORDER BY total_points DESC, wins DESC";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
+        $stmt->execute($category !== 'all' && !empty($category) ? ['category' => $category] : []);
         $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
         rankings_loaded:
     }
@@ -224,14 +214,9 @@ if ($type === 'team') {
                 WHERE rh.game_id IN ($rankingGameIdList)
                   AND LOWER(TRIM(rh.category)) = 'open'
             ";
-            $params = [];
-            if ($search !== '') {
-                $sql .= " AND p.display_name LIKE :search";
-                $params['search'] = "%{$search}%";
-            }
             $sql .= " GROUP BY p.player_id, p.display_name, p.avatar_path ORDER BY total_points DESC, wins DESC";
             $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
+            $stmt->execute();
             $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
             goto rankings_loaded_players;
         }
@@ -247,24 +232,31 @@ if ($type === 'team') {
             JOIN players p ON p.player_id = pr.player_id
             WHERE pr.game_id IN ($rankingGameIdList)
         ";
-        $params = [];
-
-        if ($search !== '') {
-            $sql .= " AND p.display_name LIKE :search";
-            $params['search'] = "%{$search}%";
-        }
 
         if ($category !== 'all' && $category !== '') {
-            $sql .= " AND CASE WHEN LOWER(TRIM(pr.category)) IN ('male', 'female') THEN LOWER(TRIM(pr.category)) ELSE 'open' END = :category";
-            $params['category'] = $category;
+                   $sql .= " AND CASE WHEN LOWER(TRIM(pr.category)) IN ('male', 'female') THEN LOWER(TRIM(pr.category)) ELSE 'open' END = :category";
+        } else {
+            $sql .= " AND LOWER(TRIM(pr.category)) IN ('male', 'female')";
         }
         $sql .= " GROUP BY p.player_id, p.display_name, p.avatar_path, $playerCategorySql";
         $sql .= " ORDER BY total_points DESC, wins DESC";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
+        $stmt->execute($category !== 'all' && $category !== '' ? ['category' => $category] : []);
         $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
         rankings_loaded_players:
     }
+}
+
+if ($search !== '') {
+    $matchingRankings = [];
+    foreach ($rankings as $index => $ranking) {
+        $rankingName = $type === 'team' ? $ranking['team_name'] : $ranking['display_name'];
+        if (mb_stripos((string) $rankingName, $search, 0, 'UTF-8') !== false) {
+                   $ranking['rank'] = $index + 1;
+                   $matchingRankings[] = $ranking;
+        }
+    }
+    $rankings = $matchingRankings;
 }
 
 if ($type === 'player' && $rankings) {
@@ -294,10 +286,12 @@ if ($type === 'player' && $rankings) {
 
 $rankingRowsPerPage = 10;
 $rankingPage = max(1, (int) ($_GET['ranking_page'] ?? 1));
-$rankingListCount = max(0, count($rankings) - 3);
+$hasSearch = $search !== '';
+$rankingStart = $hasSearch ? 0 : 3;
+$rankingListCount = max(0, count($rankings) - $rankingStart);
 $rankingPageCount = max(1, (int) ceil($rankingListCount / $rankingRowsPerPage));
 $rankingPage = min($rankingPage, $rankingPageCount);
-$rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerPage), $rankingRowsPerPage);
+$rankingRows = array_slice($rankings, $rankingStart + (($rankingPage - 1) * $rankingRowsPerPage), $rankingRowsPerPage);
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
@@ -896,7 +890,7 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
         </section>
 
         <!-- TOP 3 CYBER PODIUMS -->
-        <?php if (count($rankings) > 0): ?>
+        <?php if (!$hasSearch && count($rankings) > 0): ?>
             <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 w-full">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-end mb-12">
 
@@ -996,10 +990,10 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                             <?php if (empty($rankings)): ?>
                                 <tr>
                                     <td colspan="7" class="p-10 text-center text-gray-400 font-normal">
-                                        ยังไม่มีข้อมูลตารางคะแนนในเกมหรือหมวดหมู่นี้
+                                        <?= $hasSearch ? 'ไม่พบผลการค้นหาที่ตรงกัน' : 'ยังไม่มีข้อมูลตารางคะแนนในเกมหรือหมวดหมู่นี้' ?>
                                     </td>
                                 </tr>
-                            <?php elseif (count($rankings) <= 3): ?>
+                            <?php elseif (!$hasSearch && count($rankings) <= 3): ?>
                                 <tr id="noMoreRankingRow">
                                     <td colspan="7" class="p-10 text-center text-gray-400 font-normal">
                                         แสดงอันดับครบถ้วนด้านบนแล้ว
@@ -1007,7 +1001,9 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                 </tr>
                             <?php else: ?>
                                 <?php foreach ($rankingRows as $index => $r):
-                                    $actualRank = (($rankingPage - 1) * $rankingRowsPerPage) + $index + 4;
+                                    $actualRank = $hasSearch
+                                        ? (int) ($r['rank'] ?? ($index + 1))
+                                        : (($rankingPage - 1) * $rankingRowsPerPage) + $index + 4;
                                     $totalMatches = (int) $r['matches_played'];
                                     $wins = (int) $r['wins'];
                                     $winRate = $totalMatches > 0 ? round(($wins / $totalMatches) * 100, 1) : 0;
@@ -1079,9 +1075,6 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
                                     </tr>
                                 <?php endforeach; ?>
                             <?php endif; ?>
-                            <tr id="noSearchResultRow" class="hidden">
-                                <td colspan="7" class="p-10 text-center text-gray-400 font-normal">ไม่พบผลการค้นหาที่ตรงกัน</td>
-                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -1162,32 +1155,23 @@ $rankingRows = array_slice($rankings, 3 + (($rankingPage - 1) * $rankingRowsPerP
 
             const searchInput = document.getElementById('rankingSearchInput');
             if (searchInput) {
-                searchInput.addEventListener('input', filterRankingTable);
-                filterRankingTable();
+                let searchTimeout;
+                searchInput.addEventListener('input', () => {
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(() => {
+                        const params = new URLSearchParams(window.location.search);
+                        const search = searchInput.value.trim();
+                        if (search) {
+                            params.set('search', search);
+                        } else {
+                            params.delete('search');
+                        }
+                        params.delete('ranking_page');
+                        window.location.search = params.toString();
+                    }, 350);
+                });
             }
         });
-
-        function filterRankingTable() {
-            const input = document.getElementById('rankingSearchInput');
-            const filter = input.value.toLowerCase().trim();
-            const rows = document.querySelectorAll('#rankingTable tbody tr.ranking-row');
-            const noResultRow = document.getElementById('noSearchResultRow');
-            let visibleCount = 0;
-
-            rows.forEach(row => {
-                const searchName = row.getAttribute('data-search-name');
-                if (searchName && searchName.includes(filter)) {
-                    row.style.display = '';
-                    visibleCount++;
-                } else {
-                    row.style.display = 'none';
-                }
-            });
-
-            if (noResultRow) {
-                noResultRow.classList.toggle('hidden', visibleCount !== 0 || filter === '');
-            }
-        }
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>
 <script src="../assets/js/flash-messages.js" defer></script>

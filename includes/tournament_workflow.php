@@ -25,13 +25,15 @@ function getTournamentWorkflowState(PDO $pdo, int $tournamentId, ?DateTimeImmuta
     $matchStmt = $pdo->prepare("SELECT COUNT(*) AS total_matches,
             SUM(CASE WHEN status IN ('completed', 'walkover') OR result_type = 'bye' THEN 1 ELSE 0 END) AS finished_matches,
             SUM(CASE WHEN status NOT IN ('completed', 'walkover') AND result_type <> 'bye'
-                AND NOT (bracket_type = 'grand_final_reset' AND EXISTS (
+                THEN 1 ELSE 0 END) AS pending_matches
+        FROM matches
+        WHERE tournament_id = :tournament_id
+          AND (bracket_type <> 'grand_final_reset' OR EXISTS (
                     SELECT 1 FROM matches parent_match
                     WHERE parent_match.reset_match_id = matches.match_id
                         AND parent_match.status IN ('completed', 'walkover')
-                        AND parent_match.winner_team_id = parent_match.team1_id
-                )) THEN 1 ELSE 0 END) AS pending_matches
-        FROM matches WHERE tournament_id = :tournament_id");
+                        AND parent_match.winner_team_id = parent_match.team2_id
+                ))");
     $matchStmt->execute(['tournament_id' => $tournamentId]);
     $matches = $matchStmt->fetch(PDO::FETCH_ASSOC) ?: [];
     $totalMatches = (int) ($matches['total_matches'] ?? 0);
@@ -71,11 +73,40 @@ function workflowTournamentReadyToComplete(PDO $pdo, int $tournamentId, array $c
     if ($totalMatches <= 0 || $pendingMatches > 0) return false;
     if (!$categories) return false;
 
+    $modeStmt = $pdo->prepare('SELECT scoring_mode FROM tournaments WHERE tournament_id = :tournament_id');
+    $modeStmt->execute(['tournament_id' => $tournamentId]);
+    if ($modeStmt->fetchColumn() === 'points') {
+        $finalStmt = $pdo->prepare("SELECT m.winner_team_id
+            FROM matches m
+            JOIN tournament_groups tg ON tg.tournament_group_id = m.group_id
+            WHERE m.tournament_id = :tournament_id
+              AND m.tournament_category_id = :category_id
+              AND tg.stage_type = 'final'
+              AND m.result_type = 'points_round'
+              AND m.status = 'completed'
+            ORDER BY m.round_number DESC
+            LIMIT 1");
+        foreach ($categories as $category) {
+            $finalStmt->execute([
+                'tournament_id' => $tournamentId,
+                'category_id' => (int) $category['tournament_category_id'],
+            ]);
+            if ((int) $finalStmt->fetchColumn() <= 0) return false;
+        }
+        return true;
+    }
+
     $stmt = $pdo->prepare("SELECT tournament_category_id, MAX(round_number) AS final_round,
             SUM(CASE WHEN status IN ('completed', 'walkover') OR result_type = 'bye' THEN 1 ELSE 0 END) AS finished_matches,
             COUNT(*) AS total_matches
         FROM matches
         WHERE tournament_id = :tournament_id
+          AND (bracket_type <> 'grand_final_reset' OR EXISTS (
+              SELECT 1 FROM matches parent_match
+              WHERE parent_match.reset_match_id = matches.match_id
+                AND parent_match.status IN ('completed', 'walkover')
+                AND parent_match.winner_team_id = parent_match.team2_id
+          ))
         GROUP BY tournament_category_id");
     $stmt->execute(['tournament_id' => $tournamentId]);
     $byCategory = [];
@@ -84,15 +115,24 @@ function workflowTournamentReadyToComplete(PDO $pdo, int $tournamentId, array $c
     $winnerStmt = $pdo->prepare("SELECT winner_team_id, status, result_type
         FROM matches
         WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id
-        ORDER BY CASE
+        ORDER BY CASE WHEN group_id IS NULL THEN 0 ELSE 1 END,
+        CASE
             WHEN bracket_type = 'grand_final_reset' AND status IN ('completed', 'walkover') THEN 0
             WHEN bracket_type = 'grand_final' AND status IN ('completed', 'walkover') THEN 1
             ELSE 2
         END, round_number DESC, match_index DESC LIMIT 1");
+    $stageStmt = $pdo->prepare('SELECT
+            SUM(CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) AS group_matches,
+            SUM(CASE WHEN group_id IS NULL THEN 1 ELSE 0 END) AS playoff_matches
+        FROM matches
+        WHERE tournament_id = :tournament_id AND tournament_category_id = :category_id');
     foreach ($categories as $category) {
         $categoryId = (int) $category['tournament_category_id'];
         $row = $byCategory[$categoryId] ?? null;
         if (!$row || (int) $row['total_matches'] <= 0 || (int) $row['finished_matches'] !== (int) $row['total_matches']) return false;
+        $stageStmt->execute(['tournament_id' => $tournamentId, 'category_id' => $categoryId]);
+        $stages = $stageStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        if ((int) ($stages['group_matches'] ?? 0) > 0 && (int) ($stages['playoff_matches'] ?? 0) === 0) return false;
         $winnerStmt->execute(['tournament_id' => $tournamentId, 'category_id' => $categoryId]);
         $final = $winnerStmt->fetch(PDO::FETCH_ASSOC);
         if (!$final || (int) ($final['winner_team_id'] ?? 0) <= 0) return false;
@@ -152,7 +192,8 @@ function canRecordMatch(PDO $pdo, int $tournamentId, int $matchId): bool
     if (!$state['exists'] || in_array($state['status'], ['completed', 'cancelled'], true)) return false;
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM matches
         WHERE match_id = :match_id AND tournament_id = :tournament_id
-          AND status NOT IN ('completed', 'walkover')");
+          AND status IN ('scheduled', 'ongoing')
+          AND team1_id IS NOT NULL AND team2_id IS NOT NULL");
     $stmt->execute(['match_id' => $matchId, 'tournament_id' => $tournamentId]);
     return (int) $stmt->fetchColumn() === 1;
 }

@@ -329,14 +329,13 @@ function createPlayer($userId, $displayName, $gender, $birthDate) {
     global $pdo;
     
     $stmt = $pdo->prepare("
-        INSERT INTO players (user_id, display_name, real_name, gender, birth_date, eligibility_status)
-        VALUES (:user_id, :display_name, :real_name, :gender, :birth_date, :eligibility_status)
+        INSERT INTO players (user_id, display_name, gender, birth_date, eligibility_status)
+        VALUES (:user_id, :display_name, :gender, :birth_date, :eligibility_status)
     ");
     
     $stmt->execute([
         'user_id' => $userId,
         'display_name' => $displayName,
-        'real_name' => $displayName,
         'gender' => $gender,
         'birth_date' => $birthDate,
         'eligibility_status' => 'verified'

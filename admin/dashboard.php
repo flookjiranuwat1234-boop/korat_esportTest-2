@@ -3,6 +3,7 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/tournament_categories.php';
+require_once '../includes/tournament_workflow.php';
 requireRole('admin');
 ensureTournamentCategorySchema($pdo);
 
@@ -140,9 +141,14 @@ $tournamentCountYear = $pdo->prepare("SELECT COUNT(*) FROM tournaments WHERE YEA
 $tournamentCountYear->execute(['y' => $selectedYear]);
 $tournamentCountYear = $tournamentCountYear->fetchColumn();
 
-$ongoingCountYear = $pdo->prepare("SELECT COUNT(*) FROM tournaments WHERE YEAR(created_at) = :y AND status = 'ongoing'");
-$ongoingCountYear->execute(['y' => $selectedYear]);
-$ongoingCountYear = $ongoingCountYear->fetchColumn();
+$ongoingTournamentStmt = $pdo->prepare("SELECT tournament_id
+    FROM tournaments WHERE YEAR(created_at) = :y AND status = 'ongoing'");
+$ongoingTournamentStmt->execute(['y' => $selectedYear]);
+$ongoingCountYear = 0;
+foreach ($ongoingTournamentStmt->fetchAll(PDO::FETCH_COLUMN) as $ongoingTournamentId) {
+    $workflowState = getTournamentWorkflowState($pdo, (int) $ongoingTournamentId, $dashboardNow);
+    if (($workflowState['computed_status'] ?? '') === 'ongoing') $ongoingCountYear++;
+}
 
 $monthlyTournamentCounts = array_fill(1, 12, 0);
 $monthlyStmt = $pdo->prepare("SELECT MONTH(start_date) AS month_number, COUNT(*) AS tournament_count
@@ -186,18 +192,24 @@ $tournamentsByYear = $pdo->prepare("
     WHERE YEAR(t.created_at) = :y
       AND (:search = '' OR t.name LIKE :search_like)
       AND (:game_id = 0 OR t.game_id = :game_id)
-      AND (:status = '' OR t.status = :status)
       AND (:month = 0 OR MONTH(t.start_date) = :month)
       AND (:category = '' OR EXISTS (SELECT 1 FROM tournament_categories fc WHERE fc.tournament_id = t.tournament_id AND fc.is_active = 1 AND (fc.category_code = :category OR fc.label = :category)))
     ORDER BY t.created_at DESC
 ");
-$tournamentsByYear->execute(['y' => $selectedYear, 'search' => $dashboardSearch, 'search_like' => '%' . $dashboardSearch . '%', 'game_id' => $dashboardGame, 'status' => $dashboardStatus, 'month' => $dashboardMonth, 'category' => $dashboardCategory]);
+$tournamentsByYear->execute(['y' => $selectedYear, 'search' => $dashboardSearch, 'search_like' => '%' . $dashboardSearch . '%', 'game_id' => $dashboardGame, 'month' => $dashboardMonth, 'category' => $dashboardCategory]);
 $tournamentsByYear = $tournamentsByYear->fetchAll();
 foreach ($tournamentsByYear as &$tournament) {
+    $workflowState = getTournamentWorkflowState($pdo, (int) $tournament['tournament_id'], $dashboardNow);
+    $tournament['display_status'] = $workflowState['computed_status'] ?? $tournament['status'];
     $tournament['category_badges'] = renderDashboardCategoryBadges($tournament['category_labels'] ?? '');
     $tournament['category_labels'] = displayDashboardCategoryLabels($tournament['category_labels'] ?? '');
 }
 unset($tournament);
+if ($dashboardStatus !== '') {
+    $tournamentsByYear = array_values(array_filter($tournamentsByYear, static function (array $tournament) use ($dashboardStatus): bool {
+        return ($tournament['display_status'] ?? $tournament['status']) === $dashboardStatus;
+    }));
+}
 $dashboardTournamentPreview = array_slice($tournamentsByYear, 0, 5);
 
 $pendingRegs = $pdo->query("
@@ -780,11 +792,13 @@ $openTournaments = $pdo->query("
                                                 $statusLabels = [
                                                     'registration_open' => ['เปิดรับสมัคร', 'bg-emerald-100 text-emerald-700 border-emerald-200'],
                                                     'ongoing' => ['กำลังแข่ง', 'bg-violet-100 text-violet-700 border-violet-200'],
+                                                    'ready_to_close' => ['พร้อมปิดการแข่งขัน', 'bg-sky-100 text-sky-700 border-sky-200'],
                                                     'bracket_generated' => ['จัดสายแล้ว', 'bg-sky-100 text-sky-700 border-sky-200'],
                                                     'checkin_open' => ['กำลังเช็กอิน', 'bg-blue-100 text-blue-700 border-blue-200'],
                                                     'completed' => ['จบแล้ว', 'bg-slate-100 text-slate-600 border-slate-200'],
                                                 ];
-                                                $label = $statusLabels[$t['status']] ?? [$t['status'], 'bg-slate-100 text-slate-600 border-slate-200'];
+                                                $displayStatus = $t['display_status'] ?? $t['status'];
+                                                $label = $statusLabels[$displayStatus] ?? [$displayStatus, 'bg-slate-100 text-slate-600 border-slate-200'];
                                             ?>
                                             <span class="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase border <?php echo $label[1]; ?>"><?php echo htmlspecialchars($label[0]); ?></span>
                                         </td>

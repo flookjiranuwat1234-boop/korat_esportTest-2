@@ -8,7 +8,7 @@ require_once '../includes/tournament_registration.php';
 require_once '../includes/tournament_demo.php';
 
 $isLoggedIn = isLoggedIn();
-if (!$isLoggedIn && ($_SERVER['REQUEST_METHOD'] === 'POST' || ($_GET['action'] ?? '') === 'search_players')) {
+if (!$isLoggedIn && ($_SERVER['REQUEST_METHOD'] === 'POST' || in_array($_GET['action'] ?? '', ['search_players', 'team_roster_eligibility'], true))) {
     requireLogin();
 }
 
@@ -26,10 +26,109 @@ if (($_GET['action'] ?? '') === 'search_players') {
     $tournamentId = filter_input(INPUT_GET, 'tournament_id', FILTER_VALIDATE_INT);
     $categoryId = filter_input(INPUT_GET, 'category_id', FILTER_VALIDATE_INT);
     $term = trim((string) ($_GET['q'] ?? ''));
+    $searchTeamId = (int) ($_GET['team_id'] ?? 0);
+    if ($searchTeamId > 0) {
+        $category = $categoryId ? tournamentRegistrationCategory($pdo, $categoryId) : null;
+        $currentPlayerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user_id LIMIT 1');
+        $currentPlayerStmt->execute(['user_id' => (int) $_SESSION['user_id']]);
+        $searchTeamStmt = $pdo->prepare('SELECT team_id FROM teams
+            WHERE team_id = :team_id AND captain_player_id = :captain AND status = "active"
+              AND (game_id IS NULL OR game_id = :game_id)
+            LIMIT 1');
+        $searchTeamStmt->execute([
+            'team_id' => $searchTeamId,
+            'captain' => (int) $currentPlayerStmt->fetchColumn(),
+            'game_id' => (int) ($category['tournament_game_id'] ?? 0),
+        ]);
+        if (!$category || (int) $category['tournament_id'] !== (int) $tournamentId
+            || ($category['game_play_mode'] ?? '') !== 'team' || !$searchTeamStmt->fetchColumn()) {
+            http_response_code(403);
+            echo json_encode(['error' => 'ไม่สามารถค้นหาผู้เล่นสำหรับทีมนี้ได้'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
     echo json_encode(
-        $tournamentId && $categoryId ? searchTournamentPlayers($pdo, $tournamentId, $categoryId, $term) : [],
+        $tournamentId && $categoryId
+            ? searchTournamentPlayers($pdo, $tournamentId, $categoryId, $term, $searchTeamId)
+            : [],
         JSON_UNESCAPED_UNICODE
     );
+    exit;
+}
+
+if (($_GET['action'] ?? '') === 'team_roster_eligibility') {
+    header('Content-Type: application/json; charset=utf-8');
+    $tournamentId = filter_input(INPUT_GET, 'tournament_id', FILTER_VALIDATE_INT);
+    $categoryId = filter_input(INPUT_GET, 'category_id', FILTER_VALIDATE_INT);
+    $teamId = filter_input(INPUT_GET, 'team_id', FILTER_VALIDATE_INT);
+    $category = $categoryId ? tournamentRegistrationCategory($pdo, $categoryId) : null;
+    $currentPlayerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user_id LIMIT 1');
+    $currentPlayerStmt->execute(['user_id' => (int) $_SESSION['user_id']]);
+    $currentPlayerId = (int) $currentPlayerStmt->fetchColumn();
+    $teamStmt = $pdo->prepare('SELECT team_id FROM teams
+        WHERE team_id = :team_id AND captain_player_id = :captain AND status = "active"
+          AND (game_id IS NULL OR game_id = :game_id)
+        LIMIT 1');
+    $teamStmt->execute([
+        'team_id' => (int) $teamId,
+        'captain' => $currentPlayerId,
+        'game_id' => (int) ($category['tournament_game_id'] ?? 0),
+    ]);
+    if (!$category || (int) $category['tournament_id'] !== (int) $tournamentId
+        || ($category['game_play_mode'] ?? '') !== 'team' || !$teamStmt->fetchColumn()) {
+        http_response_code(403);
+        echo json_encode(['error' => 'ไม่สามารถตรวจสอบทีมนี้ได้'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $teamMembersStmt = $pdo->prepare('SELECT tm.team_member_id, tm.player_id, p.display_name,
+            p.gender, p.birth_date, u.status AS account_status
+        FROM team_members tm
+        INNER JOIN players p ON p.player_id = tm.player_id
+        INNER JOIN users u ON u.user_id = p.user_id
+        WHERE tm.team_id = :team_id AND tm.is_active = 1
+        ORDER BY tm.team_member_id');
+    $teamMembersStmt->execute(['team_id' => (int) $teamId]);
+    $teamRoster = [];
+    $eligibilityPlayers = [];
+    foreach ($teamMembersStmt->fetchAll(PDO::FETCH_ASSOC) as $member) {
+        $playerId = (int) $member['player_id'];
+        $member['roles'] = normalizeTeamRoles(getTeamMemberRoles($pdo, (int) $member['team_member_id']));
+        $member['name'] = (string) ($member['display_name'] ?: 'สมาชิกทีม');
+        $member['is_captain'] = $playerId === $currentPlayerId;
+        $teamRoster[] = $member;
+        $eligibilityPlayers[] = $playerId;
+    }
+    $playerIds = array_values(array_unique(array_filter(array_merge(
+        $eligibilityPlayers,
+        array_map(static fn($playerId): int => is_scalar($playerId) ? (int) $playerId : 0, (array) ($_GET['player_ids'] ?? []))
+    ),
+        static fn(int $playerId): bool => $playerId > 0
+    )));
+    $eligibility = [];
+    if ($playerIds) {
+        $placeholders = [];
+        $params = [];
+        foreach ($playerIds as $index => $playerId) {
+            $placeholder = ':player_' . $index;
+            $placeholders[] = $placeholder;
+            $params['player_' . $index] = $playerId;
+        }
+        $playerQuery = $pdo->prepare('SELECT p.player_id, p.gender, p.birth_date,
+                u.status AS account_status
+            FROM players p INNER JOIN users u ON u.user_id = p.user_id
+            WHERE p.player_id IN (' . implode(', ', $placeholders) . ')');
+        $playerQuery->execute($params);
+        foreach ($playerQuery->fetchAll(PDO::FETCH_ASSOC) as $player) {
+            $reason = tournamentCategoryAllowsPlayer($player, $category);
+            $eligibility[(int) $player['player_id']] = [
+                'eligible' => $reason === null,
+                'reason' => $reason,
+                'account_active' => ($player['account_status'] ?? '') === 'active',
+            ];
+        }
+    }
+    echo json_encode(['roster' => $teamRoster, 'eligibility' => $eligibility], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -72,19 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $categoryCode = (string) ($category['category_code'] ?: 'open');
                             try {
                                 $pdo->beginTransaction();
-                                $capacityStmt = $pdo->prepare('SELECT tc.max_participants, COUNT(tr.tournament_registration_id) AS registered_count
-                                    FROM tournament_categories tc
-                                    LEFT JOIN tournament_registrations tr
-                                        ON tr.tournament_category_id = tc.tournament_category_id
-                                        AND tr.status IN ("pending", "approved")
-                                    WHERE tc.tournament_category_id = :category_id
-                                    GROUP BY tc.tournament_category_id, tc.max_participants
-                                    FOR UPDATE');
-                                $capacityStmt->execute(['category_id' => $categoryId]);
-                                $capacity = $capacityStmt->fetch(PDO::FETCH_ASSOC);
-                                if (!$capacity || (int) $capacity['registered_count'] >= (int) $capacity['max_participants']) {
-                                    throw new InvalidArgumentException('รายการนี้เต็มจำนวนแล้ว');
-                                }
+                                assertTournamentRegistrationCapacity($pdo, $tournamentId, $categoryId);
                                     ensureRegistrationStatusHistoryTable($pdo);
                                     $insert = $pdo->prepare('INSERT INTO tournament_registrations (tournament_id,tournament_category_id,player_id,team_id,category,status,participation_status) VALUES (:tournament,:category,:player,NULL,:code,"pending","pending_admin_review")');
                                     $insert->execute(['tournament' => $tournamentId, 'category' => $categoryId, 'player' => (int) $player['player_id'], 'code' => $categoryCode]);
@@ -102,6 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         } elseif ($mode === 'team') {
+            $existingTeamId = (int) ($_POST['existing_team_id'] ?? 0);
             $roster = [];
             foreach ((array) ($_POST['roster'] ?? []) as $member) {
                 $roster[] = ['player_id' => (int) ($member['player_id'] ?? 0), 'roles' => (array) ($member['roles'] ?? [])];
@@ -109,7 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $logoPath = null;
             $uploadedLogo = null;
             try {
-                if (!empty($_FILES['team_logo']['tmp_name'])) {
+                if ($existingTeamId <= 0 && !empty($_FILES['team_logo']['tmp_name'])) {
                     if ($_FILES['team_logo']['error'] !== UPLOAD_ERR_OK || (int) $_FILES['team_logo']['size'] > 2 * 1024 * 1024) {
                         throw new InvalidArgumentException('ไฟล์โลโก้ไม่ถูกต้องหรือมีขนาดเกิน 2MB');
                     }
@@ -125,7 +213,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (!move_uploaded_file($_FILES['team_logo']['tmp_name'], $uploadedLogo)) throw new RuntimeException('ไม่สามารถบันทึกโลโก้');
                     $logoPath = 'assets/uploads/' . $filename;
                 }
-                saveTeamTournamentRegistration($pdo, (int) $_SESSION['user_id'], $tournamentId, $categoryId, (string) ($_POST['team_name'] ?? ''), $roster, (string) ($_POST['team_tag'] ?? ''), $logoPath);
+                saveTeamTournamentRegistration(
+                    $pdo,
+                    (int) $_SESSION['user_id'],
+                    $tournamentId,
+                    $categoryId,
+                    (string) ($_POST['team_name'] ?? ''),
+                    $roster,
+                    $logoPath,
+                    $existingTeamId > 0 ? $existingTeamId : null
+                );
                 $success = 'สมัครเข้าร่วมรายการเรียบร้อยแล้ว';
             } catch (Throwable $exception) {
                 if ($uploadedLogo && is_file($uploadedLogo)) unlink($uploadedLogo);
@@ -192,6 +289,55 @@ if ($requestedTournamentId > 0 && !$tournaments) {
 } elseif ($requestedCategoryId > 0 && $tournaments && !$categories[$requestedTournamentId]) {
     $error = 'ไม่พบหมวดการแข่งขันของรายการที่เลือก';
 }
+$teamsByTournament = [];
+if ($isLoggedIn && $tournaments) {
+    $playerStmt = $pdo->prepare('SELECT player_id FROM players WHERE user_id = :user_id LIMIT 1');
+    $playerStmt->execute(['user_id' => (int) $_SESSION['user_id']]);
+    $currentPlayerId = (int) $playerStmt->fetchColumn();
+    if ($currentPlayerId > 0) {
+        foreach ($tournaments as $tournament) {
+            if (($tournament['play_mode'] ?? '') !== 'team') continue;
+            $teamStmt = $pdo->prepare('SELECT team_id, name, logo_path, game_id, captain_player_id
+                FROM teams
+                WHERE captain_player_id = :captain AND status = "active"
+                  AND (game_id IS NULL OR game_id = :game_id)
+                  AND EXISTS (
+                    SELECT 1 FROM team_members captain_member
+                    WHERE captain_member.team_id = teams.team_id
+                      AND captain_member.player_id = :active_captain
+                      AND captain_member.is_active = 1
+                  )
+                ORDER BY name');
+            $teamStmt->execute([
+                'captain' => $currentPlayerId,
+                'game_id' => (int) $tournament['game_id'],
+                'active_captain' => $currentPlayerId,
+            ]);
+            $availableTeams = $teamStmt->fetchAll(PDO::FETCH_ASSOC);
+            $memberStmt = $pdo->prepare('SELECT tm.team_member_id, tm.player_id,
+                    p.display_name, u.status AS account_status
+                FROM team_members tm
+                INNER JOIN players p ON p.player_id = tm.player_id
+                INNER JOIN users u ON u.user_id = p.user_id
+                WHERE tm.team_id = :team_id AND tm.is_active = 1
+                ORDER BY tm.team_member_id');
+            foreach ($availableTeams as &$team) {
+                $memberStmt->execute(['team_id' => (int) $team['team_id']]);
+                $team['members'] = [];
+                foreach ($memberStmt->fetchAll(PDO::FETCH_ASSOC) as $member) {
+                    $member['player_id'] = (int) $member['player_id'];
+                    $member['roles'] = normalizeTeamRoles(getTeamMemberRoles($pdo, (int) $member['team_member_id']));
+                    $member['name'] = (string) ($member['display_name'] ?: 'สมาชิกทีม');
+                    $member['is_captain'] = (int) $member['player_id'] === $currentPlayerId;
+                    $member['account_active'] = ($member['account_status'] ?? '') === 'active';
+                    $team['members'][] = $member;
+                }
+            }
+            unset($team);
+            $teamsByTournament[(int) $tournament['tournament_id']] = $availableTeams;
+        }
+    }
+}
 ?>
 <!doctype html>
 <html lang="th">
@@ -230,6 +376,7 @@ if ($requestedTournamentId > 0 && !$tournaments) {
     <?php foreach ($tournaments as $tournament): ?>
         <?php $id = (int) $tournament['tournament_id']; ?>
         <?php $tournamentCategories = $categories[$id] ?? []; $fixedCategoryId = count($tournamentCategories) === 1 ? (int) $tournamentCategories[0]['tournament_category_id'] : 0; ?>
+        <?php $availableTeams = $teamsByTournament[$id] ?? []; ?>
         <?php $hasDescription = trim((string) ($tournament['description'] ?? '')) !== ''; ?>
         <?php $hasRules = trim((string) ($tournament['rules'] ?? '')) !== ''; ?>
         <section class="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl">
@@ -284,18 +431,21 @@ if ($requestedTournamentId > 0 && !$tournaments) {
                 <?php else: ?>
                 <form method="post" enctype="multipart/form-data" class="team-form mt-5 space-y-5" data-tournament="<?= $id; ?>">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken); ?>"><input type="hidden" name="tournament_id" value="<?= $id; ?>"><input type="hidden" name="mode" value="team">
-                    <div class="grid gap-4 sm:grid-cols-2">
+                    <label>เลือกทีมของฉัน<select name="existing_team_id" class="existing-team-select mt-1 w-full rounded-lg bg-slate-900 p-3"><option value="">สร้างทีมใหม่</option><?php foreach ($availableTeams as $team): ?><?php $teamRosterData = array_map(static fn(array $member): array => ['player_id' => (int) $member['player_id'], 'name' => $member['name'], 'roles' => $member['roles'], 'is_captain' => $member['is_captain'], 'account_active' => $member['account_active']], $team['members']); ?><option value="<?= (int) $team['team_id']; ?>" data-name="<?= htmlspecialchars($team['name'], ENT_QUOTES); ?>" data-roster="<?= htmlspecialchars(json_encode($teamRosterData, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP), ENT_QUOTES); ?>" data-captain-active="<?= in_array((int) $team['captain_player_id'], array_column($team['members'], 'player_id'), true) ? '1' : '0'; ?>"><?= htmlspecialchars($team['name']); ?><?= $team['game_id'] === null ? ' (ยังไม่ผูกเกม)' : ''; ?></option><?php endforeach; ?></select></label>
+                    <p class="existing-team-note hidden text-xs text-slate-400">แก้ไขรายชื่อและบทบาทได้ที่นี่ โดยจะบันทึกกลับทีมเดิมเมื่อสมัครสำเร็จเท่านั้น</p>
+                    <div class="new-team-fields grid gap-4 sm:grid-cols-2">
                         <label>ชื่อทีม<input name="team_name" required class="mt-1 w-full rounded-lg bg-slate-900 p-3"></label>
-                        <label>ตัวย่อทีม<input name="team_tag" required maxlength="10" pattern="[A-Za-z0-9_-]{2,10}" class="mt-1 w-full rounded-lg bg-slate-900 p-3"></label>
                         <label>โลโก้ทีม (ถ้ามี)<input type="file" name="team_logo" accept="image/jpeg,image/png,image/webp" class="mt-1 w-full rounded-lg bg-slate-900 p-3"></label>
                     </div>
                     <?php if ($fixedCategoryId): ?><input type="hidden" name="tournament_category_id" value="<?= $fixedCategoryId; ?>"><?php endif; ?>
                     <label>รุ่นการแข่งขัน<select class="category mt-1 w-full rounded-lg bg-slate-900 p-3" <?= $fixedCategoryId ? 'disabled' : ''; ?> name="<?= $fixedCategoryId ? '' : 'tournament_category_id'; ?>" required><option value="" <?= $fixedCategoryId ? '' : 'selected'; ?>>เลือกรุ่นการแข่งขัน</option><?php foreach ($tournamentCategories as $category): ?><option value="<?= (int) $category['tournament_category_id']; ?>" <?= $fixedCategoryId === (int) $category['tournament_category_id'] ? 'selected' : ''; ?> data-starters="<?= (int) $category['starters_count']; ?>" data-subs="<?= (int) $category['substitutes_count']; ?>" data-required="<?= htmlspecialchars((string) $category['checkin_required_roles']); ?>"><?= htmlspecialchars(strtolower((string) ($category['category_code'] ?? '')) === 'open' ? 'โอเพ่น' : ($category['label'] ?: $category['name'])); ?></option><?php endforeach; ?></select></label>
                     <div class="category-info text-sm text-slate-400"></div><div class="roster-warning text-xs text-amber-300"></div>
+                    <div class="new-team-roster space-y-5">
                     <input type="search" class="search w-full rounded-lg bg-slate-900 p-3" placeholder="ค้นหาผู้เล่นด้วยชื่อ Username หรือ Player ID" disabled>
                     <div class="search-results space-y-2"></div>
                     <div class="selected grid gap-4 sm:grid-cols-2"><div><h3>ผู้เล่นตัวจริง <span class="starter-count">0</span></h3><div class="starters space-y-2"></div></div><div><h3>ตัวสำรอง <span class="sub-count">0</span></h3><div class="subs space-y-2"></div></div></div>
                     <div><h3>ทีมงาน</h3><div class="staff space-y-2"></div></div>
+                    </div>
                     <button type="submit" disabled class="submit-team rounded-lg bg-orange-500 px-5 py-3 font-bold disabled:cursor-not-allowed disabled:opacity-40">ยืนยันการสมัคร</button>
                 </form>
                 <?php endif; ?>
@@ -308,19 +458,194 @@ if ($requestedTournamentId > 0 && !$tournaments) {
 document.querySelectorAll('.team-form').forEach((form) => {
     const category = form.querySelector('.category'), search = form.querySelector('.search'), results = form.querySelector('.search-results');
     const starters = form.querySelector('.starters'), subs = form.querySelector('.subs'), staff = form.querySelector('.staff');
+    const existingTeamSelect = form.querySelector('.existing-team-select');
+    const newTeamFields = form.querySelector('.new-team-fields'), newTeamRoster = form.querySelector('.new-team-roster');
+    const existingTeamNote = form.querySelector('.existing-team-note');
     let selected = new Map(), config = { starters: 0, subs: 0, required: [] };
+    let eligibilityPending = false, eligibilityFailed = false, eligibilityRequest = 0, nextIndex = 0, rosterLoadedTeamId = '';
+    const roleLabels = { manager: 'ผู้จัดการ', coach: 'โค้ช', player: 'ตัวจริง', substitute: 'สำรอง' };
+    const uiRoleToTeamRole = { starter: 'player', substitute: 'substitute', coach: 'coach', manager: 'manager' };
     const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
     const hidden = (name, value) => { const i=document.createElement('input'); i.type='hidden'; i.name=name; i.value=value; i.dataset.generated='1'; return i; };
+    const updateConfig = () => {
+        const option = category.selectedOptions[0], requiredValue = option?.dataset.required || '';
+        let required;
+        try {
+            const parsed = JSON.parse(requiredValue);
+            required = Array.isArray(parsed)
+                ? parsed.map((role) => String(role).trim()).filter(Boolean)
+                : requiredValue.split(',').map((role) => role.trim()).filter(Boolean);
+        } catch {
+            required = requiredValue.split(',').map((role) => role.trim()).filter(Boolean);
+        }
+        config = {
+            starters: Number(option?.dataset.starters || 0),
+            subs: Number(option?.dataset.subs || 0),
+            required
+        };
+        form.querySelector('.category-info').textContent = category.value
+            ? `ผู้เล่นตัวจริง ${config.starters} คน · ตัวสำรอง ${config.subs} คน · โค้ช/ผู้จัดการทีมเป็นตัวเลือกเสริม`
+            : '';
+    };
+    const refreshEligibility = async (reloadTeamRoster = false) => {
+        if (!existingTeamSelect.value || !category.value) {
+            eligibilityPending = false;
+            eligibilityFailed = false;
+            render();
+            return;
+        }
+        const request = ++eligibilityRequest;
+        eligibilityPending = true;
+        eligibilityFailed = false;
+        search.disabled = true;
+        render();
+        const params = new URLSearchParams({
+            action: 'team_roster_eligibility',
+            tournament_id: form.dataset.tournament,
+            category_id: category.value,
+            team_id: existingTeamSelect.value
+        });
+        for (const playerId of selected.keys()) params.append('player_ids[]', String(playerId));
+        try {
+            const response = await fetch(`register-tournament.php?${params}`, { headers: { Accept: 'application/json' } });
+            if (!response.ok) throw new Error(`Roster eligibility check failed with status ${response.status}`);
+            const result = await response.json();
+            if (request !== eligibilityRequest) return;
+            if (reloadTeamRoster) {
+                selected.clear();
+                nextIndex = 0;
+                for (const member of result.roster || []) {
+                    const roles = member.roles || [];
+                    const role = roles.includes('player') ? 'starter'
+                        : (roles.includes('substitute') ? 'substitute'
+                            : (roles.includes('coach') ? 'coach' : (roles.includes('manager') ? 'manager' : '')));
+                    selected.set(Number(member.player_id), {
+                        role,
+                        name: member.name || 'สมาชิกทีม',
+                        roles,
+                        index: nextIndex++,
+                        isCaptain: member.is_captain === true
+                    });
+                }
+                rosterLoadedTeamId = existingTeamSelect.value;
+            }
+            for (const [playerId, member] of selected) {
+                const status = result.eligibility?.[playerId];
+                member.accountActive = status?.account_active === true;
+                member.eligible = status?.eligible === true;
+                member.eligibilityReason = status?.reason || '';
+            }
+            eligibilityPending = false;
+            search.disabled = !category.value;
+            render();
+        } catch (error) {
+            if (request !== eligibilityRequest) return;
+            console.error('Team roster eligibility check failed', error);
+            eligibilityPending = false;
+            eligibilityFailed = true;
+            search.disabled = !category.value;
+            render();
+        }
+    };
+    const applyExistingTeam = () => {
+        eligibilityRequest++;
+        eligibilityPending = false;
+        eligibilityFailed = false;
+        results.innerHTML = '';
+        const option = existingTeamSelect.selectedOptions[0];
+        const usingTeam = Boolean(existingTeamSelect.value);
+        newTeamFields.hidden = usingTeam;
+        newTeamRoster.hidden = false;
+        existingTeamNote.classList.toggle('hidden', !usingTeam);
+        form.querySelector('[name="team_name"]').required = !usingTeam;
+        form.querySelector('[name="team_logo"]').disabled = usingTeam;
+        form.querySelector('[name="team_name"]').value = usingTeam ? (option.dataset.name || '') : '';
+        search.disabled = !category.value;
+        selected.clear();
+        nextIndex = 0;
+        rosterLoadedTeamId = '';
+        if (usingTeam) {
+            JSON.parse(option.dataset.roster || '[]').forEach((member) => {
+                const roles = member.roles || [];
+                const role = roles.includes('player') ? 'starter'
+                    : (roles.includes('substitute') ? 'substitute'
+                        : (roles.includes('coach') ? 'coach' : (roles.includes('manager') ? 'manager' : '')));
+                selected.set(Number(member.player_id), {
+                    role,
+                    name: member.name || 'สมาชิกทีม',
+                    roles,
+                    index: nextIndex++,
+                    isCaptain: member.is_captain === true,
+                    accountActive: member.account_active === true,
+                    eligible: true,
+                    eligibilityReason: ''
+                });
+            });
+        }
+        render();
+        if (usingTeam && category.value) refreshEligibility(true);
+    };
     const render = () => {
         form.querySelectorAll('[data-generated]').forEach((e) => e.remove()); starters.innerHTML=''; subs.innerHTML=''; staff.innerHTML='';
-        let si=0, ui=0, fi=0; selected.forEach((v, id) => { const index = v.role==='starter'?si++:v.role==='substitute'?ui++:fi++; const row=document.createElement('div'); row.className='rounded-lg bg-slate-900 p-3 flex justify-between items-center gap-2'; row.innerHTML=`<span>${esc(v.name)}</span><span><select class="change-role rounded bg-slate-800 p-1" data-id="${id}"><option value="starter" ${v.role==='starter'?'selected':''}>ตัวจริง</option><option value="substitute" ${v.role==='substitute'?'selected':''}>สำรอง</option><option value="coach" ${v.role==='coach'?'selected':''}>โค้ช</option><option value="manager" ${v.role==='manager'?'selected':''}>ผู้จัดการ</option></select> <button type="button" class="remove text-red-300" data-id="${id}">นำออก</button></span>`; (v.role==='starter'?starters:v.role==='substitute'?subs:staff).appendChild(row); form.appendChild(hidden(`roster[${v.index}][player_id]`, id)); form.appendChild(hidden(`roster[${v.index}][roles][]`, v.role==='starter'?'player':v.role==='substitute'?'substitute':v.role)); });
+        const usingTeam = Boolean(existingTeamSelect.value);
+        let si=0, ui=0;
+        const validationMessages = [];
+        selected.forEach((member, id) => {
+            const roles = usingTeam ? member.roles : [uiRoleToTeamRole[member.role]];
+            if (roles.includes('player')) si++;
+            if (roles.includes('substitute')) ui++;
+            const destination = roles.includes('player') ? starters : (roles.includes('substitute') ? subs : staff);
+            const row = document.createElement('div');
+            row.className = 'rounded-lg bg-slate-900 p-3 flex flex-wrap justify-between items-center gap-2';
+            const roleControls = usingTeam
+                ? Object.entries(roleLabels).map(([role, label]) =>
+                    `<label class="mr-2 text-xs"><input type="checkbox" class="team-role" data-id="${id}" value="${role}" ${roles.includes(role) ? 'checked' : ''}> ${label}</label>`
+                ).join('')
+                : `<select class="change-role rounded bg-slate-800 p-1" data-id="${id}"><option value="starter" ${member.role==='starter'?'selected':''}>ตัวจริง</option><option value="substitute" ${member.role==='substitute'?'selected':''}>สำรอง</option><option value="coach" ${member.role==='coach'?'selected':''}>โค้ช</option><option value="manager" ${member.role==='manager'?'selected':''}>ผู้จัดการ</option></select>`;
+            row.innerHTML = `<div><span>${esc(member.name)}${member.isCaptain ? ' (กัปตัน)' : ''}</span><div class="mt-2">${roleControls}</div></div><button type="button" class="remove text-red-300" data-id="${id}">นำออก</button>`;
+            destination.appendChild(row);
+            form.appendChild(hidden(`roster[${member.index}][player_id]`, id));
+            const submittedRoles = usingTeam ? roles : [uiRoleToTeamRole[member.role]];
+            submittedRoles.forEach((role) => form.appendChild(hidden(`roster[${member.index}][roles][]`, role)));
+            if (!submittedRoles.length) validationMessages.push(`${member.name} ยังไม่ได้เลือกบทบาท`);
+            if (usingTeam) {
+                const playerRole = roles.includes('player') || roles.includes('substitute');
+                if (!member.accountActive) validationMessages.push(`${member.name}: บัญชีผู้เล่นไม่ได้เปิดใช้งาน`);
+                else if (playerRole && !member.eligible) validationMessages.push(`${member.name}: ${member.eligibilityReason || 'ไม่ผ่านคุณสมบัติของรุ่นแข่งขัน'}`);
+            } else if (member.accountActive === false) {
+                validationMessages.push(`${member.name}: บัญชีผู้เล่นไม่ได้เปิดใช้งาน`);
+            }
+        });
         form.querySelector('.starter-count').textContent=`${si}/${config.starters}`; form.querySelector('.sub-count').textContent=`${ui}/${config.subs}`;
-        const selectedRoles=[...selected.values()].map(v=>v.role); const requiredOk=config.required.every(role=>selectedRoles.indexOf(role==='player'?'starter':role==='substitute'?'substitute':role)>=0); form.querySelector('.submit-team').disabled=si!==config.starters||ui!==config.subs||!requiredOk;
+        const selectedRoles = [...selected.values()].flatMap((member) => usingTeam ? member.roles : [uiRoleToTeamRole[member.role]]);
+        const captainSelected = [...selected.values()].some((member) => member.isCaptain);
+        const requiredOk = config.required.every((role) => role === 'captain' && usingTeam
+            ? captainSelected
+            : selectedRoles.includes(role));
+        if (category.value && si !== config.starters) validationMessages.push(`ต้องมีผู้เล่นตัวจริง ${config.starters} คน`);
+        if (category.value && ui !== config.subs) validationMessages.push(`ต้องมีผู้เล่นสำรอง ${config.subs} คน`);
+        if (category.value && !requiredOk) validationMessages.push('บทบาทสมาชิกยังไม่ครบตามรุ่นแข่งขัน');
+        if (eligibilityPending) validationMessages.push('กำลังตรวจสอบคุณสมบัติสมาชิกกับรุ่นแข่งขัน...');
+        if (eligibilityFailed) validationMessages.push('ตรวจสอบคุณสมบัติทีมไม่สำเร็จ กรุณาลองเปลี่ยนรุ่นหรือเลือกทีมใหม่');
+        form.querySelector('.roster-warning').textContent = validationMessages.join(' · ');
+        form.querySelector('.submit-team').disabled = !category.value || si !== config.starters || ui !== config.subs
+            || !requiredOk || validationMessages.length > 0 || eligibilityPending || eligibilityFailed;
     };
-    category.addEventListener('change', () => { const o=category.selectedOptions[0]; config={ starters:Number(o.dataset.starters||0),subs:Number(o.dataset.subs||0),required:(o.dataset.required||'').split(',').map(role=>role.trim()).filter(Boolean)}; search.disabled=!category.value; form.querySelector('.category-info').textContent=`ผู้เล่นตัวจริง ${config.starters} คน · ตัวสำรอง ${config.subs} คน · โค้ช/ผู้จัดการทีมเป็นตัวเลือกเสริม`; selected.clear(); render(); });
+    category.addEventListener('change', () => {
+        updateConfig();
+        search.disabled = !category.value;
+        results.innerHTML = '';
+        if (existingTeamSelect.value) refreshEligibility(rosterLoadedTeamId !== existingTeamSelect.value);
+        else {
+            search.disabled = !category.value;
+            selected.clear();
+            render();
+        }
+    });
+    existingTeamSelect.addEventListener('change', applyExistingTeam);
     search.addEventListener('input', async () => {
         const term = search.value.trim();
-        if (term.length < 1) {
+        if (term.length < 1 || !category.value) {
             results.innerHTML = '';
             return;
         }
@@ -330,6 +655,7 @@ document.querySelectorAll('.team-form').forEach((form) => {
             category_id: category.value,
             q: term
         });
+        if (existingTeamSelect.value) params.set('team_id', existingTeamSelect.value);
         try {
             const response = await fetch(`register-tournament.php?${params}`, { headers: { Accept: 'application/json' } });
             if (!response.ok) throw new Error(`Search failed with status ${response.status}`);
@@ -337,17 +663,60 @@ document.querySelectorAll('.team-form').forEach((form) => {
             results.innerHTML = players.length ? players.map(x => {
                 const playerDisabled = x.eligible ? '' : 'disabled title="' + esc(x.eligibility_reason || 'ผู้เล่นคนนี้ไม่ผ่านเงื่อนไขของรายการ') + '"';
                 const staffDisabled = x.staff_eligible ? '' : 'disabled title="บัญชีผู้จัดการหรือโค้ชไม่ได้เปิดใช้งาน"';
-                const name = x.real_name || x.username || 'ผู้เล่น';
-                return `<div class="flex justify-between rounded-lg border border-white/10 p-3"><span>${esc(name)} (#${x.player_id}) ${x.age_at_tournament === null ? '' : 'อายุ ' + x.age_at_tournament + ' ปี'}<small class="ml-2 text-red-300">${x.eligible ? '' : 'ผู้เล่นคนนี้ไม่ผ่านเงื่อนไขของรายการ'}</small></span><span><button ${playerDisabled} type="button" data-role="starter" data-id="${x.player_id}" data-name="${esc(name)}" class="add mr-2 text-green-300">ตัวจริง</button><button ${playerDisabled} type="button" data-role="substitute" data-id="${x.player_id}" data-name="${esc(name)}" class="add mr-2 text-cyan-300">สำรอง</button><button ${staffDisabled} type="button" data-role="coach" data-id="${x.player_id}" data-name="${esc(name)}" class="add mr-2 text-purple-300">โค้ช</button><button ${staffDisabled} type="button" data-role="manager" data-id="${x.player_id}" data-name="${esc(name)}" class="add text-purple-300">ผู้จัดการ</button></span></div>`;
+                const name = x.display_name || x.username || 'ผู้เล่น';
+                const eligibilityData = `data-account-active="${x.staff_eligible ? '1' : '0'}" data-eligible="${x.eligible ? '1' : '0'}" data-eligibility-reason="${esc(x.eligibility_reason || '')}"`;
+                return `<div class="flex justify-between rounded-lg border border-white/10 p-3"><span>${esc(name)} ${x.age_at_tournament === null ? '' : 'อายุ ' + x.age_at_tournament + ' ปี'}<small class="ml-2 text-red-300">${x.eligible ? '' : esc(x.eligibility_reason || 'ผู้เล่นคนนี้ไม่ผ่านเงื่อนไขของรายการ')}</small></span><span><button ${playerDisabled} ${eligibilityData} type="button" data-role="starter" data-id="${x.player_id}" data-name="${esc(name)}" class="add mr-2 text-green-300">ตัวจริง</button><button ${playerDisabled} ${eligibilityData} type="button" data-role="substitute" data-id="${x.player_id}" data-name="${esc(name)}" class="add mr-2 text-cyan-300">สำรอง</button><button ${staffDisabled} ${eligibilityData} type="button" data-role="coach" data-id="${x.player_id}" data-name="${esc(name)}" class="add mr-2 text-purple-300">โค้ช</button><button ${staffDisabled} ${eligibilityData} type="button" data-role="manager" data-id="${x.player_id}" data-name="${esc(name)}" class="add text-purple-300">ผู้จัดการ</button></span></div>`;
             }).join('') : '<div class="rounded-lg border border-white/10 p-3 text-sm text-slate-400">ยังไม่พบนักกีฬาที่ตรงกับคำค้น</div>';
         } catch (error) {
             console.error('Player search failed', error);
             results.innerHTML = '<div class="rounded-lg border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">ไม่สามารถค้นหาผู้เล่นได้ กรุณาลองใหม่</div>';
         }
     });
-    form.addEventListener('change',(e)=>{const select=e.target.closest('.change-role');if(!select)return;const item=selected.get(Number(select.dataset.id));if(item){const role=select.value;if(role==='starter'&&[...selected.values()].filter(v=>v.role==='starter').length>=config.starters)return render();if(role==='substitute'&&[...selected.values()].filter(v=>v.role==='substitute').length>=config.subs)return render();item.role=role;render();}});
-    form.addEventListener('click',(e)=>{const b=e.target.closest('.add,.remove');if(!b)return;if(b.classList.contains('remove'))selected.delete(Number(b.dataset.id));else{const id=Number(b.dataset.id),role=b.dataset.role;if(selected.has(id))return;if(role==='starter'&&[...selected.values()].filter(v=>v.role==='starter').length>=config.starters)return;if(role==='substitute'&&[...selected.values()].filter(v=>v.role==='substitute').length>=config.subs)return;selected.set(id,{role,name:b.dataset.name,index:selected.size});}render();});
-    if (category.value) category.dispatchEvent(new Event('change'));
+    form.addEventListener('change', (event) => {
+        const checkbox = event.target.closest('.team-role');
+        if (checkbox) {
+            const member = selected.get(Number(checkbox.dataset.id));
+            if (!member) return;
+            const row = checkbox.closest('.rounded-lg');
+            member.roles = [...row.querySelectorAll('.team-role:checked')].map((input) => input.value);
+            if (!member.roles.length) selected.delete(Number(checkbox.dataset.id));
+            render();
+            return;
+        }
+        const select = event.target.closest('.change-role');
+        if (select) {
+            const member = selected.get(Number(select.dataset.id));
+            if (member) {
+                member.role = select.value;
+                render();
+            }
+        }
+    });
+    form.addEventListener('click', (event) => {
+        const button = event.target.closest('.add,.remove');
+        if (!button) return;
+        if (button.classList.contains('remove')) {
+            selected.delete(Number(button.dataset.id));
+        } else {
+            const playerId = Number(button.dataset.id), role = button.dataset.role;
+            if (selected.has(playerId)) return;
+            selected.set(playerId, {
+                role,
+                name: button.dataset.name,
+                roles: [uiRoleToTeamRole[role]],
+                index: nextIndex++,
+                accountActive: button.dataset.accountActive === '1',
+                eligible: button.dataset.eligible === '1',
+                eligibilityReason: button.dataset.eligibilityReason || ''
+            });
+        }
+        render();
+    });
+    if (category.value) {
+        updateConfig();
+        search.disabled = !category.value;
+        render();
+    }
 });
 </script>
 <script src="../assets/js/mobile-nav.js" defer></script>

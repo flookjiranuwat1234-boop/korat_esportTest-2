@@ -3,6 +3,7 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 require_once '../includes/tournament_demo.php';
+require_once '../includes/tournament_categories.php';
 
 // ตรวจสอบสถานะการเข้าสู่ระบบ
 $isLoggedIn = isLoggedIn();
@@ -513,9 +514,7 @@ $clearViewUrl = 'tournaments.php?view=' . urlencode($view);
                             $championStmt->execute(['tournament_id' => $tId]);
                             $tChampion = trim((string) ($championStmt->fetchColumn() ?: ''));
                         }
-                        $categoryStmt = $pdo->prepare('SELECT category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
-                        $categoryStmt->execute(['tournament_id' => $tId]);
-                        $categories = $categoryStmt->fetchAll();
+                        $categories = getTournamentDisplayCategories($pdo, $tId, $t['category'] ?? null);
                         $staggerDelay = min($tIndex * 100, 800);
                         ?>
                         <div class="tournament-card rounded-3xl overflow-hidden flex flex-col justify-between shadow-2xl group"

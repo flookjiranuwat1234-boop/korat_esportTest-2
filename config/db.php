@@ -15,6 +15,8 @@ $dbname = getenv('DB_NAME') ?: 'esport_korattest';
 $dbuser = getenv('DB_USER') ?: 'root';
 $dbpass = getenv('DB_PASSWORD') ?: '';
 
+
+
 try {
     $pdo = new PDO(
         "mysql:host={$host};dbname={$dbname};charset=utf8mb4",

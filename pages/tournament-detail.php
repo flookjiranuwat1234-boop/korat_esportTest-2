@@ -48,12 +48,14 @@ $tournamentStatusLabels = [
 ];
 $tournamentStatusLabel = $tournamentStatusLabels[$tournament['status'] ?? ''] ?? 'ไม่ทราบสถานะ';
 $isOfficialResult = ($tournament['status'] ?? '') === 'completed';
-$categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY tournament_category_id');
-$categoryStmt->execute(['tournament_id' => $tournamentId]);
-$availableCategories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+$availableCategories = getTournamentDisplayCategories(
+    $pdo,
+    $tournamentId,
+    $tournament['category'] ?? null
+);
 $categoryCodes = array_column($availableCategories, 'category_code');
-$isOpenTournament = strtolower(trim((string) ($tournament['category'] ?? ''))) === 'open';
-$hasOpenCategory = $isOpenTournament;
+$hasOpenCategory = count($availableCategories) === 1
+    && normalizeTournamentCategoryCode($availableCategories[0]['category_code'] ?? null) === 'open';
 if ($hasOpenCategory) {
     $selectedCategory = 'all';
 } elseif ($selectedCategory !== 'all' && !in_array($selectedCategory, $categoryCodes, true)) {
@@ -66,7 +68,13 @@ foreach ($availableCategories as $category) {
         break;
     }
 }
-$isOpenGame = $hasOpenCategory;
+$selectedCategoryLabel = 'ทุกประเภท';
+foreach ($availableCategories as $category) {
+    if ($category['category_code'] === $selectedCategory) {
+        $selectedCategoryLabel = (string) ($category['label'] ?: $category['category_code']);
+        break;
+    }
+}
 $publicTab = $_GET['tab'] ?? 'overview';
 $rankingRows = [];
 
@@ -175,10 +183,19 @@ $playoffMatches = array_values(array_filter($matches, static function ($m): bool
     return empty($m['group_id']);
 }));
 $bracketEdgesByMatch = [];
+$playoffMatchesById = [];
+$bracketMatchCounts = [];
+foreach ($playoffMatches as $match) {
+    $matchId = (int) $match['match_id'];
+    $playoffMatchesById[$matchId] = $match;
+    $bracketType = (string) ($match['bracket_type'] ?? '');
+    $roundNumber = (int) ($match['round_number'] ?? 0);
+    $bracketMatchCounts[$bracketType][$roundNumber] = ($bracketMatchCounts[$bracketType][$roundNumber] ?? 0) + 1;
+}
 if ($playoffMatches) {
     $matchIds = array_map(static fn(array $match): int => (int) $match['match_id'], $playoffMatches);
     $edgePlaceholders = implode(',', array_fill(0, count($matchIds), '?'));
-    $edgeStmt = $pdo->prepare("SELECT match_id, next_match_id, loser_next_match_id
+    $edgeStmt = $pdo->prepare("SELECT match_id, next_match_id, next_slot, loser_next_match_id, loser_next_slot
         FROM bracket_edges WHERE match_id IN ($edgePlaceholders)");
     $edgeStmt->execute($matchIds);
     foreach ($edgeStmt->fetchAll(PDO::FETCH_ASSOC) as $edge) {
@@ -194,6 +211,55 @@ ksort($roundsGrouped);
 $totalRounds = count($roundsGrouped);
 $doubleBracketTypes = ['winners', 'losers', 'grand_final', 'grand_final_reset'];
 $isDoubleBracket = (bool) array_intersect($doubleBracketTypes, array_column($playoffMatches, 'bracket_type'));
+$bracketIncomingByMatchSlot = [];
+$bracketLoserDestinationByMatch = [];
+if ($isDoubleBracket) {
+    foreach ($bracketEdgesByMatch as $sourceMatchId => $edge) {
+        $sourceMatch = $playoffMatchesById[$sourceMatchId] ?? null;
+        if (!$sourceMatch) continue;
+        $sourceType = (string) ($sourceMatch['bracket_type'] ?? '');
+        $sourceRound = (int) ($sourceMatch['round_number'] ?? 0);
+        $sourceIndex = (int) ($sourceMatch['match_index'] ?? 0) + 1;
+
+        foreach ([
+            [
+                'match_id' => (int) ($edge['next_match_id'] ?? 0),
+                'slot' => (string) ($edge['next_slot'] ?? ''),
+                'result' => 'winner',
+            ],
+            [
+                'match_id' => (int) ($edge['loser_next_match_id'] ?? 0),
+                'slot' => (string) ($edge['loser_next_slot'] ?? ''),
+                'result' => 'loser',
+            ],
+        ] as $route) {
+            if ($route['match_id'] <= 0 || !in_array($route['slot'], ['team1', 'team2'], true)) continue;
+            $targetType = (string) ($playoffMatchesById[$route['match_id']]['bracket_type'] ?? '');
+            if ($targetType === 'grand_final') {
+                $waitText = $route['slot'] === 'team1' ? 'แชมป์สายบน' : 'แชมป์สายล่าง';
+            } else {
+                $waitText = match ([$sourceType, $route['result']]) {
+                    ['winners', 'loser'] => 'รอผู้แพ้จาก สายชนะ',
+                    ['losers', 'winner'] => 'รอผู้ชนะจาก สายผู้แพ้',
+                    ['winners', 'winner'] => 'รอผู้ชนะจาก สายชนะ',
+                    ['losers', 'loser'] => 'รอผู้แพ้จาก สายผู้แพ้',
+                    default => $route['result'] === 'loser'
+                        ? 'รอผู้แพ้จาก รอบชิง'
+                        : 'รอผู้ชนะจาก รอบชิง',
+                };
+            }
+            $bracketIncomingByMatchSlot[$route['match_id']][$route['slot']] = $waitText;
+        }
+
+        $loserTargetId = (int) ($edge['loser_next_match_id'] ?? 0);
+        $loserTarget = $playoffMatchesById[$loserTargetId] ?? null;
+        if ($loserTarget && ($loserTarget['bracket_type'] ?? '') === 'losers') {
+            $targetRound = (int) ($loserTarget['round_number'] ?? 0);
+            $targetIndex = (int) ($loserTarget['match_index'] ?? 0) + 1;
+            $bracketLoserDestinationByMatch[$sourceMatchId] = "(หากแพ้ ไปสายผู้แพ้ รอบที่ {$targetRound} คู่ที่ {$targetIndex})";
+        }
+    }
+}
 $bracketSections = [];
 if ($isDoubleBracket) {
     $sectionLabels = [
@@ -298,22 +364,78 @@ if ($tournamentId === 140 && !$isDoubleBracket) {
 }
 
 // ตารางคะแนนกลุ่ม (ถ้ามี)
-$groups = $pdo->prepare("
-    SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id,
-           gt.team_id, t.name AS team_name, t.team_category,
-           gt.played, gt.wins, gt.draws, gt.losses, gt.points, gt.score_diff
-    FROM tournament_groups tg
-    JOIN group_teams gt ON gt.group_id = tg.tournament_group_id
-    JOIN teams t ON t.team_id = gt.team_id
-    WHERE tg.tournament_id = :tid
-    ORDER BY tg.name, gt.points DESC, gt.score_diff DESC, gt.wins DESC, gt.draws DESC, gt.losses ASC, t.name ASC
-");
+$isPointsTournament = ($tournament['scoring_mode'] ?? '') === 'points';
+if ($isPointsTournament) {
+    $isFreeFirePoints = stripos((string) ($tournament['game_name'] ?? ''), 'Free Fire') !== false;
+    $pointsTieBreakValue = $isFreeFirePoints
+        ? 'COALESCE(SUM(pr.kills), 0)'
+        : '-COALESCE(SUM(pr.placement), 0)';
+    $pointsStandingOrder = $isFreeFirePoints
+        ? 'points DESC, wins DESC, score_diff DESC, last_place ASC, team_name ASC'
+        : 'points DESC, score_diff DESC, wins DESC, team_name ASC';
+    $pointsNameExpr = $tournamentPlayMode === 'solo'
+        ? "COALESCE(p.display_name, u.username, 'ผู้แข่งขัน')"
+        : "COALESCE(team.name, 'ทีมแข่งขัน')";
+    $pointsNameJoins = $tournamentPlayMode === 'solo'
+        ? 'LEFT JOIN players p ON p.player_id = gp.participant_id LEFT JOIN users u ON u.user_id = p.user_id'
+        : 'LEFT JOIN teams team ON team.team_id = gp.participant_id';
+    $groups = $pdo->prepare("SELECT tg.tournament_group_id AS group_id, tg.name AS group_name,
+            tg.tournament_category_id, tg.stage_type, gp.participant_id AS team_id,
+            {$pointsNameExpr} AS team_name,
+            COUNT(DISTINCT pr.round_number) AS played,
+            SUM(CASE WHEN pr.placement = 1 THEN 1 ELSE 0 END) AS wins,
+            0 AS draws, 0 AS losses,
+            COALESCE(SUM(pr.points), 0) AS points,
+            {$pointsTieBreakValue} AS score_diff,
+            COALESCE(MAX(CASE WHEN pr.round_number = (
+                SELECT MAX(pr2.round_number) FROM points_round_results pr2 WHERE pr2.group_id = gp.group_id
+            ) THEN pr.placement END), 255) AS last_place
+        FROM tournament_groups tg
+        JOIN group_participants gp ON gp.group_id = tg.tournament_group_id
+        {$pointsNameJoins}
+        LEFT JOIN points_round_results pr ON pr.group_id = gp.group_id AND pr.participant_id = gp.participant_id
+        WHERE tg.tournament_id = :tid
+        GROUP BY tg.tournament_group_id, tg.name, tg.tournament_category_id, tg.stage_type, gp.participant_id, team_name
+        ORDER BY CASE WHEN tg.stage_type = 'group' THEN 0 ELSE 1 END, tg.name, {$pointsStandingOrder}");
+} else {
+    $groups = $pdo->prepare("
+        SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id,
+               tg.stage_type, gt.team_id, t.name AS team_name, t.team_category,
+               gt.played, gt.wins, gt.draws, gt.losses, gt.points, gt.score_diff
+        FROM tournament_groups tg
+        JOIN group_teams gt ON gt.group_id = tg.tournament_group_id
+        JOIN teams t ON t.team_id = gt.team_id
+        WHERE tg.tournament_id = :tid
+        ORDER BY tg.name, gt.points DESC, gt.score_diff DESC, gt.wins DESC, gt.draws DESC, gt.losses ASC, t.name ASC
+    ");
+}
 $groups->execute(['tid' => $tournamentId]);
 $groupRows = $groups->fetchAll();
+$pointsRoundRowsByGroup = [];
+if ($isPointsTournament) {
+    $pointNameExpr = $tournamentPlayMode === 'solo'
+        ? "COALESCE(p.display_name, u.username, 'ผู้แข่งขัน')"
+        : "COALESCE(team.name, 'ทีมแข่งขัน')";
+    $pointNameJoins = $tournamentPlayMode === 'solo'
+        ? 'LEFT JOIN players p ON p.player_id = pr.participant_id LEFT JOIN users u ON u.user_id = p.user_id'
+        : 'LEFT JOIN teams team ON team.team_id = pr.participant_id';
+    $roundResults = $pdo->prepare("SELECT tg.name AS group_name, m.round_number, pr.participant_id,
+            {$pointNameExpr} AS participant_name, pr.placement, pr.kills, pr.points
+        FROM points_round_results pr
+        JOIN matches m ON m.match_id = pr.match_id
+        JOIN tournament_groups tg ON tg.tournament_group_id = pr.group_id
+        {$pointNameJoins}
+        WHERE m.tournament_id = :tournament_id
+        ORDER BY tg.name, m.round_number, pr.placement");
+    $roundResults->execute(['tournament_id' => $tournamentId]);
+    foreach ($roundResults->fetchAll(PDO::FETCH_ASSOC) as $roundResult) {
+        $pointsRoundRowsByGroup[$roundResult['group_name']][(int) $roundResult['round_number']][] = $roundResult;
+    }
+}
 
 if ($tournamentPlayMode === 'solo' && !$groupRows) {
     $soloGroups = $pdo->prepare("
-        SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id,
+        SELECT tg.tournament_group_id AS group_id, tg.name AS group_name, tg.tournament_category_id, tg.stage_type,
                p.player_id AS team_id,
                COALESCE(p.display_name, u.username, 'ผู้แข่งขัน') AS team_name,
                SUM(CASE WHEN m.status IN ('completed', 'walkover') THEN 1 ELSE 0 END) AS played,
@@ -344,7 +466,19 @@ foreach ($groupRows as $row) {
     $groupedStandings[$row['group_name']][] = $row;
 }
 
-if ($selectedCategoryId && $groupRows && $tournamentPlayMode === 'team') {
+if ($groupRows && $isPointsTournament) {
+    foreach ($groupRows as $row) {
+        if (($row['stage_type'] ?? '') !== 'final'
+            || ($selectedCategoryId && (int) ($row['tournament_category_id'] ?? 0) !== $selectedCategoryId)) continue;
+        $rankingRows[] = [
+            'participant_name' => $row['team_name'],
+            'participant_id' => (int) $row['team_id'],
+            'points' => (int) $row['points'],
+            'wins' => (int) $row['wins'],
+            'losses' => 0,
+        ];
+    }
+} elseif ($selectedCategoryId && $groupRows && $tournamentPlayMode === 'team') {
     foreach ($groupRows as $row) {
         if ((int) ($row['tournament_category_id'] ?? 0) !== $selectedCategoryId) continue;
         $rankingRows[] = [
@@ -415,6 +549,7 @@ function roundName($roundNum, $totalRounds)
     if ($fromEnd === 2) return 'รอบก่อนรองชนะเลิศ';
     return "รอบที่ {$roundNum}";
 }
+
 ?>
 <!DOCTYPE html>
 <html lang="th" class="h-full scroll-smooth">
@@ -551,7 +686,7 @@ function roundName($roundNum, $totalRounds)
             display: inline-flex; align-items: center; gap: .5rem; margin: 0 1rem .25rem;
             padding: .6rem 1rem; border-left: 3px solid #FF5500; border-radius: .5rem;
             background: rgba(255, 85, 0, .12); color: #ff9b66; font-size: .75rem;
-            font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+            font-weight: 800; letter-spacing: .08em; text-transform: uppercase; position: relative; z-index: 2;
         }
         .bracket-stage-losers .bracket-stage-title { border-left-color: #9ca3af; color: #d1d5db; background: rgba(107,114,128,.16); }
         .bracket-stage-grand_final .bracket-stage-title,
@@ -582,7 +717,11 @@ function roundName($roundNum, $totalRounds)
             stroke: #10E070 !important; stroke-width: 4px !important; opacity: 1;
             filter: drop-shadow(0 0 12px #10E070) !important;
         }
-        .bracket-match-team { transition: all 0.25s ease; cursor: pointer; }
+        .bracket-match-team {
+            height: 34px; min-height: 34px; box-sizing: border-box;
+            padding-top: 0 !important; padding-bottom: 0 !important;
+            transition: all 0.25s ease; cursor: pointer;
+        }
         .bracket-match-team:hover {
             background-color: rgba(255, 85, 0, 0.4) !important;
             border-color: #FF5500 !important;
@@ -794,6 +933,17 @@ function roundName($roundNum, $totalRounds)
 
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-12">
 
+            <?php if (count($availableCategories) > 1 && !$hasOpenCategory): ?>
+                <nav aria-label="เลือกประเภทผลการแข่งขัน" class="flex flex-wrap items-center gap-2 glass-panel p-4 rounded-2xl border border-white/15 shadow-xl">
+                    <span class="text-xs font-bold text-gray-400 uppercase mr-2"><i class="fa-solid fa-filter text-brand-orange mr-1"></i> เลือกประเภทผลการแข่งขัน:</span>
+                    <?php foreach ($availableCategories as $category): ?>
+                        <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=<?php echo urlencode($category['category_code']); ?>" class="px-4 py-2 rounded-xl text-xs font-bold <?php echo ($selectedCategory === $category['category_code']) ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>" <?php echo ($selectedCategory === $category['category_code']) ? 'aria-current="page"' : ''; ?>>
+                            <?php echo htmlspecialchars($category['label'] ?: $category['category_code']); ?>
+                        </a>
+                    <?php endforeach; ?>
+                </nav>
+            <?php endif; ?>
+
             <!-- ================= 5. GROUP STAGE STANDINGS ================= -->
             <?php if (!empty($groupedStandings)): ?>
                 <section id="groups" class="space-y-6" data-aos="fade-up" data-aos-duration="900">
@@ -801,7 +951,7 @@ function roundName($roundNum, $totalRounds)
                         <i class="fa-solid fa-table-cells-large text-brand-orange text-2xl"></i>
                         <div>
                             <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">ตารางคะแนนรอบแบ่งกลุ่ม (GROUP STAGE)</h2>
-                            <p class="text-xs text-gray-400">สรุปอันดับคะแนน ชนะ เสมอ แพ้ ประจำแต่ละสายการแข่งขัน</p>
+                            <p class="text-xs text-gray-400"><?php echo $isPointsTournament ? 'อันดับรวมจากคะแนนสะสมทุกรอบ' : 'สรุปอันดับคะแนน ชนะ เสมอ แพ้ ประจำแต่ละสายการแข่งขัน'; ?></p>
                         </div>
                     </div>
 
@@ -818,10 +968,14 @@ function roundName($roundNum, $totalRounds)
                                         <thead class="bg-white/5 uppercase font-bold text-gray-400 border-b border-white/10 font-display">
                                             <tr>
                                                 <th class="p-3">ทีม</th>
-                                                <th class="p-3 text-center">แข่ง</th>
-                                                <th class="p-3 text-center">ชนะ</th>
-                                                <th class="p-3 text-center">เสมอ</th>
-                                                <th class="p-3 text-center">แพ้</th>
+                                                <th class="p-3 text-center"><?php echo $isPointsTournament ? 'รอบ' : 'แข่ง'; ?></th>
+                                                <th class="p-3 text-center"><?php echo $isPointsTournament ? 'อันดับ 1' : 'ชนะ'; ?></th>
+                                                <?php if ($isPointsTournament): ?>
+                                                    <?php if (stripos((string) ($tournament['game_name'] ?? ''), 'Free Fire') !== false): ?><th class="p-3 text-center">Kill</th><?php endif; ?>
+                                                <?php else: ?>
+                                                    <th class="p-3 text-center">เสมอ</th>
+                                                    <th class="p-3 text-center">แพ้</th>
+                                                <?php endif; ?>
                                                 <th class="p-3 text-right">คะแนน</th>
                                             </tr>
                                         </thead>
@@ -843,14 +997,35 @@ function roundName($roundNum, $totalRounds)
                                                     </td>
                                                     <td class="p-3 text-center text-gray-400 font-mono"><?php echo $r['played']; ?></td>
                                                     <td class="p-3 text-center text-emerald-400 font-mono font-bold"><?php echo $r['wins']; ?></td>
-                                                    <td class="p-3 text-center text-amber-400 font-mono"><?php echo $r['draws']; ?></td>
-                                                    <td class="p-3 text-center text-rose-400 font-mono"><?php echo $r['losses']; ?></td>
+                                                    <?php if ($isPointsTournament): ?>
+                                                        <?php if (stripos((string) ($tournament['game_name'] ?? ''), 'Free Fire') !== false): ?><td class="p-3 text-center text-sky-300 font-mono"><?php echo (int) $r['score_diff']; ?></td><?php endif; ?>
+                                                    <?php else: ?>
+                                                        <td class="p-3 text-center text-amber-400 font-mono"><?php echo $r['draws']; ?></td>
+                                                        <td class="p-3 text-center text-rose-400 font-mono"><?php echo $r['losses']; ?></td>
+                                                    <?php endif; ?>
                                                     <td class="p-3 text-right font-display font-black text-brand-orange text-sm"><?php echo $r['points']; ?></td>
                                                 </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
                                 </div>
+                                <?php if ($isPointsTournament && !empty($pointsRoundRowsByGroup[$groupName])): ?>
+                                    <div class="border-t border-white/10 p-4 space-y-3">
+                                        <?php foreach ($pointsRoundRowsByGroup[$groupName] as $roundNumber => $roundResults): ?>
+                                            <details class="rounded-lg border border-white/10 bg-black/20">
+                                                <summary class="cursor-pointer px-3 py-2 text-xs font-bold text-brand-orange">ผลรอบที่ <?php echo (int) $roundNumber; ?></summary>
+                                                <div class="divide-y divide-white/5 px-3 pb-2">
+                                                    <?php foreach ($roundResults as $roundResult): ?>
+                                                        <div class="flex items-center justify-between gap-3 py-1.5 text-xs">
+                                                            <span class="truncate text-gray-200">#<?php echo (int) $roundResult['placement']; ?> · <?php echo htmlspecialchars($roundResult['participant_name']); ?></span>
+                                                            <span class="shrink-0 font-bold text-white"><?php echo (int) $roundResult['points']; ?> คะแนน<?php if (stripos((string) ($tournament['game_name'] ?? ''), 'Free Fire') !== false): ?> · <?php echo (int) $roundResult['kills']; ?> Kill<?php endif; ?></span>
+                                                        </div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            </details>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -869,15 +1044,6 @@ function roundName($roundNum, $totalRounds)
                         </div>
                     </div>
                 </div>
-
-                <?php if (count($availableCategories) > 1 && !$hasOpenCategory): ?>
-                    <div class="flex items-center gap-2 glass-panel p-4 rounded-2xl border border-white/15 shadow-xl">
-                        <span class="text-xs font-bold text-gray-400 uppercase mr-2"><i class="fa-solid fa-filter text-brand-orange mr-1"></i> เลือกสายการแข่งขัน:</span>
-                        <?php foreach ($availableCategories as $category): ?>
-                            <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=<?php echo urlencode($category['category_code']); ?>" class="px-4 py-2 rounded-xl text-xs font-bold <?php echo ($selectedCategory === $category['category_code']) ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>"><?php echo htmlspecialchars($category['label'] ?: $category['category_code']); ?></a>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
 
                 <?php if (!empty(array_filter($bracketSections, static fn(array $section): bool => !empty($section['rounds'])))): ?>
                     <div class="holo-arena-box p-6 sm:p-10 rounded-3xl relative shadow-2xl">
@@ -916,7 +1082,15 @@ function roundName($roundNum, $totalRounds)
                                             $isDecided = !empty($m['winner_team_id']) || (($m['result_type'] ?? '') === 'bye' && ($m['status'] ?? '') === 'walkover');
                                             $isBye = ($m['result_type'] ?? '') === 'bye';
                                             $isWalkover = ($m['status'] ?? '') === 'walkover' && !$isBye;
+                                            $matchId = (int) $m['match_id'];
+                                            $waitForGroupQualifier = !empty($groupedStandings)
+                                                && !$isDoubleBracket
+                                                && (int) ($m['round_number'] ?? 0) === 1;
+                                            $roundOneWaitLabel = $waitForGroupQualifier ? 'รอผู้ผ่านเข้ารอบจากกลุ่ม' : 'รอผลรอบก่อน';
+                                            $waitTeam1 = $bracketIncomingByMatchSlot[$matchId]['team1'] ?? $roundOneWaitLabel;
+                                            $waitTeam2 = $bracketIncomingByMatchSlot[$matchId]['team2'] ?? $roundOneWaitLabel;
                                         ?>
+                                            <div class="relative">
                                             <div class="glass-card rounded-2xl border border-white/15 overflow-hidden shadow-lg p-1.5 space-y-1 bracket-match"
                                                 data-match-id="<?php echo $m['match_id']; ?>"
                                                 data-next-match-id="<?php echo (int) ($bracketEdgesByMatch[(int) $m['match_id']]['next_match_id'] ?? 0); ?>"
@@ -938,7 +1112,7 @@ function roundName($roundNum, $totalRounds)
                                                 <?php
                                                     $isT1Winner = ($m['winner_team_id'] == $m['team1_id'] && $m['team1_id']);
                                                     $t1Id = $m['team1_id'] ?? 'none';
-                                                    $t1Name = !empty($m['team1_id']) ? ($m['team1_name'] ?? 'ผู้แข่งขัน') : ($isBye ? 'ไม่มีคู่แข่งขัน' : 'รอผู้ชนะรอบก่อน');
+                                                    $t1Name = !empty($m['team1_id']) ? ($m['team1_name'] ?? 'ผู้แข่งขัน') : ($isBye ? 'ไม่มีคู่แข่งขัน' : ($isDoubleBracket ? $waitTeam1 : $roundOneWaitLabel));
                                                     $isMyTeam1 = in_array((int) ($m['team1_id'] ?? 0), $myParticipantIds, true);
                                                 ?>
                                                 <div onmouseenter="highlightTeamPath('<?php echo $t1Id; ?>')" onmouseleave="resetTeamPath()"
@@ -967,7 +1141,7 @@ function roundName($roundNum, $totalRounds)
                                                 <?php 
                                                     $isT2Winner = ($m['winner_team_id'] == $m['team2_id'] && $m['team2_id']);
                                                     $t2Id = $m['team2_id'] ?? 'none';
-                                                    $t2Name = !empty($m['team2_id']) ? ($m['team2_name'] ?? 'ผู้แข่งขัน') : ($isBye ? 'ไม่มีคู่แข่งขัน' : 'รอผู้ชนะรอบก่อน');
+                                                    $t2Name = !empty($m['team2_id']) ? ($m['team2_name'] ?? 'ผู้แข่งขัน') : ($isBye ? 'ไม่มีคู่แข่งขัน' : ($isDoubleBracket ? $waitTeam2 : $roundOneWaitLabel));
                                                     $isMyTeam2 = in_array((int) ($m['team2_id'] ?? 0), $myParticipantIds, true);
                                                 ?>
                                                 <div onmouseenter="highlightTeamPath('<?php echo $t2Id; ?>')" onmouseleave="resetTeamPath()"
@@ -993,6 +1167,12 @@ function roundName($roundNum, $totalRounds)
                                                     <?php endif; ?>
                                                 </div>
                                             </div>
+                                            <?php if ($isDoubleBracket && !empty($bracketLoserDestinationByMatch[$matchId])): ?>
+                                                <div class="absolute left-2 top-full z-20 pt-1 text-[10px] leading-tight text-amber-200/80 whitespace-nowrap">
+                                                    <?php echo htmlspecialchars($bracketLoserDestinationByMatch[$matchId], ENT_QUOTES, 'UTF-8'); ?>
+                                                </div>
+                                            <?php endif; ?>
+                                            </div>
                                         <?php endforeach; ?>
                                             </div>
                                         </div>
@@ -1014,7 +1194,7 @@ function roundName($roundNum, $totalRounds)
             <section id="ranking" class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex items-center gap-3 border-b border-white/15 pb-4">
                             <i class="fa-solid fa-ranking-star text-amber-400 text-2xl"></i>
-                            <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider"><?php echo $tournamentPlayMode === 'solo' ? 'อันดับผู้เล่นในรายการ' : 'อันดับในรายการ'; ?><?php echo $hasOpenCategory ? ' OPEN' : ' ' . htmlspecialchars($selectedCategory); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?> ใช้ข้อมูลรวมทุกประเภทสำหรับรายการ Open</p></div>
+                            <div><h2 class="text-xl font-bold font-display text-white uppercase tracking-wider"><?php echo $tournamentPlayMode === 'solo' ? 'อันดับผู้เล่นในรายการ' : 'อันดับในรายการ'; ?> <?php echo htmlspecialchars($hasOpenCategory ? 'OPEN' : $selectedCategoryLabel); ?></h2><p class="text-xs text-gray-400"><?php echo $isOfficialResult ? 'ผลการแข่งขันอย่างเป็นทางการ' : 'ผลชั่วคราว'; ?><?php echo $hasOpenCategory ? ' ใช้ข้อมูลรวมของประเภท Open' : ' แสดงผลเฉพาะประเภท ' . htmlspecialchars($selectedCategoryLabel); ?></p></div>
                 </div>
                 <div class="glass-panel rounded-2xl overflow-hidden border border-white/15">
                     <div class="ranking-table-scroll overflow-x-auto">
@@ -1176,6 +1356,7 @@ function roundName($roundNum, $totalRounds)
             setTimeout(() => {
                 drawProportionalCenterLines();
             }, 300);
+            setTimeout(drawProportionalCenterLines, 1300);
         });
 
         // ฟังก์ชันวาดเส้นเชื่อมมุมฉากสมมาตร + ใส่เรืองแสงถาวรให้คู่ที่รู้ผลผู้ชนะแล้ว
@@ -1252,6 +1433,15 @@ function roundName($roundNum, $totalRounds)
                             const y1 = sourceRect.top + sourceRect.height / 2 - containerRect.top + container.scrollTop;
                             const x2 = targetRect.left - containerRect.left + container.scrollLeft;
                             const y2 = targetRect.top + targetRect.height / 2 - containerRect.top + container.scrollTop;
+                            if (Math.abs(y1 - y2) <= 10) {
+                                const alignedY = (y1 + y2) / 2;
+                                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                                path.setAttribute('d', `M ${x1} ${alignedY} L ${x2} ${alignedY}`);
+                                path.setAttribute('class', 'bracket-path-base' + (source.dataset.decided === '1' ? ' bracket-path-decided' : ''));
+                                if (source.dataset.winnerId) path.setAttribute('data-team-match', source.dataset.winnerId);
+                                svg.appendChild(path);
+                                return;
+                            }
                             let midX = x1 + (x2 - x1) / 2;
                             if (useEightRoundFix) {
                                 const targetConnections = connectionsByTarget.get(targetId) || [];
@@ -1267,6 +1457,7 @@ function roundName($roundNum, $totalRounds)
                         });
                 });
             });
+
         }
 
         // Interactive Hover Effect
@@ -1305,10 +1496,26 @@ function roundName($roundNum, $totalRounds)
             });
         }
 
-        window.addEventListener('resize', drawProportionalCenterLines);
+        let bracketRedrawFrame = 0;
+        function scheduleBracketRedraw() {
+            if (bracketRedrawFrame) return;
+            bracketRedrawFrame = requestAnimationFrame(() => {
+                bracketRedrawFrame = 0;
+                drawProportionalCenterLines();
+            });
+        }
+
+        window.addEventListener('resize', scheduleBracketRedraw);
+        window.addEventListener('load', scheduleBracketRedraw);
+        document.addEventListener('aos:in', scheduleBracketRedraw);
+        if ('ResizeObserver' in window) {
+            const bracketResizeObserver = new ResizeObserver(scheduleBracketRedraw);
+            document.querySelectorAll('.bracket-scroll-area, .bracket-stage, .bracket-match')
+                .forEach(element => bracketResizeObserver.observe(element));
+        }
         // เพิ่ม Event ให้วาดเส้นใหม่ทุกครั้งเวลาเลื่อน Scroll เผื่อมีปัญหาเส้นเบี้ยว
         document.querySelectorAll('.holo-arena-box').forEach(arenaBox => {
-            arenaBox.addEventListener('scroll', drawProportionalCenterLines);
+            arenaBox.addEventListener('scroll', scheduleBracketRedraw);
         });
     </script>
 <script src="../assets/js/mobile-nav.js" defer></script>

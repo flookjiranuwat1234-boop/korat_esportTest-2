@@ -20,7 +20,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $username = trim($_POST['username'] ?? '');
         $email = trim($_POST['email'] ?? '');
         $displayName = trim($_POST['display_name'] ?? '');
-        $realName = trim($_POST['real_name'] ?? '');
         $gender = trim($_POST['gender'] ?? '');
         $birthDate = trim($_POST['birth_date'] ?? '');
         $province = trim($_POST['province'] ?? '');
@@ -37,11 +36,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $playerStmt->execute(['id' => $userId]);
                 $playerId = $playerStmt->fetchColumn();
                 if ($playerId) {
-                    $pdo->prepare('UPDATE players SET display_name = :display_name, real_name = :real_name,
+                    $pdo->prepare('UPDATE players SET display_name = :display_name,
                         gender = :gender, birth_date = :birth_date, province = :province WHERE player_id = :player_id')
                         ->execute([
                             'display_name' => $displayName,
-                            'real_name' => $realName !== '' ? $realName : null,
                             'gender' => $gender !== '' ? $gender : null,
                             'birth_date' => $birthDate !== '' ? $birthDate : null,
                             'province' => $province !== '' ? $province : null,
@@ -77,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$stmt = $pdo->prepare('SELECT u.*, p.player_id, p.display_name, p.real_name, p.gender, p.birth_date,
+$stmt = $pdo->prepare('SELECT u.*, p.player_id, p.display_name, p.gender, p.birth_date,
     p.eligibility_status, p.avatar_path, p.bio, p.province
     FROM users u LEFT JOIN players p ON p.user_id = u.user_id WHERE u.user_id = :id');
 $stmt->execute(['id' => $userId]);
@@ -235,8 +233,8 @@ if ($flash) {
             <span class="px-3 py-1 rounded-full bg-slate-100 text-slate-600">เข้าใช้ล่าสุด <?= h($member['last_login_at'] ?: '-'); ?></span></div>
         <form method="post" class="grid md:grid-cols-3 gap-4">
             <input type="hidden" name="csrf_token" value="<?= h($csrfToken); ?>"><input type="hidden" name="action" value="update_member">
-            <?php foreach ([['username','Username',$member['username'],'text'],['email','Email',$member['email'],'email'],['display_name','ชื่อในเกม',$member['display_name'],'text'],['real_name','ชื่อ-นามสกุล',$member['real_name'],'text'],['birth_date','วันเกิด',$member['birth_date'],'date'],['province','จังหวัด',$member['province'],'text']] as $f): ?>
-                <label class="text-sm font-medium"><?= h($f[1]); ?><input type="<?= h($f[3]); ?>" name="<?= h($f[0]); ?>" value="<?= h($f[2]); ?>" <?= in_array($f[0], ['display_name','real_name','birth_date','province'], true) && !$member['player_id'] ? 'disabled' : ''; ?> class="mt-1 w-full border rounded-lg px-3 py-2 disabled:bg-slate-100"></label>
+            <?php foreach ([['username','Username',$member['username'],'text'],['email','Email',$member['email'],'email'],['display_name','ชื่อในเกม',$member['display_name'],'text'],['birth_date','วันเกิด',$member['birth_date'],'date'],['province','จังหวัด',$member['province'],'text']] as $f): ?>
+                <label class="text-sm font-medium"><?= h($f[1]); ?><input type="<?= h($f[3]); ?>" name="<?= h($f[0]); ?>" value="<?= h($f[2]); ?>" <?= in_array($f[0], ['display_name','birth_date','province'], true) && !$member['player_id'] ? 'disabled' : ''; ?> class="mt-1 w-full border rounded-lg px-3 py-2 disabled:bg-slate-100"></label>
             <?php endforeach; ?>
             <label class="text-sm font-medium">เพศ<input type="text" name="gender" value="<?= h($member['gender']); ?>" <?= !$member['player_id'] ? 'disabled' : ''; ?> class="mt-1 w-full border rounded-lg px-3 py-2 disabled:bg-slate-100" placeholder="ตามข้อมูลที่ผู้สมัครระบุ"></label>
             <div class="md:col-span-3"><button class="px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-semibold">บันทึกข้อมูล</button></div>

@@ -7,9 +7,13 @@ require_once '../includes/group_stage.php';
 require_once '../includes/tournament_categories.php';
 require_once '../includes/registration_status.php';
 require_once '../includes/tournament_demo.php';
+require_once '../includes/tournament_workflow.php';
 requireRole('admin');
-ensureTournamentCategorySchema($pdo);
-ensureRegistrationStatusHistoryTable($pdo);
+$isResultsRequest = isset($_GET['ajax_get_results']);
+if (!$isResultsRequest) {
+    ensureTournamentCategorySchema($pdo);
+    ensureRegistrationStatusHistoryTable($pdo);
+}
 
 // ดึงข้อมูล User ปัจจุบันที่ Login อยู่
 $currentUser = [
@@ -19,7 +23,7 @@ $currentUser = [
 
 $error = '';
 $success = '';
-$flash = consumeFlashMessage();
+$flash = $isResultsRequest ? null : consumeFlashMessage();
 if ($flash) {
     if ($flash['type'] === 'error') $error = $flash['message'];
     else $success = $flash['message'];
@@ -35,21 +39,108 @@ function displayTournamentCategoryLabel(?string $categoryCode, ?string $category
     };
 }
 
+function getTournamentDrawRegistrationSummary(PDO $pdo, int $tournamentId): array
+{
+    $stmt = $pdo->prepare("SELECT
+            SUM(CASE
+                WHEN tr.status = 'approved'
+                    AND tr.participation_status NOT IN ('withdrawn', 'disqualified')
+                THEN 1 ELSE 0
+            END) AS eligible,
+            SUM(CASE
+                WHEN tr.status = 'approved'
+                    AND tr.participation_status NOT IN ('withdrawn', 'disqualified')
+                    AND tr.participation_status = 'qualified_for_draw'
+                THEN 1 ELSE 0
+            END) AS qualified,
+            SUM(CASE
+                WHEN tr.status = 'approved'
+                    AND tr.participation_status NOT IN ('withdrawn', 'disqualified')
+                    AND (
+                        (
+                            EXISTS (
+                                SELECT 1 FROM tournament_registration_members required_member
+                                WHERE required_member.tournament_registration_id = tr.tournament_registration_id
+                                  AND required_member.is_required_for_checkin = 1
+                            )
+                            AND NOT EXISTS (
+                                SELECT 1 FROM tournament_registration_members incomplete_member
+                                WHERE incomplete_member.tournament_registration_id = tr.tournament_registration_id
+                                  AND incomplete_member.is_required_for_checkin = 1
+                                  AND incomplete_member.checkin_status NOT IN ('checked_in', 'waived')
+                            )
+                        )
+                        OR (
+                            NOT EXISTS (
+                                SELECT 1 FROM tournament_registration_members required_member
+                                WHERE required_member.tournament_registration_id = tr.tournament_registration_id
+                                  AND required_member.is_required_for_checkin = 1
+                            )
+                            AND tr.checkin_status = 'checked_in'
+                        )
+                    )
+                THEN 1 ELSE 0
+            END) AS checkin_complete,
+            SUM(CASE WHEN tr.status = 'pending' THEN 1 ELSE 0 END) AS pending
+        FROM tournament_registrations tr
+        WHERE tr.tournament_id = :tournament_id");
+    $stmt->execute(['tournament_id' => $tournamentId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    return [
+        'eligible' => (int) ($row['eligible'] ?? 0),
+        'qualified' => (int) ($row['qualified'] ?? 0),
+        'checkin_complete' => (int) ($row['checkin_complete'] ?? 0),
+        'pending' => (int) ($row['pending'] ?? 0),
+    ];
+}
+
+function getGameTournamentPreset(string $gameName): array
+{
+    $gameName = strtolower(trim($gameName));
+    if (str_contains($gameName, 'rov')) {
+        return ['best_of' => 2, 'group_best_of' => 2, 'playoff_best_of' => 3, 'top8_best_of' => null, 'scoring_mode' => 'rov_group', 'format' => 'group_playoff', 'points_rounds' => null, 'points_advance' => null, 'group_size' => null, 'advance' => 2, 'max_teams' => null];
+    }
+    if (str_contains($gameName, 'tekken')) {
+        return ['best_of' => 3, 'group_best_of' => null, 'playoff_best_of' => 3, 'top8_best_of' => 5, 'scoring_mode' => 'best_of', 'format' => 'double_elimination', 'points_rounds' => null, 'points_advance' => null, 'group_size' => null, 'advance' => null, 'max_teams' => null];
+    }
+    if (str_contains($gameName, 'street fighter')) {
+        return ['best_of' => 3, 'group_best_of' => null, 'playoff_best_of' => 3, 'top8_best_of' => 5, 'scoring_mode' => 'best_of', 'format' => 'double_elimination', 'points_rounds' => null, 'points_advance' => null, 'group_size' => null, 'advance' => null, 'max_teams' => null];
+    }
+    if (str_contains($gameName, 'efootball') || str_contains($gameName, 'e-football')) {
+        return ['best_of' => 1, 'group_best_of' => 1, 'playoff_best_of' => 3, 'top8_best_of' => null, 'scoring_mode' => 'best_of', 'format' => 'group_playoff', 'points_rounds' => null, 'points_advance' => null, 'group_size' => null, 'advance' => 2, 'max_teams' => null];
+    }
+    if (str_contains($gameName, 'free fire')) {
+        return ['best_of' => 1, 'group_best_of' => null, 'playoff_best_of' => null, 'top8_best_of' => null, 'scoring_mode' => 'points', 'format' => 'group_playoff', 'points_rounds' => 4, 'points_advance' => 6, 'group_size' => 12, 'advance' => 6, 'max_teams' => 24];
+    }
+    if (str_contains($gameName, 'roblox')) {
+        return ['best_of' => 1, 'group_best_of' => null, 'playoff_best_of' => null, 'top8_best_of' => null, 'scoring_mode' => 'points', 'format' => 'group_playoff', 'points_rounds' => 5, 'points_advance' => 1, 'group_size' => null, 'advance' => null, 'max_teams' => null];
+    }
+    return ['best_of' => 5, 'group_best_of' => null, 'playoff_best_of' => null, 'top8_best_of' => null, 'scoring_mode' => 'legacy', 'format' => 'single_elimination', 'points_rounds' => null, 'points_advance' => null, 'group_size' => null, 'advance' => null, 'max_teams' => null];
+}
+
 function getTournamentCloseSummary(PDO $pdo, int $tournamentId): array
 {
     $tournamentId = max(0, $tournamentId);
     $summary = ['total_matches' => 0, 'completed_matches' => 0, 'pending_matches' => 0, 'categories' => [], 'problems' => []];
     if ($tournamentId === 0) return $summary;
 
-    $matchStmt = $pdo->prepare("SELECT m.tournament_category_id, m.bracket_type, m.round_number, m.status, m.result_type, m.winner_team_id,
+    $scoringStmt = $pdo->prepare('SELECT scoring_mode FROM tournaments WHERE tournament_id = :tournament_id');
+    $scoringStmt->execute(['tournament_id' => $tournamentId]);
+    $isPointsTournament = $scoringStmt->fetchColumn() === 'points';
+    $matchStmt = $pdo->prepare("SELECT m.tournament_category_id, m.group_id, m.bracket_type, m.round_number, m.match_index,
+            m.status, m.result_type, m.winner_team_id, m.team1_score, m.team2_score, t.scoring_mode,
+            tg.stage_type AS group_stage_type,
             tc.category_code,
             COALESCE(tc.label, tc.category_code, 'ไม่ระบุประเภท') AS category_label,
             COALESCE(winner.name, winner_user.username, '-') AS winner_name
         FROM matches m
+        JOIN tournaments t ON t.tournament_id = m.tournament_id
         LEFT JOIN tournament_categories tc ON tc.tournament_category_id = m.tournament_category_id
         LEFT JOIN teams winner ON winner.team_id = m.winner_team_id
         LEFT JOIN players winner_player ON winner_player.player_id = m.winner_team_id
         LEFT JOIN users winner_user ON winner_user.user_id = winner_player.user_id
+        LEFT JOIN tournament_groups tg ON tg.tournament_group_id = m.group_id
         WHERE m.tournament_id = :tournament_id
         ORDER BY m.tournament_category_id, m.round_number, m.match_index");
     $matchStmt->execute(['tournament_id' => $tournamentId]);
@@ -63,7 +154,11 @@ function getTournamentCloseSummary(PDO $pdo, int $tournamentId): array
         $categoryId = (int) ($match['tournament_category_id'] ?? 0);
         $matchesByCategory[$categoryId]['label'] = displayTournamentCategoryLabel($match['category_code'] ?? null, $match['category_label'] ?? null);
         $matchesByCategory[$categoryId]['matches'][] = $match;
-        if ($isFinished && $match['result_type'] !== 'bye' && empty($match['winner_team_id'])) {
+        $validGroupDraw = ($match['scoring_mode'] ?? '') === 'rov_group'
+            && !empty($match['group_id'])
+            && $match['team1_score'] !== null
+            && $match['team1_score'] == $match['team2_score'];
+        if ($isFinished && $match['result_type'] !== 'bye' && empty($match['winner_team_id']) && !$validGroupDraw) {
             $summary['problems'][] = $matchesByCategory[$categoryId]['label'] . ': Match จบแล้วแต่ยังไม่มี Winner';
         }
         if (!$isFinished && !$isOptionalReset) $summary['problems'][] = $matchesByCategory[$categoryId]['label'] . ': มี Match ค้าง';
@@ -75,24 +170,42 @@ function getTournamentCloseSummary(PDO $pdo, int $tournamentId): array
     foreach ($categoryStmt->fetchAll(PDO::FETCH_ASSOC) as $category) {
         $categoryId = (int) $category['tournament_category_id'];
         $categoryMatches = $matchesByCategory[$categoryId]['matches'] ?? [];
-        $finalCandidates = array_values(array_filter($categoryMatches, static function (array $match): bool {
-            return in_array($match['bracket_type'], ['grand_final', 'grand_final_reset'], true);
-        }));
         $final = null;
-        foreach ($finalCandidates as $match) {
-            $isFinished = in_array($match['status'], ['completed', 'walkover', 'cancelled'], true);
-            $isReset = $match['bracket_type'] === 'grand_final_reset';
-            if ($final === null || ($isFinished && !$isReset && !in_array($final['status'], ['completed', 'walkover'], true)) || ($isFinished && $isReset && $final['bracket_type'] !== 'grand_final_reset')) {
-                $final = $match;
+        if ($isPointsTournament) {
+            foreach ($categoryMatches as $match) {
+                if (($match['group_stage_type'] ?? '') !== 'final') continue;
+                if ($final === null
+                    || (int) $match['round_number'] > (int) $final['round_number']
+                    || ((int) $match['round_number'] === (int) $final['round_number']
+                        && (int) $match['match_index'] > (int) $final['match_index'])) {
+                    $final = $match;
+                }
+            }
+        } else {
+            $finalCandidates = array_values(array_filter($categoryMatches, static function (array $match): bool {
+                return in_array($match['bracket_type'], ['grand_final', 'grand_final_reset'], true);
+            }));
+            foreach ($finalCandidates as $match) {
+                $isFinished = in_array($match['status'], ['completed', 'walkover', 'cancelled'], true);
+                $isReset = $match['bracket_type'] === 'grand_final_reset';
+                if ($final === null || ($isFinished && !$isReset && !in_array($final['status'], ['completed', 'walkover'], true)) || ($isFinished && $isReset && $final['bracket_type'] !== 'grand_final_reset')) {
+                    $final = $match;
+                }
             }
         }
-        if ($final === null) {
-            foreach ($categoryMatches as $match) {
+        if ($final === null && !$isPointsTournament) {
+            $playoffMatches = array_values(array_filter($categoryMatches, static function (array $match): bool {
+                return empty($match['group_id']);
+            }));
+            foreach ($playoffMatches ?: $categoryMatches as $match) {
                 if (in_array($match['status'], ['cancelled'], true)
                     && empty($match['winner_team_id'])) {
                     continue;
                 }
-                if ($final === null || (int) $match['round_number'] > (int) $final['round_number']) {
+                if ($final === null
+                    || (int) $match['round_number'] > (int) $final['round_number']
+                    || ((int) $match['round_number'] === (int) $final['round_number']
+                        && (int) $match['match_index'] > (int) $final['match_index'])) {
                     $final = $match;
                 }
             }
@@ -291,7 +404,7 @@ function syncTournamentFormatFromCategories(PDO $pdo, int $tournamentId): string
     return $effectiveFormat;
 }
 
-function saveTournamentFormCategories(PDO $pdo, int $tournamentId, array $input): void
+function saveTournamentFormCategories(PDO $pdo, int $tournamentId, array $input, ?string $requiredFormat = null, ?array $preset = null): void
 {
     $codes = array_values(array_unique(array_filter(array_map('strtolower', $input['category_codes'] ?? []))));
     $pdo->prepare('UPDATE tournament_categories SET is_active = 0 WHERE tournament_id = :tournament_id')
@@ -306,10 +419,12 @@ function saveTournamentFormCategories(PDO $pdo, int $tournamentId, array $input)
             WHERE tournament_category_id = :category_id AND tournament_id = :tournament_id');
         $stmt->execute([
             'label' => ['male' => 'ชาย', 'female' => 'หญิง', 'open' => 'ทั่วไป'][$code],
-            'max_participants' => max(1, (int) ($input['category_max_participants'][$code] ?? $input['max_teams'] ?? 1)),
-            'format' => $input['category_format'][$code] ?? $input['format'] ?? 'single_elimination',
-            'group_size' => (($input['category_group_size'][$code] ?? '') !== '') ? max(2, (int) $input['category_group_size'][$code]) : null,
-            'advance' => (($input['category_advance'][$code] ?? '') !== '') ? max(1, (int) $input['category_advance'][$code]) : null,
+            'max_participants' => trim((string) ($input['category_max_participants'][$code] ?? '')) !== ''
+                ? max(1, (int) $input['category_max_participants'][$code])
+                : max(1, (int) ($preset['max_teams'] ?? $input['max_teams'] ?? 1)),
+            'format' => $requiredFormat ?? ($input['category_format'][$code] ?? $input['format'] ?? 'single_elimination'),
+            'group_size' => $preset['group_size'] ?? ((($input['category_group_size'][$code] ?? '') !== '') ? max(2, (int) $input['category_group_size'][$code]) : null),
+            'advance' => $preset['advance'] ?? ((($input['category_advance'][$code] ?? '') !== '') ? max(1, (int) $input['category_advance'][$code]) : null),
             'starters' => (($input['category_starters'][$code] ?? '') !== '') ? max(0, (int) $input['category_starters'][$code]) : null,
             'substitutes' => (($input['category_substitutes'][$code] ?? '') !== '') ? max(0, (int) $input['category_substitutes'][$code]) : null,
             'required_roles' => is_array($input['category_required_roles'][$code] ?? null) ? implode(',', $input['category_required_roles'][$code]) : (trim($input['category_required_roles'][$code] ?? '') ?: null),
@@ -321,7 +436,7 @@ function saveTournamentFormCategories(PDO $pdo, int $tournamentId, array $input)
 
     $preferredFormat = syncTournamentFormatFromCategories($pdo, $tournamentId);
     if ($input['category_codes'] ?? []) {
-        $selectedFormat = trim((string) ($input['category_format'][array_values(array_filter(array_map('strtolower', array_values($input['category_codes'] ?? []))))[0]] ?? $input['format'] ?? $preferredFormat));
+        $selectedFormat = trim((string) ($requiredFormat ?? ($input['category_format'][array_values(array_filter(array_map('strtolower', array_values($input['category_codes'] ?? []))))[0]] ?? $input['format'] ?? $preferredFormat)));
         if ($selectedFormat !== '' && in_array($selectedFormat, ['single_elimination', 'double_elimination', 'group_playoff'], true)) {
             $pdo->prepare('UPDATE tournaments SET format = :format WHERE tournament_id = :tournament_id')
                 ->execute(['format' => $selectedFormat, 'tournament_id' => $tournamentId]);
@@ -549,25 +664,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compl
             $error = 'Tournament ต้องอยู่ในสถานะกำลังแข่งขันเท่านั้นจึงจะจบการแข่งขันได้';
         } else {
             $forceClose = filter_var($_POST['force'] ?? false, FILTER_VALIDATE_BOOLEAN);
-            cancelOrphanBracketMatches($pdo, $tournamentId);
-            if (!$forceClose && !isTournamentReadyToClose($pdo, $tournamentId)) {
-                $error = 'ยังมี Match ค้างหรือ Match ที่ยังไม่มีผู้ชนะ จึงยังจบ Tournament ไม่ได้';
-            } else {
-                try {
-                    $pdo->beginTransaction();
-                    $updated = $pdo->prepare("UPDATE tournaments SET status = 'completed', completed_at = NOW(), completed_by = :completed_by WHERE tournament_id = :tournament_id AND status = 'ongoing'")->execute([
+            try {
+                $pdo->beginTransaction();
+                $lockStmt = $pdo->prepare('SELECT status FROM tournaments WHERE tournament_id = :tournament_id FOR UPDATE');
+                $lockStmt->execute(['tournament_id' => $tournamentId]);
+                if ($lockStmt->fetchColumn() !== 'ongoing') {
+                    throw new RuntimeException('สถานะ Tournament เปลี่ยนไปแล้ว');
+                }
+
+                cancelOrphanBracketMatches($pdo, $tournamentId);
+                if (!$forceClose && !isTournamentReadyToClose($pdo, $tournamentId)) {
+                    $pdo->rollBack();
+                    $error = 'ยังมี Match ค้างหรือ Match ที่ยังไม่มีผู้ชนะ จึงยังจบ Tournament ไม่ได้';
+                } else {
+                    $updateStmt = $pdo->prepare("UPDATE tournaments
+                        SET status = 'completed', completed_at = NOW(), completed_by = :completed_by
+                        WHERE tournament_id = :tournament_id AND status = 'ongoing'");
+                    $updateStmt->execute([
                         'completed_by' => (int) ($_SESSION['user_id'] ?? 0),
                         'tournament_id' => $tournamentId,
                     ]);
-                    if (!$updated || $pdo->query('SELECT ROW_COUNT()')->fetchColumn() !== '1') {
+                    if ($updateStmt->rowCount() !== 1) {
                         throw new RuntimeException('สถานะ Tournament เปลี่ยนไปแล้ว');
                     }
                     $pdo->commit();
                     $success = $forceClose ? 'ยืนยันจบการแข่งขันแบบบังคับเรียบร้อยแล้ว' : 'ยืนยันจบการแข่งขันเรียบร้อยแล้ว';
-                } catch (Throwable $exception) {
-                    if ($pdo->inTransaction()) $pdo->rollBack();
-                    $error = 'ไม่สามารถจบการแข่งขันได้: ' . $exception->getMessage();
                 }
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = 'ไม่สามารถจบการแข่งขันได้: ' . $exception->getMessage();
             }
         }
     }
@@ -605,10 +730,13 @@ if (isset($_GET['ajax_get_bracket'])) {
     $categoryId = (int) ($_GET['category_id'] ?? 0);
     $sql = 'SELECT m.match_id, m.round_number, m.match_index, m.bracket_type, m.status, m.result_type,
             m.wo_reason, m.team1_id, m.team2_id, m.team1_score, m.team2_score, m.scheduled_at,
-            m.venue_name, m.venue_area, COALESCE(t1.name, u1.username, \'รอผู้ชนะรอบก่อน\') AS team1_name,
-            COALESCE(t2.name, u2.username, \'รอผู้ชนะรอบก่อน\') AS team2_name,
-            tc.category_code, tc.label AS category_label, tg.name AS group_name
+            m.venue_name, m.venue_area, COALESCE(t1.name, u1.username, \'ยังไม่ระบุผู้แข่งขัน\') AS team1_name,
+            COALESCE(t2.name, u2.username, \'ยังไม่ระบุผู้แข่งขัน\') AS team2_name,
+            tc.category_code, tc.label AS category_label, tg.name AS group_name, tg.stage_type AS group_stage_type,
+            t.scoring_mode, g.name AS game_name
         FROM matches m
+        JOIN tournaments t ON t.tournament_id = m.tournament_id
+        JOIN games g ON g.game_id = t.game_id
         LEFT JOIN teams t1 ON t1.team_id = m.team1_id
         LEFT JOIN players p1 ON p1.player_id = m.team1_id
         LEFT JOIN users u1 ON u1.user_id = p1.user_id
@@ -624,19 +752,50 @@ if (isset($_GET['ajax_get_bracket'])) {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $matches = $stmt->fetchAll();
-    if (!$matches) { echo '<div class="p-8 text-center text-slate-400 text-sm">ยังไม่มี Group หรือ Bracket</div>'; exit; }
+    if (!$matches) { echo '<div class="p-8 text-center text-slate-400 text-sm">ยังไม่มีข้อมูลสายการแข่งขัน</div>'; exit; }
     $currentCategory = null;
     foreach ($matches as $match) {
+        $isPointsRound = $match['result_type'] === 'points_round' && $match['scoring_mode'] === 'points';
+        $isFreeFireRound = $isPointsRound && stripos((string) $match['game_name'], 'Free Fire') !== false;
         $matchCategoryLabel = displayTournamentCategoryLabel($match['category_code'] ?? null, $match['category_label'] ?? null);
         if ($currentCategory !== $matchCategoryLabel) {
             if ($currentCategory !== null) echo '</div>';
             $currentCategory = $matchCategoryLabel;
             echo '<h4 class="border-b border-slate-200 pb-2 pt-3 font-bold text-slate-900">' . htmlspecialchars($currentCategory) . '</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3">';
         }
-        $resultLabel = ($match['result_type'] === 'bye') ? 'Bye' : (($match['status'] === 'walkover') ? 'WO' : (($match['status'] === 'completed') ? 'จบแล้ว' : 'รอแข่ง'));
+        $resultLabel = ($match['result_type'] === 'bye') ? 'ผ่านบาย' : (($match['status'] === 'walkover') ? 'ชนะบาย' : (($match['status'] === 'completed') ? 'จบการแข่งขัน' : 'รอแข่งขัน'));
         $resultClass = $match['result_type'] === 'bye' ? 'bg-amber-50 text-amber-700' : (($match['status'] === 'walkover') ? 'bg-rose-50 text-rose-700' : (($match['status'] === 'completed') ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'));
-        $stage = $match['group_name'] ? 'group' : 'knockout';
-        echo '<article data-bracket-category="' . htmlspecialchars($currentCategory, ENT_QUOTES, 'UTF-8') . '" data-bracket-stage="' . $stage . '" class="bracket-card rounded-xl border border-slate-200 bg-white p-3 space-y-2"><div class="flex items-center justify-between text-[11px] text-slate-500"><b>' . htmlspecialchars($match['group_name'] ?: strtoupper($match['bracket_type'] ?: 'KNOCKOUT')) . ' · รอบ ' . (int) $match['round_number'] . ' · Match #' . ((int) $match['match_index'] + 1) . '</b><span class="rounded-full px-2 py-1 font-bold ' . $resultClass . '">' . $resultLabel . '</span></div><div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm font-bold"><span>' . htmlspecialchars($match['team1_name']) . '</span><span class="font-mono text-brand-orange">' . ($match['team1_score'] !== null ? (int) $match['team1_score'] : 'VS') . '</span><span class="text-right">' . htmlspecialchars($match['team2_name']) . ' <b class="font-mono text-brand-orange">' . ($match['team2_score'] !== null ? (int) $match['team2_score'] : '') . '</b></span></div>';
+        $stage = $isPointsRound
+            ? (($match['group_stage_type'] ?? '') === 'final' ? 'final' : 'group')
+            : ($match['group_name'] ? 'group' : 'knockout');
+        $roundLabel = trim((string) ($match['group_name'] ?? ''));
+        if ($roundLabel !== '') {
+            $roundLabel = preg_replace('/\bOPEN\b/i', 'โอเพ่น', $roundLabel);
+            $roundLabel = preg_replace('/\bGroup\b/i', 'กลุ่ม', $roundLabel);
+            $roundLabel = preg_replace('/\bFinal\b/i', 'รอบชิงชนะเลิศ', $roundLabel);
+        } else {
+            $roundLabel = match ($match['bracket_type'] ?? '') {
+                'winners' => 'สายผู้ชนะ',
+                'losers' => 'สายผู้แพ้',
+                'grand_final' => 'รอบชิงชนะเลิศ',
+                'grand_final_reset' => 'รอบชิงชนะเลิศ (แข่งขันใหม่)',
+                default => 'รอบคัดออก',
+            };
+        }
+        if ($isPointsRound) {
+            $resultLabel = $match['status'] === 'completed' ? 'บันทึกคะแนนแล้ว' : 'รอแข่งขัน';
+            $resultClass = $match['status'] === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600';
+            $roundDescription = $isFreeFireRound ? 'เกมที่ ' . (int) $match['round_number'] : 'รอบที่ ' . (int) $match['round_number'];
+            $scoreHtml = $match['status'] === 'completed'
+                ? '<p class="text-sm font-bold text-slate-700">คะแนนรวม: <span class="font-mono text-brand-orange">' . (int) $match['team1_score'] . '</span> คะแนน</p>'
+                : '<p class="text-sm text-slate-500">ยังไม่มีผลคะแนน</p>';
+            $roundName = $roundLabel . ' · ' . $roundDescription;
+            $gameAttribute = htmlspecialchars((string) $match['game_name'], ENT_QUOTES, 'UTF-8');
+            echo '<article data-bracket-category="' . htmlspecialchars($currentCategory, ENT_QUOTES, 'UTF-8') . '" data-bracket-stage="' . $stage . '" data-points-mode="true" data-game-name="' . $gameAttribute . '" class="bracket-card rounded-xl border border-slate-200 bg-white p-3 space-y-2"><div class="flex items-center justify-between text-[11px] text-slate-500"><b>' . htmlspecialchars($roundName) . '</b><span class="rounded-full px-2 py-1 font-bold ' . $resultClass . '">' . $resultLabel . '</span></div>' . $scoreHtml;
+        } else {
+            $roundName = $roundLabel . ' · รอบ ' . (int) $match['round_number'] . ' · คู่ที่ ' . ((int) $match['match_index'] + 1);
+            echo '<article data-bracket-category="' . htmlspecialchars($currentCategory, ENT_QUOTES, 'UTF-8') . '" data-bracket-stage="' . $stage . '" class="bracket-card rounded-xl border border-slate-200 bg-white p-3 space-y-2"><div class="flex items-center justify-between text-[11px] text-slate-500"><b>' . htmlspecialchars($roundName) . '</b><span class="rounded-full px-2 py-1 font-bold ' . $resultClass . '">' . $resultLabel . '</span></div><div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm font-bold"><span>' . htmlspecialchars($match['team1_name']) . '</span><span class="font-mono text-brand-orange">' . ($match['team1_score'] !== null ? (int) $match['team1_score'] : 'VS') . '</span><span class="text-right">' . htmlspecialchars($match['team2_name']) . ' <b class="font-mono text-brand-orange">' . ($match['team2_score'] !== null ? (int) $match['team2_score'] : '') . '</b></span></div>';
+        }
         if ($match['scheduled_at'] || $match['venue_name'] || $match['wo_reason']) echo '<p class="text-[11px] text-slate-500">' . ($match['scheduled_at'] ? htmlspecialchars(date('d/m/Y H:i', strtotime($match['scheduled_at']))) : 'ยังไม่กำหนดเวลา') . ($match['venue_name'] ? ' · ' . htmlspecialchars($match['venue_name']) : '') . ($match['venue_area'] ? ' / ' . htmlspecialchars($match['venue_area']) : '') . ($match['wo_reason'] ? '<br><span class="text-rose-600">เหตุผล: ' . htmlspecialchars($match['wo_reason']) . '</span>' : '') . '</p>';
         echo '</article>';
     }
@@ -719,111 +878,280 @@ if (isset($_GET['ajax_get_registrations'])) {
 // AJAX: ดึงตารางสรุปคะแนนสำหรับ Modal
 // ==========================================
 if (isset($_GET['ajax_get_results'])) {
-    $tid = (int)$_GET['ajax_get_results'];
-    $filterCategory = $_GET['category'] ?? 'all';
-
-    // ปรับให้ดึง category จาก tournament_registrations แทนตาราง teams
-    $sql = "
-        SELECT t.team_id, t.name, tr.category AS team_category 
-        FROM tournament_registrations tr
-        JOIN teams t ON t.team_id = tr.team_id
-        WHERE tr.tournament_id = :tid AND (tr.status = 'approved' OR tr.status = 'checked_in')
-    ";
-    $params = ['tid' => $tid];
-
-    if ($filterCategory !== 'all') {
-        $sql .= " AND tr.category = :cat";
-        $params['cat'] = $filterCategory;
-    }
-
-    $teamsStmt = $pdo->prepare($sql);
-    $teamsStmt->execute($params);
-    $teams = $teamsStmt->fetchAll(PDO::FETCH_ASSOC);
-
-    if (empty($teams)) {
-        echo '<div class="p-8 text-center text-slate-400 text-xs">ยังไม่มีทีมที่อนุมัติเข้าร่วมในประเภทนี้</div>';
+    $tid = (int) $_GET['ajax_get_results'];
+    $filterCategory = strtolower(trim((string) ($_GET['category'] ?? 'all')));
+    $tournamentStmt = $pdo->prepare('SELECT t.scoring_mode, t.format, g.name AS game_name, g.play_mode
+        FROM tournaments t JOIN games g ON g.game_id = t.game_id
+        WHERE t.tournament_id = :tournament_id');
+    $tournamentStmt->execute(['tournament_id' => $tid]);
+    $tournament = $tournamentStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$tournament) {
+        http_response_code(404);
+        echo '<div class="p-8 text-center text-rose-600 text-xs">ไม่พบ Tournament</div>';
         exit;
     }
 
-    $matchesStmt = $pdo->prepare("
-        SELECT team1_id, team2_id, team1_score, team2_score, status 
-        FROM matches 
-        WHERE tournament_id = :tid AND status IN ('completed', 'walkover')
-    ");
-    $matchesStmt->execute(['tid' => $tid]);
-    $matches = $matchesStmt->fetchAll(PDO::FETCH_ASSOC);
+    $playMode = strtolower((string) $tournament['play_mode']);
+    $isSolo = $playMode === 'solo';
+    $isPoints = ($tournament['scoring_mode'] ?? '') === 'points';
+    $isFreeFire = stripos((string) $tournament['game_name'], 'Free Fire') !== false;
+    $categoryFilter = $filterCategory !== 'all' ? ' AND LOWER(TRIM(tc.category_code)) = :category' : '';
+    $categoryParams = ['tournament_id' => $tid];
+    if ($filterCategory !== 'all') $categoryParams['category'] = $filterCategory;
 
-    $stats = [];
-    foreach ($teams as $team) {
-        $stats[$team['team_id']] = [
-            'name' => $team['name'],
-            'category' => $team['team_category'],
-            'wins' => 0,
-            'losses' => 0,
-            'points' => 0
+    if ($isPoints) {
+        $participantName = $isSolo
+            ? "COALESCE(p.display_name, u.username, 'ผู้แข่งขัน')"
+            : "COALESCE(team.name, 'ทีมแข่งขัน')";
+        $participantJoin = $isSolo
+            ? 'LEFT JOIN players p ON p.player_id = gp.participant_id LEFT JOIN users u ON u.user_id = p.user_id'
+            : 'LEFT JOIN teams team ON team.team_id = gp.participant_id';
+        $pointsStmt = $pdo->prepare("SELECT tg.tournament_group_id AS group_id, tg.name AS group_name,
+                tg.stage_type, tc.category_code, tc.label AS category_label,
+                gp.participant_id, {$participantName} AS participant_name,
+                COUNT(DISTINCT pr.match_id) AS rounds_played,
+                COALESCE(SUM(CASE WHEN pr.placement = 1 THEN 1 ELSE 0 END), 0) AS first_places,
+                COALESCE(SUM(pr.kills), 0) AS kills,
+                COALESCE(SUM(pr.points), 0) AS total_points,
+                COALESCE(SUM(pr.placement), 0) AS placement_total,
+                COALESCE(MAX(CASE WHEN pr.round_number = (
+                    SELECT MAX(pr2.round_number) FROM points_round_results pr2
+                    WHERE pr2.group_id = gp.group_id
+                ) THEN pr.placement END), 255) AS last_place
+            FROM tournament_groups tg
+            JOIN group_participants gp ON gp.group_id = tg.tournament_group_id
+            JOIN tournament_categories tc ON tc.tournament_category_id = tg.tournament_category_id
+            {$participantJoin}
+            LEFT JOIN points_round_results pr
+                ON pr.group_id = gp.group_id AND pr.participant_id = gp.participant_id
+            WHERE tg.tournament_id = :tournament_id {$categoryFilter}
+            GROUP BY tg.tournament_group_id, tg.name, tg.stage_type,
+                tc.category_code, tc.label, gp.group_id, gp.participant_id, participant_name
+            ORDER BY tc.tournament_category_id,
+                CASE WHEN tg.stage_type = 'group' THEN 0 ELSE 1 END,
+                tg.tournament_group_id");
+        $pointsStmt->execute($categoryParams);
+        $groups = [];
+        foreach ($pointsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $groupId = (int) $row['group_id'];
+            $groups[$groupId]['name'] = (string) $row['group_name'];
+            $groups[$groupId]['stage'] = (string) $row['stage_type'];
+            $groups[$groupId]['category'] = (string) ($row['category_code'] ?? 'open');
+            $groups[$groupId]['category_label'] = (string) ($row['category_label'] ?? $row['category_code'] ?? 'open');
+            $groups[$groupId]['rows'][] = $row;
+        }
+        if (!$groups) {
+            echo '<div class="p-8 text-center text-slate-400 text-xs">ยังไม่มีผลคะแนนที่บันทึกไว้ในรอบคะแนน</div>';
+            exit;
+        }
+
+        foreach ($groups as $group) {
+            usort($group['rows'], static function (array $left, array $right) use ($isFreeFire): int {
+                $leftOrder = [(int) $left['total_points']];
+                $rightOrder = [(int) $right['total_points']];
+                if ($isFreeFire) {
+                    $leftOrder = array_merge($leftOrder, [(int) $left['first_places'], (int) $left['kills'], -(int) $left['last_place']]);
+                    $rightOrder = array_merge($rightOrder, [(int) $right['first_places'], (int) $right['kills'], -(int) $right['last_place']]);
+                } else {
+                    $leftOrder[] = -(int) $left['placement_total'];
+                    $rightOrder[] = -(int) $right['placement_total'];
+                }
+                $leftOrder[] = -(int) $left['participant_id'];
+                $rightOrder[] = -(int) $right['participant_id'];
+                return $rightOrder <=> $leftOrder;
+            });
+        }
+
+        $escape = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+        foreach ($groups as $group) {
+            $categoryLabel = displayTournamentCategoryLabel($group['category'], $group['category_label']);
+            echo '<section class="mb-6 last:mb-0">';
+            echo '<h4 class="mb-2 flex flex-wrap items-center gap-2 text-sm font-bold text-slate-800">'
+                . $escape($categoryLabel) . ' · ' . $escape($group['name']) . '</h4>';
+            echo '<div class="overflow-x-auto"><table class="w-full min-w-[560px] text-left text-sm text-slate-600">';
+            echo '<thead class="bg-slate-100/70 text-xs font-bold text-slate-500"><tr>'
+                . '<th class="p-3 text-center">อันดับ</th><th class="p-3">' . ($isSolo ? 'นักกีฬา' : 'ทีม') . '</th>'
+                . '<th class="p-3 text-center">รอบที่มีผล</th><th class="p-3 text-center">ได้อันดับ 1</th>';
+            if ($isFreeFire) echo '<th class="p-3 text-center">Kill</th>';
+            echo '<th class="p-3 text-right">คะแนนรวม</th></tr></thead><tbody class="divide-y divide-slate-100">';
+            foreach ($group['rows'] as $index => $row) {
+                $rank = $index + 1;
+                $played = (int) $row['rounds_played'];
+                echo '<tr class="hover:bg-slate-50"><td class="p-3 text-center font-bold">'
+                    . $rank . '</td><td class="p-3 font-bold text-slate-900">' . $escape((string) $row['participant_name']) . '</td>'
+                    . '<td class="p-3 text-center">' . $played . '</td><td class="p-3 text-center">' . (int) $row['first_places'] . '</td>';
+                if ($isFreeFire) echo '<td class="p-3 text-center">' . (int) $row['kills'] . '</td>';
+                echo '<td class="p-3 text-right font-bold text-brand-orange">' . number_format((int) $row['total_points']) . ' คะแนน</td></tr>';
+            }
+            echo '</tbody></table></div></section>';
+        }
+        exit;
+    }
+
+    $participantSql = $isSolo
+        ? "SELECT tr.tournament_category_id, tc.category_code, tc.label AS category_label,
+                  tr.player_id AS participant_id, COALESCE(p.display_name, u.username, 'ผู้แข่งขัน') AS participant_name
+           FROM tournament_registrations tr
+           JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+           LEFT JOIN players p ON p.player_id = tr.player_id
+           LEFT JOIN users u ON u.user_id = p.user_id
+           WHERE tr.tournament_id = :tournament_id AND tr.player_id IS NOT NULL
+             AND tr.status IN ('approved', 'checked_in') {$categoryFilter}"
+        : "SELECT tr.tournament_category_id, tc.category_code, tc.label AS category_label,
+                  tr.team_id AS participant_id, COALESCE(team.name, 'ทีมแข่งขัน') AS participant_name
+           FROM tournament_registrations tr
+           JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+           LEFT JOIN teams team ON team.team_id = tr.team_id
+           WHERE tr.tournament_id = :tournament_id AND tr.team_id IS NOT NULL
+             AND tr.status IN ('approved', 'checked_in') {$categoryFilter}";
+    $participantsStmt = $pdo->prepare($participantSql);
+    $participantsStmt->execute($categoryParams);
+    $participants = [];
+    foreach ($participantsStmt->fetchAll(PDO::FETCH_ASSOC) as $participant) {
+        $key = (int) $participant['tournament_category_id'] . ':' . (int) $participant['participant_id'];
+        $participants[$key] = [
+            'category_id' => (int) $participant['tournament_category_id'],
+            'category' => (string) ($participant['category_code'] ?? 'open'),
+            'category_label' => (string) ($participant['category_label'] ?? $participant['category_code'] ?? 'open'),
+            'participant_id' => (int) $participant['participant_id'],
+            'name' => (string) $participant['participant_name'],
+            'group_played' => 0,
+            'group_wins' => 0,
+            'group_draws' => 0,
+            'group_losses' => 0,
+            'group_points' => 0,
+            'score_diff' => 0,
+            'playoff_wins' => 0,
+            'playoff_losses' => 0,
         ];
     }
+    if (!$participants) {
+        echo '<div class="p-8 text-center text-slate-400 text-xs">ยังไม่มีผู้แข่งขันที่อนุมัติในประเภทนี้</div>';
+        exit;
+    }
 
-    foreach ($matches as $m) {
-        $t1 = $m['team1_id'];
-        $t2 = $m['team2_id'];
-        $s1 = (int)$m['team1_score'];
-        $s2 = (int)$m['team2_score'];
+    $matchesStmt = $pdo->prepare("SELECT m.tournament_category_id, m.group_id, m.team1_id, m.team2_id,
+                m.team1_score, m.team2_score, m.winner_team_id, m.status, m.result_type
+            FROM matches m
+            WHERE m.tournament_id = :tournament_id
+              AND m.status IN ('completed', 'walkover')
+              AND (m.result_type IS NULL OR m.result_type <> 'bye')
+              AND m.team1_id IS NOT NULL AND m.team2_id IS NOT NULL
+            ORDER BY m.round_number, m.match_index");
+    $matchesStmt->execute(['tournament_id' => $tid]);
+    $groupWinPoints = ($tournament['scoring_mode'] ?? '') === 'rov_group' ? 2 : 3;
+    foreach ($matchesStmt->fetchAll(PDO::FETCH_ASSOC) as $match) {
+        $categoryId = (int) ($match['tournament_category_id'] ?? 0);
+        $participantKeys = [
+            $categoryId . ':' . (int) $match['team1_id'],
+            $categoryId . ':' . (int) $match['team2_id'],
+        ];
+        if (!isset($participants[$participantKeys[0]], $participants[$participantKeys[1]])) continue;
 
-        if (!isset($stats[$t1]) || !isset($stats[$t2])) continue;
-
-        if ($m['status'] == 'walkover') {
-            if ($s1 > $s2) {
-                $stats[$t1]['wins']++; $stats[$t1]['points'] += 3;
-                $stats[$t2]['losses']++;
-            } else {
-                $stats[$t2]['wins']++; $stats[$t2]['points'] += 3;
-                $stats[$t1]['losses']++;
+        $isGroupMatch = !empty($match['group_id']);
+        $winnerId = (int) ($match['winner_team_id'] ?? 0);
+        $score1 = (int) ($match['team1_score'] ?? 0);
+        $score2 = (int) ($match['team2_score'] ?? 0);
+        $isDraw = $isGroupMatch && $winnerId === 0 && $score1 === $score2;
+        foreach ($participantKeys as $side => $key) {
+            $participantId = (int) $match[$side === 0 ? 'team1_id' : 'team2_id'];
+            $ownScore = $side === 0 ? $score1 : $score2;
+            $opponentScore = $side === 0 ? $score2 : $score1;
+            $isWinner = $winnerId === $participantId;
+            if ($isGroupMatch) {
+                $participants[$key]['group_played']++;
+                $participants[$key]['score_diff'] += $ownScore - $opponentScore;
+                if ($isDraw) {
+                    $participants[$key]['group_draws']++;
+                    $participants[$key]['group_points']++;
+                } elseif ($isWinner) {
+                    $participants[$key]['group_wins']++;
+                    $participants[$key]['group_points'] += $groupWinPoints;
+                } else {
+                    $participants[$key]['group_losses']++;
+                }
+            } elseif ($isWinner) {
+                $participants[$key]['playoff_wins']++;
+            } elseif ($winnerId > 0) {
+                $participants[$key]['playoff_losses']++;
             }
+        }
+    }
+
+    $byCategory = [];
+    foreach ($participants as $participant) {
+        $byCategory[$participant['category_id']]['label'] = displayTournamentCategoryLabel(
+            $participant['category'],
+            $participant['category_label']
+        );
+        $byCategory[$participant['category_id']]['rows'][] = $participant;
+    }
+    foreach ($byCategory as &$categoryRows) {
+        usort($categoryRows['rows'], static function (array $left, array $right) use ($tournament): int {
+            if (($tournament['format'] ?? '') === 'group_playoff') {
+                return [
+                    (int) $right['playoff_wins'],
+                    -(int) $right['playoff_losses'],
+                    (int) $right['group_points'],
+                    (int) $right['score_diff'],
+                    (int) $right['group_wins'],
+                    (int) $right['group_draws'],
+                ] <=> [
+                    (int) $left['playoff_wins'],
+                    -(int) $left['playoff_losses'],
+                    (int) $left['group_points'],
+                    (int) $left['score_diff'],
+                    (int) $left['group_wins'],
+                    (int) $left['group_draws'],
+                ];
+            }
+            return [
+                (int) $right['playoff_wins'],
+                -(int) $right['playoff_losses'],
+                (int) $right['participant_id'],
+            ] <=> [
+                (int) $left['playoff_wins'],
+                -(int) $left['playoff_losses'],
+                (int) $left['participant_id'],
+            ];
+        });
+    }
+    unset($categoryRows);
+
+    $hasGroupStage = ($tournament['format'] ?? '') === 'group_playoff';
+    $escape = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+    foreach ($byCategory as $categoryRows) {
+        echo '<section class="mb-6 last:mb-0">';
+        echo '<h4 class="mb-2 text-sm font-bold text-slate-800">' . $escape($categoryRows['label']) . '</h4>';
+        echo '<div class="overflow-x-auto"><table class="w-full min-w-[560px] text-left text-sm text-slate-600">';
+        echo '<thead class="bg-slate-100/70 text-xs font-bold text-slate-500"><tr>'
+            . '<th class="p-3 text-center">อันดับ</th><th class="p-3">' . ($isSolo ? 'นักกีฬา' : 'ทีม') . '</th>';
+        if ($hasGroupStage) {
+            echo '<th class="p-3 text-center">รอบกลุ่ม ชนะ-เสมอ-แพ้</th>'
+                . '<th class="p-3 text-center">คะแนนกลุ่ม</th><th class="p-3 text-center">Playoff ชนะ-แพ้</th>'
+                . '<th class="p-3 text-center">ผลต่างคะแนนกลุ่ม</th>';
         } else {
-            if ($s1 > $s2) {
-                $stats[$t1]['wins']++; $stats[$t1]['points'] += 3;
-                $stats[$t2]['losses']++;
-            } elseif ($s2 > $s1) {
-                $stats[$t2]['wins']++; $stats[$t2]['points'] += 3;
-                $stats[$t1]['losses']++;
+            echo '<th class="p-3 text-center">แมตช์ที่ชนะ</th><th class="p-3 text-center">แมตช์ที่แพ้</th>';
+        }
+        echo '</tr></thead><tbody class="divide-y divide-slate-100">';
+        foreach ($categoryRows['rows'] as $index => $row) {
+            echo '<tr class="hover:bg-slate-50"><td class="p-3 text-center font-bold">' . ($index + 1)
+                . '</td><td class="p-3 font-bold text-slate-900">' . $escape($row['name']) . '</td>';
+            if ($hasGroupStage) {
+                echo '<td class="p-3 text-center font-mono text-xs">'
+                    . (int) $row['group_wins'] . '-' . (int) $row['group_draws'] . '-' . (int) $row['group_losses'] . '</td>'
+                    . '<td class="p-3 text-center font-bold text-brand-orange">' . (int) $row['group_points'] . '</td>'
+                    . '<td class="p-3 text-center font-mono text-xs">' . (int) $row['playoff_wins'] . '-'
+                    . (int) $row['playoff_losses'] . '</td>'
+                    . '<td class="p-3 text-center">' . (int) $row['score_diff'] . '</td>';
             } else {
-                $stats[$t1]['points'] += 1;
-                $stats[$t2]['points'] += 1;
+                echo '<td class="p-3 text-center text-emerald-600 font-bold">' . (int) $row['playoff_wins'] . '</td>'
+                    . '<td class="p-3 text-center text-rose-600 font-bold">' . (int) $row['playoff_losses'] . '</td>';
             }
+            echo '</tr>';
         }
+        echo '</tbody></table></div></section>';
     }
-
-    usort($stats, function($a, $b) {
-        if ($b['points'] == $a['points']) {
-            return $b['wins'] - $a['wins'];
-        }
-        return $b['points'] - $a['points'];
-    });
-    
-    echo '<table class="w-full text-left text-sm text-slate-600">';
-    echo '<thead class="bg-slate-100/70 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">';
-    echo '<tr><th class="p-3 text-center w-16">อันดับ</th><th class="p-3">ชื่อทีม</th><th class="p-3 text-center">ประเภท</th><th class="p-3 text-center">สถิติ ชนะ–แพ้</th><th class="p-3 text-right">คะแนน</th></tr>';
-    echo '</thead><tbody class="divide-y divide-slate-100">';
-    
-    $i = 1;
-    foreach ($stats as $r) {
-        $rankClass = ($i == 1) ? 'text-amber-500 font-black' : 'font-bold text-slate-900';
-        $catBadge = '';
-        if ($r['category'] == 'male') $catBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600 font-bold">ชาย</span>';
-        elseif ($r['category'] == 'female') $catBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-pink-50 text-pink-600 font-bold">หญิง</span>';
-        else $catBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-purple-50 text-purple-600 font-bold">โอเพ่น</span>';
-
-        echo "<tr class='hover:bg-slate-50/80 transition-colors'>
-                <td class='p-3 text-center {$rankClass}'>{$i}</td>
-                <td class='p-3 font-bold text-slate-900'>".htmlspecialchars($r['name'])."</td>
-                <td class='p-3 text-center'>{$catBadge}</td>
-                <td class='p-3 text-center font-mono text-xs'><span class='text-emerald-600 font-bold'>{$r['wins']}W</span> - <span class='text-rose-500 font-bold'>{$r['losses']}L</span></td>
-                <td class='p-3 text-right font-display font-black text-brand-orange'>{$r['points']} คะแนน</td>
-              </tr>";
-        $i++;
-    }
-    echo '</tbody></table>';
     exit;
 }
 
@@ -970,8 +1298,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
         $gameId = trim($_POST['game_id'] ?? '');
         $categoryForm = selectedCategoryFormData($_POST);
         $format = $categoryForm['format'];
-        $bestOf = (int)($_POST['best_of'] ?? 5); 
-        $maxTeams = $categoryForm['max_teams'];
+        $gameNameStmt = $pdo->prepare('SELECT name FROM games WHERE game_id = :game_id');
+        $gameNameStmt->execute(['game_id' => (int) $gameId]);
+        $gamePreset = getGameTournamentPreset((string) $gameNameStmt->fetchColumn());
+        $bestOf = $gamePreset['scoring_mode'] === 'legacy'
+            ? (int) ($_POST['best_of'] ?? 5)
+            : (int) $gamePreset['best_of'];
+        if ($gamePreset['scoring_mode'] !== 'legacy') {
+            $format = $gamePreset['format'];
+            $categoryForm['format'] = $gamePreset['format'];
+        }
+        $maxTeams = $gamePreset['max_teams'] ?? $categoryForm['max_teams'];
         $prizePool = trim($_POST['prize_pool'] ?? '');
         $venueAddress = trim($_POST['venue_address'] ?? '');
         $venueLatLng = trim($_POST['venue_lat_lng'] ?? '');
@@ -995,6 +1332,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
             $error = 'โหมดทดสอบเปิดได้เฉพาะ Local/Test และต้องตั้ง ENABLE_TOURNAMENT_DEMO_MODE=true';
         } elseif ($name == '' || empty($gameId) || $maxTeams < 1 || !$categoryForm['codes']) {
             $error = 'กรุณากรอกชื่อทัวร์นาเมนต์ เลือกเกม และกำหนดจำนวนทีมให้ถูกต้อง';
+        } elseif (!in_array($bestOf, [1, 2, 3, 5], true)) {
+            $error = 'กรุณาเลือก Best of 1, 2, 3 หรือ 5';
         } elseif (($categoryError = validateCategoryForm($_POST)) !== null) {
             $error = $categoryError;
         } elseif (!$regStart || !$regEnd || !$startDate) {
@@ -1023,17 +1362,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
             $imagePath = uploadTournamentImage($_FILES['tournament_image'] ?? null);
             try {
                 $stmt = $pdo->prepare("
-                    INSERT INTO tournaments (name, is_demo, game_id, format, best_of, max_teams, prize_pool, venue_address, venue_lat_lng, image_path, rules, description, registration_start, registration_end, roster_lock_at, checkin_open_at, checkin_close_at, start_date, end_date, status, created_by)
-                    VALUES (:name, :is_demo, :game_id, :format, :best_of, :max_teams, :prize_pool, :venue_address, :venue_lat_lng, :image_path, :rules, :description, :reg_start, :reg_end, :roster_lock, :checkin_open, :checkin_close, :start_date, :end_date, 'registration_open', :created_by)
+                    INSERT INTO tournaments (name, is_demo, game_id, format, best_of, group_best_of, playoff_best_of, top8_best_of, scoring_mode, points_rounds, points_advance, max_teams, prize_pool, venue_address, venue_lat_lng, image_path, rules, description, registration_start, registration_end, roster_lock_at, checkin_open_at, checkin_close_at, start_date, end_date, status, created_by)
+                    VALUES (:name, :is_demo, :game_id, :format, :best_of, :group_best_of, :playoff_best_of, :top8_best_of, :scoring_mode, :points_rounds, :points_advance, :max_teams, :prize_pool, :venue_address, :venue_lat_lng, :image_path, :rules, :description, :reg_start, :reg_end, :roster_lock, :checkin_open, :checkin_close, :start_date, :end_date, 'registration_open', :created_by)
                 ");
                 $stmt->execute([
-                    'name' => $name, 'is_demo' => $demoRequested ? 1 : 0, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
+                    'name' => $name, 'is_demo' => $demoRequested ? 1 : 0, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf,
+                    'group_best_of' => $gamePreset['group_best_of'], 'playoff_best_of' => $gamePreset['playoff_best_of'],
+                    'top8_best_of' => $gamePreset['top8_best_of'], 'scoring_mode' => $gamePreset['scoring_mode'],
+                    'points_rounds' => $gamePreset['points_rounds'], 'points_advance' => $gamePreset['points_advance'],
+                    'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
                     'venue_address' => $venueAddress, 'venue_lat_lng' => $venueLatLng, 'image_path' => $imagePath, 'rules' => $rules, 'description' => $description, 'reg_start' => $regStart,
                     'reg_end' => $regEnd, 'roster_lock' => $rosterLock, 'checkin_open' => $checkinOpen, 'checkin_close' => $checkinClose, 'start_date' => $startDate, 'end_date' => $endDate, 'created_by' => $adminId
                 ]);
                 $createdTournamentId = (int) $pdo->lastInsertId();
                 ensureDefaultTournamentCategories($pdo, $createdTournamentId);
-                saveTournamentFormCategories($pdo, $createdTournamentId, $_POST);
+                $requiredFormat = $gamePreset['scoring_mode'] === 'legacy' ? null : $gamePreset['format'];
+                saveTournamentFormCategories($pdo, $createdTournamentId, $_POST, $requiredFormat, $gamePreset);
                 syncTournamentFormatFromCategories($pdo, $createdTournamentId);
                 saveTournamentDays($pdo, $createdTournamentId, $_POST['tournament_days_json'] ?? '');
                 $success = 'สร้างทัวร์นาเมนต์ใหม่เรียบร้อยแล้ว';
@@ -1049,78 +1393,185 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
 // ==========================================
 if (isset($_GET['export_results_csv'])) {
     $exportTid = (int) $_GET['export_results_csv'];
-    $exportCategory = $_GET['category'] ?? 'all';
+    $requestedCategory = strtolower(trim((string) ($_GET['category'] ?? 'all')));
+    $exportCategory = in_array($requestedCategory, ['all', 'male', 'female', 'open'], true)
+        ? $requestedCategory
+        : 'all';
 
-    $stmtT = $pdo->prepare("SELECT name FROM tournaments WHERE tournament_id = :id");
-    $stmtT->execute(['id' => $exportTid]);
-    $tName = $stmtT->fetchColumn() ?: 'tournament_results';
+    $exportTournamentStmt = $pdo->prepare('SELECT t.scoring_mode, t.format, g.play_mode, g.name AS game_name
+        FROM tournaments t
+        JOIN games g ON g.game_id = t.game_id
+        WHERE t.tournament_id = :tournament_id');
+    $exportTournamentStmt->execute(['tournament_id' => $exportTid]);
+    $exportTournament = $exportTournamentStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$exportTournament) {
+        http_response_code(404);
+        exit('ไม่พบ Tournament ที่ต้องการส่งออก');
+    }
 
-    $sql = "
-        SELECT 
-            m.match_id,
-            m.team1_id,
-            m.team2_id,
-            t1.name AS team1_name,
-            t2.name AS team2_name,
-            m.team1_score,
-            m.team2_score,
-            m.status
-        FROM matches m
-        LEFT JOIN teams t1 ON t1.team_id = m.team1_id
-        LEFT JOIN teams t2 ON t2.team_id = m.team2_id
-        WHERE m.tournament_id = :id
-    ";
-    
-    $stmtMatches = $pdo->prepare($sql . " ORDER BY m.match_id ASC");
-    $stmtMatches->execute(['id' => $exportTid]);
-    $matches = $stmtMatches->fetchAll(PDO::FETCH_ASSOC);
+    $isPointsExport = ($exportTournament['scoring_mode'] ?? '') === 'points';
+    $isSoloExport = strtolower((string) ($exportTournament['play_mode'] ?? '')) === 'solo';
+    $participantNameSql = $isSoloExport
+        ? "COALESCE(p.display_name, u.username, 'ผู้แข่งขัน')"
+        : "COALESCE(team.name, 'ทีมแข่งขัน')";
+    $participantJoinsSql = $isSoloExport
+        ? 'LEFT JOIN players p ON p.player_id = gp.participant_id
+           LEFT JOIN users u ON u.user_id = p.user_id'
+        : 'LEFT JOIN teams team ON team.team_id = gp.participant_id';
+    $categorySql = $exportCategory === 'all'
+        ? ''
+        : ' AND LOWER(TRIM(tc.category_code)) = :category';
+    $exportParams = ['tournament_id' => $exportTid];
+    if ($exportCategory !== 'all') $exportParams['category'] = $exportCategory;
+
+    if ($isPointsExport) {
+        $exportStmt = $pdo->prepare("SELECT m.match_id, m.round_number, m.status,
+                tg.name AS group_name, tg.stage_type, tc.category_code, tc.label AS category_label,
+                gp.participant_id, {$participantNameSql} AS participant_name,
+                pr.placement, pr.kills, pr.points
+            FROM matches m
+            JOIN tournament_groups tg ON tg.tournament_group_id = m.group_id
+            JOIN tournament_categories tc ON tc.tournament_category_id = m.tournament_category_id
+            JOIN group_participants gp ON gp.group_id = tg.tournament_group_id
+            {$participantJoinsSql}
+            LEFT JOIN points_round_results pr
+                ON pr.match_id = m.match_id
+                AND pr.group_id = gp.group_id
+                AND pr.participant_id = gp.participant_id
+            WHERE m.tournament_id = :tournament_id
+              AND m.result_type = 'points_round' {$categorySql}
+            ORDER BY tc.tournament_category_id, tg.tournament_group_id, m.round_number, gp.participant_id");
+    } else {
+        $participant1NameSql = $isSoloExport
+            ? "COALESCE(player1.display_name, user1.username, 'ผู้แข่งขัน')"
+            : "COALESCE(team1.name, 'รอระบุทีม')";
+        $participant2NameSql = $isSoloExport
+            ? "COALESCE(player2.display_name, user2.username, 'ผู้แข่งขัน')"
+            : "COALESCE(team2.name, 'รอระบุทีม')";
+        $winnerNameSql = $isSoloExport
+            ? "COALESCE(winner_player.display_name, winner_user.username)"
+            : 'winner_team.name';
+        $exportStmt = $pdo->prepare("SELECT m.match_id, m.round_number, m.team1_score, m.team2_score,
+                m.winner_team_id, m.status, m.result_type, m.wo_reason,
+                tg.name AS group_name, tg.stage_type, tc.category_code, tc.label AS category_label,
+                {$participant1NameSql} AS participant1_name,
+                {$participant2NameSql} AS participant2_name,
+                {$winnerNameSql} AS winner_name
+            FROM matches m
+            LEFT JOIN tournament_categories tc ON tc.tournament_category_id = m.tournament_category_id
+            LEFT JOIN tournament_groups tg ON tg.tournament_group_id = m.group_id
+            LEFT JOIN teams team1 ON team1.team_id = m.team1_id
+            LEFT JOIN teams team2 ON team2.team_id = m.team2_id
+            LEFT JOIN players player1 ON player1.player_id = m.team1_id
+            LEFT JOIN users user1 ON user1.user_id = player1.user_id
+            LEFT JOIN players player2 ON player2.player_id = m.team2_id
+            LEFT JOIN users user2 ON user2.user_id = player2.user_id
+            LEFT JOIN teams winner_team ON winner_team.team_id = m.winner_team_id
+            LEFT JOIN players winner_player ON winner_player.player_id = m.winner_team_id
+            LEFT JOIN users winner_user ON winner_user.user_id = winner_player.user_id
+            WHERE m.tournament_id = :tournament_id {$categorySql}
+            ORDER BY tc.tournament_category_id, m.round_number, m.match_index, m.match_id");
+    }
+    $exportStmt->execute($exportParams);
+    $exportRows = $exportStmt->fetchAll(PDO::FETCH_ASSOC);
 
     if (ob_get_level()) {
         ob_end_clean();
     }
 
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="match_results_' . $exportTid . '_' . $exportCategory . '.csv"');
+    $exportFileName = 'match_results_' . $exportTid . '_' . $exportTournament['game_name'] . '_' . $exportCategory . '.csv';
+    header('Content-Disposition: attachment; filename="match_results_' . $exportTid . '_' . $exportCategory . '.csv"; filename*=UTF-8\'\'' . rawurlencode($exportFileName));
 
     $output = fopen('php://output', 'w');
-
-    if ($output !== false) {
-        fputs($output, "\xEF\xBB\xBF");
-        fputcsv($output, ['Match ID', 'ทีมเหย้า', 'คะแนน', 'ทีมเยือน', 'คะแนน', 'ผลการแข่งขัน']);
-
-        foreach ($matches as $row) {
-            $team1Score = is_numeric($row['team1_score']) ? (int)$row['team1_score'] : 0;
-            $team2Score = is_numeric($row['team2_score']) ? (int)$row['team2_score'] : 0;
-            $team1Name = !empty($row['team1_name']) ? $row['team1_name'] : 'รอระบุทีม';
-            $team2Name = !empty($row['team2_name']) ? $row['team2_name'] : 'รอระบุทีม';
-
-            if ($row['status'] === 'completed') {
-                if ($team1Score > $team2Score) {
-                    $resultText = $team1Name . ' ชนะ';
-                } elseif ($team2Score > $team1Score) {
-                    $resultText = $team2Name . ' ชนะ';
-                } else {
-                    $resultText = 'เสมอ';
-                }
-            } elseif ($row['status'] === 'walkover') {
-                $resultText = 'ชนะบาย';
-            } elseif ($row['status'] === 'ongoing') {
-                $resultText = 'กำลังแข่งขัน';
-            } else {
-                $resultText = 'ยังไม่แข่ง';
-            }
-
-            fputcsv($output, [
-                ' ' . ($row['match_id'] ?? '-') . ' ',
-                ' ' . $team1Name . ' ',
-                ' ' . $team1Score . ' ',
-                ' ' . $team2Name . ' ',
-                ' ' . $team2Score . ' ',
-                ' ' . $resultText . ' '
-            ]);
-        }
-        fclose($output);
+    if ($output === false) {
+        throw new RuntimeException('ไม่สามารถเปิดไฟล์ส่งออก CSV ได้');
     }
+
+    fputs($output, "\xEF\xBB\xBF");
+    if ($isPointsExport) {
+        fputcsv($output, [
+            'ชื่อเกม', 'Match ID', 'ประเภท', 'กลุ่ม/รอบ', 'รอบที่', 'ผู้แข่งขัน',
+            'อันดับ', 'Kill', 'คะแนน', 'สถานะรอบ',
+        ]);
+    } else {
+        fputcsv($output, [
+            'ชื่อเกม', 'Match ID', 'ประเภท', 'กลุ่ม/รอบ', 'รอบที่', 'ผู้แข่งขัน 1',
+            'คะแนน 1', 'ผู้แข่งขัน 2', 'คะแนน 2', 'ผู้ชนะ', 'ผลการแข่งขัน',
+        ]);
+    }
+
+    foreach ($exportRows as $row) {
+        $categoryLabel = displayTournamentCategoryLabel(
+            $row['category_code'] ?? null,
+            $row['category_label'] ?? null
+        );
+        $stageLabel = match ($row['stage_type'] ?? null) {
+            'final' => 'รอบ Final',
+            'group' => 'รอบกลุ่ม',
+            default => ($exportTournament['format'] ?? '') === 'group_playoff' ? 'รอบ Playoff' : 'รอบแพ้คัดออก',
+        };
+        $groupLabel = trim((string) ($row['group_name'] ?? ''));
+        $stageGroup = $groupLabel !== '' ? $stageLabel . ' · ' . $groupLabel : $stageLabel;
+
+        if ($isPointsExport) {
+            $statusLabel = match ($row['status']) {
+                'completed' => 'บันทึกผลแล้ว',
+                'walkover' => 'ชนะบาย',
+                'ongoing' => 'กำลังแข่งขัน',
+                default => 'ยังไม่แข่ง',
+            };
+            fputcsv($output, [
+                $exportTournament['game_name'],
+                $row['match_id'],
+                $categoryLabel,
+                $stageGroup,
+                $row['round_number'],
+                $row['participant_name'],
+                $row['placement'],
+                $row['kills'],
+                $row['points'],
+                $statusLabel,
+            ]);
+            continue;
+        }
+
+        $statusLabel = match ($row['status']) {
+            'completed' => 'แข่งขันจบแล้ว',
+            'walkover' => 'ชนะบาย',
+            'ongoing' => 'กำลังแข่งขัน',
+            'cancelled' => 'ยกเลิก',
+            default => 'ยังไม่แข่ง',
+        };
+        $resultLabel = ($row['result_type'] ?? '') === 'bye'
+            ? 'บาย'
+            : ($row['winner_name']
+                ? (string) $row['winner_name'] . ' ชนะ'
+                : ($row['status'] === 'completed'
+                    && $row['team1_score'] !== null
+                    && $row['team2_score'] !== null
+                    && (int) $row['team1_score'] === (int) $row['team2_score']
+                        ? 'เสมอ'
+                        : ($row['status'] === 'completed' ? 'ผลไม่สมบูรณ์' : $statusLabel)));
+        if ($row['status'] === 'walkover' && !empty($row['wo_reason'])) {
+            $resultLabel .= ' (' . $row['wo_reason'] . ')';
+        }
+
+        fputcsv($output, [
+            $exportTournament['game_name'],
+            $row['match_id'],
+            $categoryLabel,
+            $stageGroup,
+            $row['round_number'],
+            $row['participant1_name'],
+            $row['team1_score'],
+            $row['participant2_name'],
+            $row['team2_score'],
+            $row['winner_name'],
+            $resultLabel,
+        ]);
+    }
+    fclose($output);
     exit;
 }
 
@@ -1159,6 +1610,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
 
         if ($name == '' || empty($gameId) || $maxTeams < 1 || !$categoryForm['codes']) {
             $error = 'กรอกชื่อทัวร์นาเมนต์ เลือกเกม และจำนวนทีมให้ถูกต้อง';
+        } elseif (!in_array($bestOf, [1, 2, 3, 5], true)) {
+            $error = 'กรุณาเลือก Best of 1, 2, 3 หรือ 5';
         } elseif (($categoryError = validateCategoryForm($_POST)) !== null) {
             $error = $categoryError;
         } elseif (!$regStart || !$regEnd || !$startDate) {
@@ -1212,6 +1665,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
                     'reg_start' => $regStart, 'reg_end' => $regEnd, 'roster_lock' => $rosterLock, 'checkin_open' => $checkinOpen, 'checkin_close' => $checkinClose, 'start_date' => $startDate, 'end_date' => $endDate, 'id' => $tid
                 ]);
             }
+            $pdo->prepare("UPDATE matches SET best_of = :best_of
+                WHERE tournament_id = :tournament_id AND group_id IS NOT NULL AND status = 'scheduled'")
+                ->execute(['best_of' => $bestOf, 'tournament_id' => $tid]);
             saveTournamentFormCategories($pdo, $tid, $_POST);
             syncTournamentFormatFromCategories($pdo, $tid);
             saveTournamentDays($pdo, $tid, $_POST['tournament_days_json'] ?? '');
@@ -1243,22 +1699,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['close_registration'])
     $window = $windowStmt->fetch();
     if (!$window) {
         $error = 'ไม่พบ Tournament ที่ต้องการจัดสาย';
-    } elseif (!isDemoTournament($window) && !empty($window['registration_end']) && strtotime($window['registration_end']) > time()) {
+    } elseif (!in_array($window['status'], ['registration_open', 'registration_closed'], true)) {
+        $error = 'Tournament นี้ไม่ได้อยู่ในสถานะรอจัดสาย จึงไม่สามารถจัดสายซ้ำได้';
+    } else {
+        $existingMatchesStmt = $pdo->prepare('SELECT COUNT(*) FROM matches WHERE tournament_id = :tournament_id');
+        $existingMatchesStmt->execute(['tournament_id' => $tid]);
+        if ((int) $existingMatchesStmt->fetchColumn() > 0) {
+            $error = 'Tournament นี้มีตารางแข่งขันแล้ว จึงไม่สามารถจัดสายซ้ำได้';
+        } else {
+            $existingGroupsStmt = $pdo->prepare('SELECT COUNT(*) FROM tournament_groups WHERE tournament_id = :tournament_id');
+            $existingGroupsStmt->execute(['tournament_id' => $tid]);
+            if ((int) $existingGroupsStmt->fetchColumn() > 0) {
+                $error = 'Tournament นี้มีข้อมูลรอบแบ่งกลุ่มแล้ว จึงไม่สามารถจัดสายซ้ำได้';
+            }
+        }
+    }
+    if ($error === '' && !isDemoTournament($window) && !empty($window['registration_end']) && strtotime($window['registration_end']) > time()) {
         $error = 'ยังไม่ถึงเวลาปิดรับสมัคร';
-    } elseif (!isDemoTournament($window) && !empty($window['checkin_close_at']) && strtotime($window['checkin_close_at']) > time()) {
+    } elseif ($error === '' && !isDemoTournament($window) && !empty($window['checkin_close_at']) && strtotime($window['checkin_close_at']) > time()) {
         $error = 'ยังไม่ถึงเวลาปิดเช็กอิน จึงยังจัดสายไม่ได้';
     }
 
     if ($error === '') {
-        qualifyCompletedCheckins($pdo, $tid);
-        disqualifyIncompleteCheckins($pdo, $tid);
+        $drawRegistrationSummary = getTournamentDrawRegistrationSummary($pdo, $tid);
+        if ($drawRegistrationSummary['pending'] > 0) {
+            $error = 'ยังมีใบสมัครรอตรวจสอบ กรุณาตรวจใบสมัครให้เรียบร้อยก่อนจัดสาย';
+        } elseif ($drawRegistrationSummary['eligible'] < 2) {
+            $error = 'ต้องมีผู้สมัครที่อนุมัติและยังมีสิทธิ์อย่างน้อย 2 รายการก่อนจัดสาย';
+        } elseif ($drawRegistrationSummary['checkin_complete'] !== $drawRegistrationSummary['eligible']) {
+            $error = 'ยังมีผู้สมัคร Check-in ไม่ครบ กรุณาเช็กอินให้ครบทุกทีม/ผู้แข่งขันก่อนจัดสาย';
+        }
     }
+
     if ($error === '') {
+        qualifyCompletedCheckins($pdo, $tid);
         $eligibleStmt = $pdo->prepare("SELECT COUNT(*) FROM tournament_registrations
-            WHERE tournament_id = :tid AND participation_status = 'qualified_for_draw'");
+            WHERE tournament_id = :tid AND status = 'approved'
+              AND participation_status NOT IN ('withdrawn', 'disqualified')");
         $eligibleStmt->execute(['tid' => $tid]);
-        if ((int) $eligibleStmt->fetchColumn() < 2) {
-            $error = 'ยังมีผู้สมัครที่ Check-in ไม่ครบ หรือผู้ผ่านการจัดสายไม่ถึง 2 รายการ';
+        $activeCount = (int) $eligibleStmt->fetchColumn();
+        $qualifiedStmt = $pdo->prepare("SELECT COUNT(*) FROM tournament_registrations
+            WHERE tournament_id = :tid AND status = 'approved'
+              AND participation_status = 'qualified_for_draw'");
+        $qualifiedStmt->execute(['tid' => $tid]);
+        if ((int) $qualifiedStmt->fetchColumn() !== $activeCount) {
+            $error = 'มีผู้แข่งขัน Check-in ครบแต่ยังไม่ผ่านสถานะพร้อมจัดสาย กรุณาตรวจสอบรายชื่อผู้สมัคร';
         }
     }
 
@@ -1387,15 +1872,29 @@ if ($filterStatus === 'ready_to_close') {
 }
 
 $summaryTournaments = [
-    'total_count' => count($tournaments),
+    'total_count' => 0,
     'registration_open_count' => 0,
     'checkin_open_count' => 0,
     'ready_to_close_count' => 0,
     'ongoing_count' => 0,
     'completed_count' => 0,
 ];
-foreach ($tournaments as $summaryTournament) {
-    $summaryStatus = getTournamentStatusInfo($pdo, $summaryTournament)['key'];
+$summaryNow = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
+foreach ($pdo->query('SELECT tournament_id, status, checkin_open_at, checkin_close_at FROM tournaments')->fetchAll(PDO::FETCH_ASSOC) as $summaryTournament) {
+    $summaryTournaments['total_count']++;
+    $summaryStatus = (string) $summaryTournament['status'];
+    if ($summaryStatus === 'ongoing') {
+        $summaryStatus = getTournamentWorkflowState($pdo, (int) $summaryTournament['tournament_id'])['computed_status'];
+    } elseif (
+        in_array($summaryStatus, ['registration_open', 'registration_closed'], true)
+        && workflowTimeInWindow(
+            $summaryNow,
+            $summaryTournament['checkin_open_at'],
+            $summaryTournament['checkin_close_at']
+        )
+    ) {
+        $summaryStatus = 'checkin_open';
+    }
     if ($summaryStatus === 'ongoing') {
         $summaryTournaments['ongoing_count']++;
     } elseif ($summaryStatus === 'completed') {
@@ -1602,12 +2101,92 @@ $csrfToken = generateCsrfToken();
 2.3. กรณีหลุด: ครึ่งแรกเริ่มใหม่ใช้สกอร์เดิม, ครึ่งหลังเริ่มแข่งใหม่ครึ่งเดียว, หลังนาทีที่ 80 ถ้านำหลุดให้แข่งใหม่ครึ่งเดียว ถ้าตามหลุดให้นับผลล่าสุดทันที`
         };
 
+        const gameBestOfDefaults = {
+            "Tekken": "3",
+            "Roblox": "1",
+            "Street Fighter": "3",
+            "Free Fire": "1",
+            "RoV": "2",
+            "Efootball": "1"
+        };
+        const pointsSystemGames = ["Free Fire", "Roblox"];
+        const gameFormatDefaults = {
+            "RoV": "group_playoff",
+            "Tekken": "double_elimination",
+            "Street Fighter": "double_elimination",
+            "Efootball": "group_playoff",
+            "Free Fire": "group_playoff",
+            "Roblox": "group_playoff"
+        };
+        const gameStageHints = {
+            "RoV": "รอบแบ่งกลุ่ม BO2 (ชนะ 2 คะแนน / เสมอ 1 คะแนน) · Playoff BO3",
+            "Tekken": "รอบทั่วไป BO3 · ตั้งแต่รอบ Top 8 ใช้ BO5",
+            "Street Fighter": "ก่อน Top 8 ใช้ BO3 · รอบ Top 8 ใช้ BO5",
+            "Efootball": "รอบแบ่งกลุ่ม BO1 · รอบ 16 ทีมจนถึงชิงชนะเลิศ BO3",
+            "Free Fire": "Points System · กลุ่ม 4 รอบ, Final 4 รอบ · อันดับ + Kill · ผ่านกลุ่มละ 6 ทีม",
+            "Roblox": "Points System · จำนวนรับสมัครและการแบ่งกลุ่มใช้ค่าที่ตั้งไว้ตอนสร้าง Tournament"
+        };
+        const gameGroupDefaults = {
+            "RoV": {advance: 2},
+            "Efootball": {advance: 2},
+            "Free Fire": {size: 12, advance: 6, max: 24},
+            "Roblox": {}
+        };
+
+        function setGameBestOfPreset(gameName, targetRulesId, applyDefault = true) {
+            const isCreateForm = targetRulesId === 'create_rules';
+            const bestOfSelect = document.getElementById(isCreateForm ? 'create_best_of' : 'edit_best_of');
+            const bestOfLabel = document.getElementById(isCreateForm ? 'create_best_of_label' : 'edit_best_of_label');
+            const pointsNotice = document.getElementById(isCreateForm ? 'create_points_system_notice' : 'edit_points_system_notice');
+            const bestOfHint = document.getElementById(isCreateForm ? 'create_best_of_hint' : 'edit_best_of_hint');
+            const matchedKey = Object.keys(gameBestOfDefaults).find(key => gameName.toLowerCase().includes(key.toLowerCase()));
+            if (!bestOfSelect) return;
+            if (!matchedKey) {
+                bestOfSelect.classList.remove('hidden');
+                if (bestOfLabel) bestOfLabel.textContent = 'BEST OF (จำนวนเกมต่อแมตช์)';
+                pointsNotice?.classList.add('hidden');
+                bestOfHint?.classList.remove('hidden');
+                return;
+            }
+
+            const usesPointsSystem = pointsSystemGames.includes(matchedKey);
+            if (applyDefault) bestOfSelect.value = gameBestOfDefaults[matchedKey];
+            bestOfSelect.classList.toggle('hidden', usesPointsSystem);
+            if (bestOfLabel) bestOfLabel.textContent = usesPointsSystem ? 'รูปแบบการแข่งขัน' : 'Best of (จำนวนเกมต่อแมตช์)';
+            pointsNotice?.classList.toggle('hidden', !usesPointsSystem);
+            if (bestOfHint) {
+                bestOfHint.textContent = gameStageHints[matchedKey] || '';
+                bestOfHint.classList.remove('hidden');
+            }
+            if (isCreateForm && applyDefault) {
+                const defaultFormat = gameFormatDefaults[matchedKey];
+                const formatSelect = document.querySelector('#createModal select[name="format"]');
+                if (defaultFormat && formatSelect) formatSelect.value = defaultFormat;
+                document.querySelectorAll('#createModal select[name^="category_format["]').forEach(select => {
+                    if (defaultFormat) {
+                        select.value = defaultFormat;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                });
+                const groupDefaults = gameGroupDefaults[matchedKey] || {};
+                const maxTeamsInput = document.querySelector('#createModal [name="max_teams"]');
+                if (groupDefaults.max && maxTeamsInput) maxTeamsInput.value = groupDefaults.max;
+                document.querySelectorAll('#createModal [name^="category_group_size["]').forEach(input => {
+                    if (groupDefaults.size) input.value = groupDefaults.size;
+                });
+                document.querySelectorAll('#createModal [name^="category_advance["]').forEach(input => {
+                    if (groupDefaults.advance) input.value = groupDefaults.advance;
+                });
+            }
+        }
+
         function autoFillRules(selectElement, targetRulesId) {
             const selectedOption = selectElement.options[selectElement.selectedIndex];
             const gameName = selectedOption.text || '';
             const rulesTextarea = document.getElementById(targetRulesId);
             
-            let matchedKey = Object.keys(gameRulesData).find(key => gameName.includes(key));
+            let matchedKey = Object.keys(gameRulesData).find(key => gameName.toLowerCase().includes(key.toLowerCase()));
+            if (matchedKey) setGameBestOfPreset(gameName, targetRulesId);
             if (matchedKey && gameRulesData[matchedKey]) {
                 rulesTextarea.value = gameRulesData[matchedKey];
             } else {
@@ -1671,6 +2250,10 @@ $csrfToken = generateCsrfToken();
                 safeSetValue('edit_game_id', tournament.game_id);
                 safeSetValue('edit_format', tournament.format || 'single_elimination');
                 safeSetValue('edit_best_of', tournament.best_of || '5');
+                const editGameSelect = document.getElementById('edit_game_id');
+                if (editGameSelect && editGameSelect.selectedIndex >= 0) {
+                    setGameBestOfPreset(editGameSelect.options[editGameSelect.selectedIndex].text, 'edit_rules', false);
+                }
                 safeSetValue('edit_max_teams', tournament.max_teams);
                 safeSetValue('edit_prize_pool', tournament.prize_pool || '');
                 safeSetValue('edit_rules', tournament.rules || '');
@@ -2443,11 +3026,27 @@ $csrfToken = generateCsrfToken();
         }
 
         function openBracketModal(tournamentId, tournamentName) {
-            document.getElementById('bracketTitle').innerText = 'Group / Bracket: ' + tournamentName;
+            document.getElementById('bracketTitle').innerText = 'กำลังโหลดข้อมูล: ' + tournamentName;
             document.getElementById('bracketContent').innerHTML = '<div class="p-8 text-center text-slate-400 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i>กำลังโหลดสายการแข่งขัน...</div>';
             document.getElementById('bracketModal').classList.remove('hidden');
             document.getElementById('bracketModal').classList.add('flex');
-            fetch(`?ajax_get_bracket=${tournamentId}`).then(response => response.text()).then(html => { document.getElementById('bracketContent').innerHTML = html; buildBracketCategoryFilters(); });
+            fetch(`?ajax_get_bracket=${tournamentId}`).then(response => {
+                if (!response.ok) throw new Error(`โหลดข้อมูลการแข่งขันไม่สำเร็จ (${response.status})`);
+                return response.text();
+            }).then(html => {
+                const content = document.getElementById('bracketContent');
+                content.innerHTML = html;
+                const firstCard = content.querySelector('.bracket-card');
+                const isPointsTournament = firstCard?.dataset.pointsMode === 'true';
+                const isFreeFireTournament = isPointsTournament && firstCard.dataset.gameName.toLowerCase().includes('free fire');
+                document.getElementById('bracketTitle').innerText = isFreeFireTournament
+                    ? 'ตารางคะแนน Free Fire: ' + tournamentName
+                    : (isPointsTournament ? 'ตารางคะแนน: ' + tournamentName : 'สายการแข่งขัน: ' + tournamentName);
+                buildBracketCategoryFilters();
+            }).catch(error => {
+                console.error('Bracket loading failed', error);
+                document.getElementById('bracketContent').innerHTML = '<div class="p-8 text-center text-rose-600 text-sm">โหลดข้อมูลการแข่งขันไม่สำเร็จ กรุณาลองใหม่</div>';
+            });
         }
 
         function closeBracketModal() {
@@ -2469,7 +3068,21 @@ $csrfToken = generateCsrfToken();
             const filters = document.getElementById('bracketFilters');
             if (!filters) return;
             filters.querySelectorAll('[data-category-filter]').forEach(button => button.remove());
-            const categories = [...new Set([...document.querySelectorAll('#bracketContent .bracket-card')].map(card => card.dataset.bracketCategory).filter(Boolean))];
+            const cards = [...document.querySelectorAll('#bracketContent .bracket-card')];
+            const isPointsTournament = cards.some(card => card.dataset.pointsMode === 'true');
+            const stageButtons = [...filters.querySelectorAll('button')].slice(1, 3);
+            if (isPointsTournament && stageButtons.length === 2) {
+                stageButtons[0].textContent = 'รอบแบ่งกลุ่ม';
+                stageButtons[0].onclick = () => filterBracketCards({category: 'all', stage: 'group'}, stageButtons[0]);
+                stageButtons[1].textContent = 'รอบชิงชนะเลิศ';
+                stageButtons[1].onclick = () => filterBracketCards({category: 'all', stage: 'final'}, stageButtons[1]);
+            } else if (stageButtons.length === 2) {
+                stageButtons[0].textContent = 'รอบแบ่งกลุ่ม';
+                stageButtons[0].onclick = () => filterBracketCards({category: 'all', stage: 'group'}, stageButtons[0]);
+                stageButtons[1].textContent = 'รอบน็อกเอาต์';
+                stageButtons[1].onclick = () => filterBracketCards({category: 'all', stage: 'knockout'}, stageButtons[1]);
+            }
+            const categories = [...new Set(cards.map(card => card.dataset.bracketCategory).filter(Boolean))];
             categories.forEach(category => {
                 const button = document.createElement('button');
                 button.type = 'button';
@@ -2588,18 +3201,18 @@ $csrfToken = generateCsrfToken();
 
             <div class="tournament-workflow-grid">
                 <?php foreach ([
-                    ['Tournament ทั้งหมด', $summaryTournaments['total_count'], 'manage-tournament.php', 'slate', 'fa-layer-group', 'ภาพรวมจำนวน Tournament ทั้งหมด', 'total'],
-                    ['เปิดรับสมัคร', $summaryTournaments['registration_open_count'], '?status=registration_open', 'emerald', 'fa-door-open', 'Tournament ที่เปิดให้สมัคร', 'registration'],
-                    ['กำลัง Check-in', $summaryTournaments['checkin_open_count'], '?status=checkin_open', 'blue', 'fa-user-check', 'Tournament ที่อยู่ในช่วง Check-in', 'checkin'],
-                    ['พร้อมปิดการแข่งขัน', $summaryTournaments['ready_to_close_count'], '?status=ready_to_close', 'sky', 'fa-circle-check', 'Tournament ที่ตรวจผลครบและพร้อมจบการแข่งขัน', 'ready'],
-                    ['กำลังแข่งขัน', $summaryTournaments['ongoing_count'], '?status=ongoing', 'violet', 'fa-gamepad', 'Tournament ที่เริ่มการแข่งขันแล้ว', 'ongoing'],
-                    ['แข่งขันจบแล้ว', $summaryTournaments['completed_count'], '?status=completed', 'purple', 'fa-flag-checkered', 'Tournament ที่ดำเนินการแข่งขันเสร็จแล้ว', 'completed'],
+                    ['Tournament ทั้งหมด', $summaryTournaments['total_count'], 'slate', 'fa-layer-group', 'ภาพรวมจำนวน Tournament ทั้งหมด', 'total'],
+                    ['เปิดรับสมัคร', $summaryTournaments['registration_open_count'], 'emerald', 'fa-door-open', 'Tournament ที่เปิดให้สมัคร', 'registration'],
+                    ['กำลัง Check-in', $summaryTournaments['checkin_open_count'], 'blue', 'fa-user-check', 'Tournament ที่อยู่ในช่วง Check-in', 'checkin'],
+                    ['พร้อมปิดการแข่งขัน', $summaryTournaments['ready_to_close_count'], 'sky', 'fa-circle-check', 'Tournament ที่ตรวจผลครบและพร้อมจบการแข่งขัน', 'ready'],
+                    ['กำลังแข่งขัน', $summaryTournaments['ongoing_count'], 'violet', 'fa-gamepad', 'Tournament ที่เริ่มการแข่งขันแล้ว', 'ongoing'],
+                    ['แข่งขันจบแล้ว', $summaryTournaments['completed_count'], 'purple', 'fa-flag-checkered', 'Tournament ที่ดำเนินการแข่งขันเสร็จแล้ว', 'completed'],
                 ] as $summary): ?>
-                    <a href="<?php echo $summary[2]; ?>" title="<?php echo htmlspecialchars($summary[5]); ?>" class="tournament-workflow-card tournament-workflow-card--<?php echo $summary[6]; ?> bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
-                        <span class="flex items-center gap-2 text-[11px] font-bold text-slate-500"><i class="fa-solid <?php echo $summary[4]; ?> text-<?php echo $summary[3]; ?>-600" aria-hidden="true"></i><?php echo $summary[0]; ?></span>
-                        <strong class="block mt-2 text-2xl font-display text-<?php echo $summary[3]; ?>-600"><?php echo (int) $summary[1]; ?></strong>
+                    <article title="<?php echo htmlspecialchars($summary[4]); ?>" class="tournament-workflow-card tournament-workflow-card--<?php echo $summary[5]; ?> bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+                        <span class="flex items-center gap-2 text-[11px] font-bold text-slate-500"><i class="fa-solid <?php echo $summary[3]; ?> text-<?php echo $summary[2]; ?>-600" aria-hidden="true"></i><?php echo $summary[0]; ?></span>
+                        <strong class="block mt-2 text-2xl font-display text-<?php echo $summary[2]; ?>-600"><?php echo (int) $summary[1]; ?></strong>
                         <span class="text-[10px] text-slate-400">รายการ</span>
-                    </a>
+                    </article>
                 <?php endforeach; ?>
             </div>
 
@@ -2650,14 +3263,26 @@ $csrfToken = generateCsrfToken();
                             <?php endif; ?>
                             <?php foreach ($tournaments as $t): 
                                 $tournamentStatusInfo = getTournamentStatusInfo($pdo, $t);
-                                $activeCategoryStmt = $pdo->prepare("SELECT tournament_category_id, category_code, label FROM tournament_categories WHERE tournament_id = :tournament_id AND is_active = 1 ORDER BY CASE category_code WHEN 'male' THEN 1 WHEN 'female' THEN 2 WHEN 'open' THEN 3 ELSE 4 END, tournament_category_id");
-                                $activeCategoryStmt->execute(['tournament_id' => (int) $t['tournament_id']]);
-                                $activeCategories = $activeCategoryStmt->fetchAll(PDO::FETCH_ASSOC);
+                                $activeCategories = getTournamentDisplayCategories(
+                                    $pdo,
+                                    (int) $t['tournament_id'],
+                                    $t['category'] ?? null
+                                );
 
                                 $registrationCount = (int) ($t['total_registrations'] ?? 0);
                                 $approvedCount = (int) ($t['team_count'] ?? 0);
                                 $pendingCount = (int) ($t['pending_count'] ?? 0);
                                 $capacityCount = (int) ($t['max_teams'] ?? 0);
+                                if (str_contains(strtolower((string) ($t['game_name'] ?? '')), 'roblox')) {
+                                    $categoryCapacityStmt = $pdo->prepare('SELECT COALESCE(SUM(max_participants), 0)
+                                        FROM tournament_categories
+                                        WHERE tournament_id = :tournament_id AND is_active = 1');
+                                    $categoryCapacityStmt->execute(['tournament_id' => (int) $t['tournament_id']]);
+                                    $configuredCategoryCapacity = (int) $categoryCapacityStmt->fetchColumn();
+                                    if ($configuredCategoryCapacity > 0) {
+                                        $capacityCount = $configuredCategoryCapacity;
+                                    }
+                                }
                                 $unit = strtolower((string) ($t['play_mode'] ?? 'team')) === 'solo' ? 'คน' : 'ทีม';
 
                                 $categorySummaryItems = [];
@@ -2696,7 +3321,17 @@ $csrfToken = generateCsrfToken();
                                         },
                                     ];
                                 }
-                                $canDraw = isDemoTournament($t) || ($t['status'] === 'registration_open' && (empty($t['checkin_close_at']) || strtotime($t['checkin_close_at']) <= time()));
+                                $drawRegistrationSummary = getTournamentDrawRegistrationSummary($pdo, (int) $t['tournament_id']);
+                                $canDraw = in_array($tournamentStatusInfo['key'], ['registration_open', 'registration_closed'], true)
+                                    && (int) $t['total_matches_count'] === 0
+                                    && (int) $t['group_count'] === 0
+                                    && $drawRegistrationSummary['pending'] === 0
+                                    && $drawRegistrationSummary['eligible'] >= 2
+                                    && $drawRegistrationSummary['checkin_complete'] === $drawRegistrationSummary['eligible']
+                                    && $drawRegistrationSummary['qualified'] === $drawRegistrationSummary['eligible']
+                                    && (isDemoTournament($t)
+                                        || (empty($t['registration_end']) || strtotime($t['registration_end']) <= time())
+                                        && (empty($t['checkin_close_at']) || strtotime($t['checkin_close_at']) <= time()));
                                 $canEditTournament = $t['status'] !== 'completed';
                             ?>
                             <tr class="hover:bg-slate-50/80 transition-colors">
@@ -2842,7 +3477,7 @@ $csrfToken = generateCsrfToken();
                                     <?php endif; ?>
                                     <?php if (in_array($t['status'], ['bracket_generated', 'ongoing', 'completed'], true)): ?>
                                         <?php if ((int) $t['total_matches_count'] > 0): ?>
-                                            <button type="button" role="menuitem" onclick="openBracketModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')" class="w-full text-left inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 text-xs font-semibold"><i class="fa-solid fa-sitemap"></i> ดู Group / Bracket</button>
+                                            <button type="button" role="menuitem" onclick="openBracketModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>')" class="w-full text-left inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 text-xs font-semibold"><i class="fa-solid fa-sitemap"></i> ดูสายการแข่งขัน</button>
                                         <?php endif; ?>
                                         <button role="menuitem" onclick="openResultModal(<?php echo $t['tournament_id']; ?>, '<?php echo htmlspecialchars(addslashes($t['name'])); ?>', '<?php echo htmlspecialchars(addslashes($t['game_name'])); ?>')"
                                             class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold transition-all cursor-pointer">
@@ -2916,12 +3551,15 @@ $csrfToken = generateCsrfToken();
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ชื่อสถานที่แข่งขัน</label><input type="text" name="venue_address" placeholder="ชื่อสนาม" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></div><div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ลิงก์แผนที่</label><input type="url" name="venue_lat_lng" placeholder="https://maps.google.com/..." class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></div></div>
 
                 <div>
-                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">Best of (จำนวนเกมต่อแมตช์)</label>
-                    <select name="best_of" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                    <label id="create_best_of_label" class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">Best of (จำนวนเกมต่อแมตช์)</label>
+                    <select name="best_of" id="create_best_of" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <option value="2">BO2 (2 เกม)</option>
                         <option value="1">BO1 (เกมเดียว)</option>
                         <option value="3">BO3 (ชนะ 2 ใน 3 เกม)</option>
                         <option value="5" selected>BO5 (ชนะ 3 ใน 5 เกม)</option>
                     </select>
+                    <div id="create_points_system_notice" class="hidden rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm font-bold text-sky-800">Points System (สะสมคะแนน/จัดอันดับตามรอบ — ไม่ใช้ Best of)</div>
+                    <p id="create_best_of_hint" class="mt-1 text-xs text-slate-500">เลือกเกมแล้วระบบจะตั้งค่า Best of เริ่มต้นให้อัตโนมัติ</p>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
@@ -3074,12 +3712,15 @@ $csrfToken = generateCsrfToken();
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ชื่อสถานที่แข่งขัน</label><input type="text" name="venue_address" id="edit_venue_address" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></div><div><label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ลิงก์แผนที่</label><input type="url" name="venue_lat_lng" id="edit_venue_lat_lng" class="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"></div></div>
 
                 <div>
-                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">Best of (จำนวนเกมต่อแมตช์)</label>
+                    <label id="edit_best_of_label" class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">Best of (จำนวนเกมต่อแมตช์)</label>
                     <select name="best_of" id="edit_best_of" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <option value="2">BO2 (2 เกม)</option>
                         <option value="1">BO1 (เกมเดียว)</option>
                         <option value="3">BO3 (ชนะ 2 ใน 3 เกม)</option>
                         <option value="5">BO5 (ชนะ 3 ใน 5 เกม)</option>
                     </select>
+                    <div id="edit_points_system_notice" class="hidden rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm font-bold text-sky-800">Points System (สะสมคะแนน/จัดอันดับตามรอบ — ไม่ใช้ Best of)</div>
+                    <p id="edit_best_of_hint" class="mt-1 text-xs text-slate-500">เลือกเกมแล้วระบบจะตั้งค่า Best of เริ่มต้นให้อัตโนมัติ</p>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
@@ -3265,8 +3906,8 @@ $csrfToken = generateCsrfToken();
 
     <div id="bracketModal" class="fixed inset-0 bg-slate-900/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3 sm:p-5">
         <div class="bg-white rounded-2xl w-full max-w-[95vw] max-h-[92vh] p-5 sm:p-7 space-y-4 shadow-2xl overflow-y-auto">
-            <div class="flex items-center justify-between border-b border-slate-100 pb-4"><h3 id="bracketTitle" class="text-lg font-bold font-display text-slate-900"><i class="fa-solid fa-sitemap text-brand-orange mr-2"></i>Group / Bracket</h3><button type="button" onclick="closeBracketModal()" class="text-slate-400 p-1"><i class="fa-solid fa-xmark text-lg"></i></button></div>
-            <div id="bracketFilters" class="flex gap-2 overflow-x-auto border-b border-slate-100 pb-3"><button type="button" onclick="filterBracketCards({category:'all',stage:'all'}, this)" class="rounded-lg bg-brand-orange px-3 py-1.5 text-xs font-bold text-white">ทุกประเภท</button><button type="button" onclick="filterBracketCards({category:'all',stage:'group'}, this)" class="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">รอบแบ่งกลุ่ม</button><button type="button" onclick="filterBracketCards({category:'all',stage:'knockout'}, this)" class="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">รอบแพ้คัดออก</button></div>
+            <div class="flex items-center justify-between border-b border-slate-100 pb-4"><h3 id="bracketTitle" class="text-lg font-bold font-display text-slate-900"><i class="fa-solid fa-sitemap text-brand-orange mr-2"></i>สายการแข่งขัน</h3><button type="button" onclick="closeBracketModal()" class="text-slate-400 p-1"><i class="fa-solid fa-xmark text-lg"></i></button></div>
+            <div id="bracketFilters" class="flex gap-2 overflow-x-auto border-b border-slate-100 pb-3"><button type="button" onclick="filterBracketCards({category:'all',stage:'all'}, this)" class="rounded-lg bg-brand-orange px-3 py-1.5 text-xs font-bold text-white">ทุกประเภท</button><button type="button" onclick="filterBracketCards({category:'all',stage:'group'}, this)" class="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">รอบแบ่งกลุ่ม</button><button type="button" onclick="filterBracketCards({category:'all',stage:'knockout'}, this)" class="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">รอบน็อกเอาต์</button></div>
             <div id="bracketContent" class="space-y-3"></div>
             <div class="flex justify-end border-t border-slate-100 pt-3"><button type="button" onclick="closeBracketModal()" class="rounded-xl bg-slate-100 px-5 py-2.5 text-xs font-bold text-slate-700">ปิด</button></div>
         </div>

@@ -385,6 +385,14 @@ try {
             background: linear-gradient(145deg, rgba(25, 24, 31, 0.98), rgba(8, 10, 16, 0.98));
             box-shadow: 0 0 16px rgba(255, 85, 0, 0.12), inset 0 0 22px rgba(255, 85, 0, 0.04);
             transition: transform 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+            flex: 0 0 100%;
+            min-width: 0;
+        }
+        @media (min-width: 768px) {
+            .tournament-slide-card { flex-basis: calc((100% - 1rem) / 2); }
+        }
+        @media (min-width: 1024px) {
+            .tournament-slide-card { flex-basis: calc((100% - 2rem) / 3); }
         }
         .tournament-slide-card:hover {
             transform: translateY(-10px) scale(1.02);

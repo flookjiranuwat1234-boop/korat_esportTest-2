@@ -36,7 +36,7 @@ try {
     $hash = password_hash(TEST_PASSWORD, PASSWORD_DEFAULT);
     $answerHash = password_hash('test', PASSWORD_DEFAULT);
     $insertUser = $pdo->prepare("INSERT INTO users (username, email, password_hash, role, security_question, security_answer_hash, status) VALUES (:username, :email, :password_hash, 'athlete', 'test', :answer_hash, 'active')");
-    $insertPlayer = $pdo->prepare("INSERT INTO players (user_id, display_name, real_name, gender, province, eligibility_status) VALUES (:user_id, :display_name, :real_name, :gender, 'นครราชสีมา', 'verified')");
+    $insertPlayer = $pdo->prepare("INSERT INTO players (user_id, display_name, gender, province, eligibility_status) VALUES (:user_id, :display_name, :gender, 'นครราชสีมา', 'verified')");
     $insertTeam = $pdo->prepare("INSERT INTO teams (game_id, name, tag, captain_player_id, is_solo_wrapper, team_category, status) VALUES (NULL, :name, :tag, :captain, 0, 'open', 'active')");
     $insertMember = $pdo->prepare("INSERT INTO team_members (team_id, player_id, in_game_role, member_roles, is_active, joined_at) VALUES (:team_id, :player_id, :role, :role, 1, NOW())");
     $insertRole = $pdo->prepare("INSERT INTO team_member_roles (team_member_id, role_code) VALUES (:team_member_id, :role_code)");
@@ -59,7 +59,6 @@ try {
             $insertPlayer->execute([
                 'user_id' => $userId,
                 'display_name' => sprintf('[FULLTEST64_20260828] %s %02d-%02d', $role, $teamNumber, $memberNumber),
-                'real_name' => sprintf('Full Test 64 %04d', $number),
                 'gender' => 'male',
             ]);
             $playerIds[] = (int) $pdo->lastInsertId();

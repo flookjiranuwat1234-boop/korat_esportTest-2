@@ -41,9 +41,7 @@ if ($isOwner && $_SERVER['REQUEST_METHOD'] == 'POST') {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
     } else {
         $displayName = trim($_POST['display_name']);
-        $realName = trim($_POST['real_name']);
         $bio = trim($_POST['bio']);
-        $showRealName = isset($_POST['show_real_name']) ? 1 : 0;
 
         if ($displayName == '') {
             $error = 'ชื่อในเกมห้ามว่าง';
@@ -58,30 +56,24 @@ if ($isOwner && $_SERVER['REQUEST_METHOD'] == 'POST') {
                     deleteUploadedImage($player['avatar_path']);
                     $update = $pdo->prepare("
                         UPDATE players
-                        SET display_name = :display_name, real_name = :real_name,
-                            bio = :bio, show_real_name = :show_real_name, avatar_path = :avatar_path
+                        SET display_name = :display_name, bio = :bio, avatar_path = :avatar_path
                         WHERE player_id = :id
                     ");
                     $update->execute([
                         'display_name' => $displayName,
-                        'real_name' => $realName ?: null,
                         'bio' => $bio,
-                        'show_real_name' => $showRealName,
                         'avatar_path' => $avatarPath,
                         'id' => $playerId,
                     ]);
                 } else {
                     $update = $pdo->prepare("
                         UPDATE players
-                        SET display_name = :display_name, real_name = :real_name,
-                            bio = :bio, show_real_name = :show_real_name
+                        SET display_name = :display_name, bio = :bio
                         WHERE player_id = :id
                     ");
                     $update->execute([
                         'display_name' => $displayName,
-                        'real_name' => $realName ?: null,
                         'bio' => $bio,
-                        'show_real_name' => $showRealName,
                         'id' => $playerId,
                     ]);
                 }
@@ -702,18 +694,6 @@ $flashAlert = renderFlashAlert($flash ?: ($error
                                     class="w-full bg-black/40 border border-white/15 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-brand-orange font-medium">
                             </div>
 
-                            <div class="space-y-2">
-                                <label class="block text-xs font-bold uppercase text-gray-300 tracking-wider">ชื่อ-สกุลจริง (ไม่บังคับ)</label>
-                                <input type="text" name="real_name"
-                                    value="<?php echo htmlspecialchars($player['real_name'] ?? ''); ?>"
-                                    class="w-full bg-black/40 border border-white/15 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-brand-orange font-medium">
-                            </div>
-                        </div>
-
-                        <div class="flex items-center gap-3">
-                            <input type="checkbox" name="show_real_name" id="show_real_name" <?php echo $player['show_real_name'] ? 'checked' : ''; ?>
-                                class="w-4 h-4 rounded accent-brand-orange bg-black/40 border-white/20">
-                            <label for="show_real_name" class="text-xs text-gray-300 font-semibold cursor-pointer">แสดงชื่อ-สกุลจริงบนโปรไฟล์สาธารณะ</label>
                         </div>
 
                         <div class="space-y-2">

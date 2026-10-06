@@ -58,8 +58,71 @@ if ($tournamentId) {
     }
 }
 
+// เช็คอินสมาชิกทั้งทีมจาก Tournament Roster
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'team_checkin') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
+    } else {
+        $registrationId = (int) ($_POST['registration_id'] ?? 0);
+        $registrationStmt = $pdo->prepare("SELECT tr.tournament_registration_id, tr.tournament_id, tr.team_id, tr.status,
+                tr.participation_status, t.name AS team_name,
+                COALESCE(tc.checkin_open_at, tour.checkin_open_at) AS checkin_open_at,
+                COALESCE(tc.checkin_deadline, tour.checkin_close_at) AS checkin_close_at
+            FROM tournament_registrations tr
+            JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
+            LEFT JOIN teams t ON t.team_id = tr.team_id
+            LEFT JOIN tournament_categories tc ON tc.tournament_category_id = tr.tournament_category_id
+            WHERE tr.tournament_registration_id = :registration_id
+              AND tr.tournament_id = :tournament_id
+              AND tr.team_id IS NOT NULL
+            LIMIT 1");
+        $registrationStmt->execute(['registration_id' => $registrationId, 'tournament_id' => $tournamentId]);
+        $registration = $registrationStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$registration || $registration['status'] !== 'approved'
+            || in_array($registration['participation_status'], ['withdrawn', 'disqualified'], true)) {
+            $error = 'ไม่พบทีมที่มีสิทธิ์เช็กอินใน Tournament นี้';
+        } elseif (!$registration['checkin_open_at'] || !$registration['checkin_close_at']) {
+            $error = 'ยังไม่ได้กำหนดเวลาเช็กอิน';
+        } else {
+            $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Bangkok'));
+            $openAt = new DateTimeImmutable($registration['checkin_open_at'], new DateTimeZone('Asia/Bangkok'));
+            $closeAt = new DateTimeImmutable($registration['checkin_close_at'], new DateTimeZone('Asia/Bangkok'));
+            $windowOpen = isDemoTournament($tournament ?? []) || ($now >= $openAt && $now <= $closeAt);
+
+            if (!$windowOpen || !canCheckinRegistration($pdo, $registrationId, $now)) {
+                $error = $now < $openAt ? 'ยังไม่เปิดเช็กอิน' : 'ขณะนี้อยู่นอกช่วงเวลาเช็กอิน';
+            } else {
+                $membersStmt = $pdo->prepare("SELECT player_id
+                    FROM tournament_registration_members
+                    WHERE tournament_registration_id = :registration_id
+                      AND roster_status = 'active'
+                      AND is_required_for_checkin = 1
+                      AND checkin_status NOT IN ('checked_in', 'waived')
+                    ORDER BY player_id");
+                $membersStmt->execute(['registration_id' => $registrationId]);
+                $pendingPlayerIds = array_map('intval', $membersStmt->fetchAll(PDO::FETCH_COLUMN));
+
+                if (!$pendingPlayerIds) {
+                    $error = 'สมาชิกทีมเช็กอินครบแล้ว';
+                } else {
+                    try {
+                        $pdo->beginTransaction();
+                        foreach ($pendingPlayerIds as $playerId) {
+                            markRosterPlayerCheckedIn($pdo, $registrationId, $playerId, (int) $_SESSION['user_id']);
+                        }
+                        $pdo->commit();
+                        $success = sprintf('เช็กอินครบทีม %s แล้ว (%d คน)', $registration['team_name'] ?: 'ทีม', count($pendingPlayerIds));
+                    } catch (Throwable $exception) {
+                        if ($pdo->inTransaction()) $pdo->rollBack();
+                        $error = 'บันทึกเช็กอินทั้งทีมไม่สำเร็จ: ' . $exception->getMessage();
+                    }
+                }
+            }
+        }
+    }
 // เช็คอินสมาชิกจาก Tournament Roster ทีละคน
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_checkin') {
+} elseif ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'player_checkin') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
     } else {
@@ -580,7 +643,7 @@ if ($flash) {
                                                 <div class="text-[10px] font-bold text-amber-700"><?= (int) $r['progress']['checked_in'] ?>/<?= (int) $r['progress']['required'] ?></div>
                                             </div>
                                             <?php
-                                                                                                $memberStmt = $pdo->prepare("SELECT trm.player_id, trm.is_required_for_checkin, trm.checkin_status, p.display_name, p.real_name, u.username
+                                                                                                $memberStmt = $pdo->prepare("SELECT trm.player_id, trm.is_required_for_checkin, trm.checkin_status, p.display_name, u.username
                                                     FROM tournament_registration_members trm
                                                     JOIN players p ON p.player_id = trm.player_id
                                                     LEFT JOIN users u ON u.user_id = p.user_id
@@ -591,13 +654,23 @@ if ($flash) {
                                                 $memberStmt->execute(['registration_id' => $r['tournament_registration_id']]);
                                                 $rosterMembers = $memberStmt->fetchAll();
                                             ?>
+                                            <?php if (!$isSolo && array_filter($rosterMembers, static fn(array $member): bool => !in_array($member['checkin_status'], ['checked_in', 'waived'], true))): ?>
+                                                <form method="POST" class="mt-2" onsubmit="return confirm('ยืนยันเช็กอินสมาชิกที่ยังค้างทั้งหมดของทีมนี้หรือไม่?');">
+                                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES) ?>">
+                                                    <input type="hidden" name="action" value="team_checkin">
+                                                    <input type="hidden" name="registration_id" value="<?= (int) $r['tournament_registration_id'] ?>">
+                                                    <button type="submit" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[10px] font-bold text-white transition hover:bg-emerald-700">
+                                                        <i class="fa-solid fa-user-check"></i> เช็กอินครบทีม
+                                                    </button>
+                                                </form>
+                                            <?php endif; ?>
                                             <div class="mt-2 flex flex-wrap gap-1.5">
                                                 <?php foreach ($rosterMembers as $member): ?>
                                                     <?php $memberChecked = in_array($member['checkin_status'], ['checked_in', 'waived'], true); ?>
                                                     <span class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-medium <?php echo $memberChecked ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'; ?>">
                                                         <?php echo htmlspecialchars($member['display_name'] ?: $member['username']); ?>
                                                         <?php if (!$memberChecked): ?>
-                                                            <button type="button" aria-label="เช็กอิน <?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>" class="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-rose-300 bg-white px-2 text-sm font-black leading-none text-rose-600 shadow-sm transition hover:bg-rose-600 hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-300" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['real_name'] ?: $member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">+</button>
+                                                            <button type="button" aria-label="เช็กอิน <?= htmlspecialchars($member['display_name'] ?: $member['username'], ENT_QUOTES) ?>" class="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-rose-300 bg-white px-2 text-sm font-black leading-none text-rose-600 shadow-sm transition hover:bg-rose-600 hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-300" onclick="openCheckinConfirm(<?= (int) $r['tournament_registration_id'] ?>, <?= (int) $member['player_id'] ?>, '<?= htmlspecialchars($member['display_name'] ?: $member['username'], ENT_QUOTES) ?>')">+</button>
                                                         <?php else: ?>✓<?php endif; ?>
                                                     </span>
                                                 <?php endforeach; ?>

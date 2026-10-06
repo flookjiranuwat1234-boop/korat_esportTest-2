@@ -360,8 +360,10 @@ function resultToStats($result)
 function updateGroupStandingsAfterMatch($pdo, $matchId)
 {
     $stmt = $pdo->prepare("
-        SELECT group_id, team1_id, team2_id, team1_score, team2_score, winner_team_id
-        FROM matches WHERE match_id = :id
+        SELECT m.group_id, m.team1_id, m.team2_id, m.team1_score, m.team2_score, m.winner_team_id,
+               t.scoring_mode
+        FROM matches m JOIN tournaments t ON t.tournament_id = m.tournament_id
+        WHERE m.match_id = :id
     ");
     $stmt->execute(['id' => $matchId]);
     $match = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -373,16 +375,17 @@ function updateGroupStandingsAfterMatch($pdo, $matchId)
     $isDraw = ($match['team1_score'] == $match['team2_score']);
     $groupId = $match['group_id'];
 
-    bumpGroupTeam($pdo, $groupId, $match['team1_id'], $match['team1_score'], $match['team2_score'], $isDraw);
-    bumpGroupTeam($pdo, $groupId, $match['team2_id'], $match['team2_score'], $match['team1_score'], $isDraw);
+    $winPoints = ($match['scoring_mode'] ?? '') === 'rov_group' ? 2 : 3;
+    bumpGroupTeam($pdo, $groupId, $match['team1_id'], $match['team1_score'], $match['team2_score'], $isDraw, $winPoints);
+    bumpGroupTeam($pdo, $groupId, $match['team2_id'], $match['team2_score'], $match['team1_score'], $isDraw, $winPoints);
 }
 
-function bumpGroupTeam($pdo, $groupId, $teamId, $ownScore, $oppScore, $isDraw)
+function bumpGroupTeam($pdo, $groupId, $teamId, $ownScore, $oppScore, $isDraw, int $winPoints = 3)
 {
     if ($isDraw) {
         $points = 1; $win = 0; $draw = 1; $loss = 0;
     } elseif ($ownScore > $oppScore) {
-        $points = 3; $win = 1; $draw = 0; $loss = 0;
+        $points = $winPoints; $win = 1; $draw = 0; $loss = 0;
     } else {
         $points = 0; $win = 0; $draw = 0; $loss = 1;
     }

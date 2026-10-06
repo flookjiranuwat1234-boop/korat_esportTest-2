@@ -47,7 +47,7 @@ try {
     $hash = password_hash(PASSWORD, PASSWORD_DEFAULT);
     $answerHash = password_hash('test', PASSWORD_DEFAULT);
     $insertUser = $pdo->prepare("INSERT INTO users (username, email, password_hash, role, security_question, security_answer_hash, status) VALUES (:username, :email, :password_hash, 'athlete', 'test', :answer_hash, 'active')");
-    $insertPlayer = $pdo->prepare("INSERT INTO players (user_id, display_name, real_name, gender, province, eligibility_status) VALUES (:user_id, :display_name, :real_name, 'female', 'นครราชสีมา', 'verified')");
+    $insertPlayer = $pdo->prepare("INSERT INTO players (user_id, display_name, gender, province, eligibility_status) VALUES (:user_id, :display_name, 'female', 'นครราชสีมา', 'verified')");
     $updateMember = $pdo->prepare('UPDATE team_members SET player_id = :new_player_id WHERE team_member_id = :team_member_id');
     $updateCaptain = $pdo->prepare('UPDATE teams SET captain_player_id = :captain_player_id WHERE team_id = :team_id');
 
@@ -71,7 +71,6 @@ try {
             $insertPlayer->execute([
                 'user_id' => $userId,
                 'display_name' => $displayName,
-                'real_name' => sprintf('Full Test Female %04d', $number),
             ]);
             $newPlayerId = (int) $pdo->lastInsertId();
             $updateMember->execute(['new_player_id' => $newPlayerId, 'team_member_id' => $member['team_member_id']]);

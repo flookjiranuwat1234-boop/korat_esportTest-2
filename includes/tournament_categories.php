@@ -79,6 +79,18 @@ function ensureTournamentCategorySchema(PDO $pdo): void
     if (!in_array('roster_lock_at', $tCols, true)) {
         $pdo->exec('ALTER TABLE tournaments ADD COLUMN roster_lock_at DATETIME NULL');
     }
+    foreach ([
+        'group_best_of' => 'TINYINT UNSIGNED NULL',
+        'playoff_best_of' => 'TINYINT UNSIGNED NULL',
+        'top8_best_of' => 'TINYINT UNSIGNED NULL',
+        'scoring_mode' => "VARCHAR(30) NOT NULL DEFAULT 'legacy'",
+        'points_rounds' => 'TINYINT UNSIGNED NULL',
+        'points_advance' => 'TINYINT UNSIGNED NULL',
+    ] as $column => $definition) {
+        if (!in_array($column, $tCols, true)) {
+            $pdo->exec("ALTER TABLE tournaments ADD COLUMN {$column} {$definition}");
+        }
+    }
 
     $formatColumnType = $pdo->query("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tournaments' AND COLUMN_NAME = 'format'")->fetchColumn();
     if ($formatColumnType !== false && stripos((string) $formatColumnType, 'round_robin') !== false) {
@@ -118,6 +130,10 @@ function ensureTournamentCategorySchema(PDO $pdo): void
     if (!in_array('result_type', $matchCols, true)) {
         $pdo->exec("ALTER TABLE matches ADD COLUMN result_type VARCHAR(20) NOT NULL DEFAULT 'normal'");
     }
+    $resultTypeColumn = $pdo->query("SHOW COLUMNS FROM matches LIKE 'result_type'")->fetch(PDO::FETCH_ASSOC);
+    if ($resultTypeColumn && strtolower((string) $resultTypeColumn['Type']) !== 'varchar(20)') {
+        $pdo->exec("ALTER TABLE matches MODIFY COLUMN result_type VARCHAR(20) NOT NULL DEFAULT 'normal'");
+    }
     if (!in_array('wo_reason', $matchCols, true)) {
         $pdo->exec('ALTER TABLE matches ADD COLUMN wo_reason VARCHAR(500) NULL');
     }
@@ -138,6 +154,36 @@ function ensureTournamentCategorySchema(PDO $pdo): void
     if (!in_array('tournament_category_id', $groupCols, true)) {
         $pdo->exec('ALTER TABLE tournament_groups ADD COLUMN tournament_category_id INT UNSIGNED NULL');
     }
+    if (!in_array('stage_type', $groupCols, true)) {
+        $pdo->exec("ALTER TABLE tournament_groups ADD COLUMN stage_type VARCHAR(20) NOT NULL DEFAULT 'group'");
+    }
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS group_participants (
+        group_id INT UNSIGNED NOT NULL,
+        participant_id INT UNSIGNED NOT NULL,
+        PRIMARY KEY (group_id, participant_id),
+        CONSTRAINT group_participants_group_fk FOREIGN KEY (group_id)
+            REFERENCES tournament_groups (tournament_group_id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS points_round_results (
+        points_round_result_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        match_id INT UNSIGNED NOT NULL,
+        group_id INT UNSIGNED NOT NULL,
+        participant_id INT UNSIGNED NOT NULL,
+        round_number TINYINT UNSIGNED NOT NULL,
+        placement TINYINT UNSIGNED NOT NULL,
+        kills INT UNSIGNED NOT NULL DEFAULT 0,
+        points INT UNSIGNED NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (points_round_result_id),
+        UNIQUE KEY points_round_participant_unique (match_id, participant_id),
+        KEY points_round_group_idx (group_id, participant_id),
+        CONSTRAINT points_round_match_fk FOREIGN KEY (match_id)
+            REFERENCES matches (match_id) ON DELETE CASCADE,
+        CONSTRAINT points_round_group_fk FOREIGN KEY (group_id)
+            REFERENCES tournament_groups (tournament_group_id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     $pdo->exec("UPDATE tournament_registrations tr
         JOIN tournaments tour ON tour.tournament_id = tr.tournament_id
@@ -171,8 +217,92 @@ function ensureDefaultTournamentCategories(PDO $pdo, int $tournamentId): void
     ensureTournamentCategorySchema($pdo);
 }
 
+function getTournamentDisplayCategories(PDO $pdo, int $tournamentId, ?string $tournamentType = null): array
+{
+    $stmt = $pdo->prepare('SELECT tc.tournament_category_id, tc.category_code, tc.label
+        FROM tournament_categories tc
+        WHERE tc.tournament_id = :tournament_id AND tc.is_active = 1
+        ORDER BY tc.tournament_category_id');
+    $stmt->execute(['tournament_id' => $tournamentId]);
+    $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $hasMaleCategory = false;
+    $hasFemaleCategory = false;
+    foreach ($categories as $category) {
+        $code = normalizeTournamentCategoryCode($category['category_code'] ?? null);
+        if ($code === 'male') $hasMaleCategory = true;
+        if ($code === 'female') $hasFemaleCategory = true;
+    }
+
+    if (normalizeTournamentCategoryCode($tournamentType) === 'open'
+        && $hasMaleCategory
+        && $hasFemaleCategory) {
+        $categories = array_values(array_filter($categories, static function (array $category): bool {
+            return normalizeTournamentCategoryCode($category['category_code'] ?? null) !== 'open';
+        }));
+    }
+
+    return $categories;
+}
+
+function normalizeTournamentCategoryCode(?string $categoryCode): string
+{
+    $categoryCode = strtolower(trim((string) $categoryCode));
+    $aliases = [
+        'ชาย' => 'male',
+        'men' => 'male',
+        'หญิง' => 'female',
+        'women' => 'female',
+        'ทั่วไป' => 'open',
+        'โอเพ่น' => 'open',
+        'mixed' => 'open',
+        'all' => 'open',
+    ];
+    return $aliases[$categoryCode] ?? $categoryCode;
+}
+
+function mapRegistrationsToActiveTournamentCategories(PDO $pdo, int $tournamentId, array $registrations): array
+{
+    $categoryStmt = $pdo->prepare('SELECT tournament_category_id, category_code
+        FROM tournament_categories
+        WHERE tournament_id = :tournament_id AND is_active = 1');
+    $categoryStmt->execute(['tournament_id' => $tournamentId]);
+    $categoryIdsByCode = [];
+    $categoryCodesById = [];
+    foreach ($categoryStmt->fetchAll(PDO::FETCH_ASSOC) as $category) {
+        $code = normalizeTournamentCategoryCode($category['category_code'] ?? null);
+        $categoryId = (int) $category['tournament_category_id'];
+        if ($code !== '') {
+            $categoryIdsByCode[$code] = $categoryId;
+            $categoryCodesById[$categoryId] = $code;
+        }
+    }
+
+    foreach ($registrations as &$registration) {
+        $categoryId = (int) ($registration['tournament_category_id'] ?? 0);
+        $categoryCode = normalizeTournamentCategoryCode($registration['category'] ?? null);
+        if ($categoryCode === '' && isset($categoryCodesById[$categoryId])) {
+            $categoryCode = $categoryCodesById[$categoryId];
+        }
+        if ($categoryCode === '' || !isset($categoryIdsByCode[$categoryCode])) {
+            $competitor = $registration['team_name'] ?? $registration['competitor_id'] ?? 'ผู้สมัคร';
+            throw new RuntimeException(sprintf(
+                '%s ไม่มี Category ที่เปิดใช้งานตรงกับประเภท "%s"',
+                $competitor,
+                $categoryCode !== '' ? $categoryCode : 'ไม่ระบุ'
+            ));
+        }
+        $registration['category'] = $categoryCode;
+        $registration['tournament_category_id'] = $categoryIdsByCode[$categoryCode];
+    }
+    unset($registration);
+
+    return $registrations;
+}
+
 function getTournamentCategoryId(PDO $pdo, int $tournamentId, string $categoryCode): ?int
 {
+    $categoryCode = normalizeTournamentCategoryCode($categoryCode);
     ensureDefaultTournamentCategories($pdo, $tournamentId);
     $stmt = $pdo->prepare('SELECT tournament_category_id FROM tournament_categories
         WHERE tournament_id = :tournament_id AND category_code = :category_code');

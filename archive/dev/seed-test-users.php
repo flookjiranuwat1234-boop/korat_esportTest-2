@@ -48,8 +48,8 @@ try {
         (username, email, password_hash, role, security_question, security_answer_hash, status)
         VALUES (:username, :email, :password_hash, \'athlete\', :security_question, :security_answer_hash, \'active\')');
     $insertPlayer = $pdo->prepare('INSERT INTO players
-        (user_id, display_name, real_name, gender, birth_date, province)
-        VALUES (:user_id, :display_name, :real_name, :gender, :birth_date, :province)');
+        (user_id, display_name, gender, birth_date, province)
+        VALUES (:user_id, :display_name, :gender, :birth_date, :province)');
 
     $playerIds = [];
     foreach ($seedUsernames as $index => $username) {
@@ -65,7 +65,6 @@ try {
         $insertPlayer->execute([
             'user_id' => $userId,
             'display_name' => 'Athlete ' . sprintf('%02d', $number),
-            'real_name' => 'Test Athlete ' . sprintf('%02d', $number),
             'gender' => $number % 2 === 0 ? 'female' : 'male',
             'birth_date' => '2000-01-' . sprintf('%02d', (($number - 1) % 28) + 1),
             'province' => 'นครราชสีมา',
