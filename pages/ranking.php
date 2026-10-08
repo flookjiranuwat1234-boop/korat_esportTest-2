@@ -55,12 +55,16 @@ $topTeams = $pdo->query("
 ")->fetchAll(PDO::FETCH_ASSOC);
 
 $topPlayers = $pdo->query("
-    SELECT pr.game_id, pr.points, pr.matches_played, pr.wins, pr.losses, p.player_id, p.display_name, g.name AS game_name
+    SELECT SUM(pr.points) AS points, SUM(pr.matches_played) AS matches_played,
+           SUM(pr.wins) AS wins, SUM(pr.losses) AS losses,
+           p.player_id, p.display_name,
+           GROUP_CONCAT(DISTINCT g.name ORDER BY g.name SEPARATOR ', ') AS game_name
     FROM player_rankings pr
     JOIN players p ON p.player_id = pr.player_id
     JOIN games g ON g.game_id = pr.game_id
-    ORDER BY pr.points DESC
-    LIMIT 100
+    GROUP BY p.player_id, p.display_name
+    ORDER BY points DESC, wins DESC, p.player_id ASC
+    LIMIT 5
 ")->fetchAll(PDO::FETCH_ASSOC);
 
 $requestedGameId = filter_input(INPUT_GET, 'game_id', FILTER_VALIDATE_INT);
@@ -102,22 +106,6 @@ if ($rankingGameIds !== [0] && in_array('player_id', $rankingHistoryColumns, tru
         $performanceBonuses[(int) $performance['game_id']][(int) $performance['player_id']] = (int) $performance['performance_points'];
     }
 }
-
-// player_rankings.points already contains match points and player-performance
-// points recorded by the admin. Do not rebuild it from wins, otherwise players
-// with the same team record are incorrectly forced to the same score.
-usort($topPlayers, static function (array $left, array $right): int {
-    return [
-        (float) ($right['points'] ?? 0),
-        (int) ($right['wins'] ?? 0),
-        (int) ($right['player_id'] ?? 0),
-    ] <=> [
-        (float) ($left['points'] ?? 0),
-        (int) ($left['wins'] ?? 0),
-        (int) ($left['player_id'] ?? 0),
-    ];
-});
-$topPlayers = array_slice($topPlayers, 0, 5);
 
 $gamePlayMode = 'team';
 if ($gameId > 0) {
@@ -257,31 +245,6 @@ if ($search !== '') {
         }
     }
     $rankings = $matchingRankings;
-}
-
-if ($type === 'player' && $rankings) {
-    usort($rankings, static function (array $left, array $right): int {
-        return [
-            (float) ($right['total_points'] ?? 0),
-            (int) ($right['wins'] ?? 0),
-            (int) ($right['player_id'] ?? 0),
-        ] <=> [
-            (float) ($left['total_points'] ?? 0),
-            (int) ($left['wins'] ?? 0),
-            (int) ($left['player_id'] ?? 0),
-        ];
-    });
-
-    $topPlayers = array_map(function (array $ranking) use ($selectedGameName): array {
-        return [
-            'player_id' => $ranking['player_id'],
-            'display_name' => $ranking['display_name'],
-            'points' => $ranking['total_points'],
-            'wins' => $ranking['wins'],
-            'losses' => $ranking['losses'],
-            'game_name' => $selectedGameName,
-        ];
-    }, array_slice($rankings, 0, 5));
 }
 
 $rankingRowsPerPage = 10;

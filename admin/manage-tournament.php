@@ -95,6 +95,95 @@ function getTournamentDrawRegistrationSummary(PDO $pdo, int $tournamentId): arra
     ];
 }
 
+function shouldShowPlayoffFallback(PDO $pdo, array $tournament): bool
+{
+    if (
+        $tournament['format'] !== 'group_playoff'
+        || !in_array($tournament['status'], ['bracket_generated', 'ongoing'], true)
+    ) {
+        return false;
+    }
+
+    $tournamentId = (int) $tournament['tournament_id'];
+    $stateStmt = $pdo->prepare('SELECT t.scoring_mode, t.points_advance
+        FROM tournaments t WHERE t.tournament_id = :tournament_id');
+    $stateStmt->execute(['tournament_id' => $tournamentId]);
+    $state = $stateStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$state) return false;
+
+    $groupsStmt = $pdo->prepare("SELECT tournament_group_id, COALESCE(tournament_category_id, 0) AS category_id
+        FROM tournament_groups
+        WHERE tournament_id = :tournament_id AND stage_type = 'group'
+        ORDER BY tournament_category_id, tournament_group_id");
+    $groupsStmt->execute(['tournament_id' => $tournamentId]);
+    $groupsByCategory = [];
+    foreach ($groupsStmt->fetchAll(PDO::FETCH_ASSOC) as $group) {
+        $groupsByCategory[(int) $group['category_id']][] = (int) $group['tournament_group_id'];
+    }
+    if (!$groupsByCategory) return false;
+
+    if (($state['scoring_mode'] ?? '') === 'points') {
+        $groupMatchStmt = $pdo->prepare("SELECT
+                COUNT(*) AS total_matches,
+                SUM(CASE WHEN m.status NOT IN ('completed', 'walkover', 'cancelled') THEN 1 ELSE 0 END) AS pending_matches
+            FROM matches m
+            JOIN tournament_groups tg ON tg.tournament_group_id = m.group_id
+            WHERE tg.tournament_id = :tournament_id AND tg.stage_type = 'group'");
+        $groupMatchStmt->execute(['tournament_id' => $tournamentId]);
+        $groupMatchState = $groupMatchStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        if ((int) ($groupMatchState['total_matches'] ?? 0) === 0 || (int) ($groupMatchState['pending_matches'] ?? 0) > 0) {
+            return false;
+        }
+
+        $finalStmt = $pdo->prepare("SELECT COUNT(*) FROM tournament_groups
+            WHERE tournament_id = :tournament_id AND tournament_category_id <=> :category_id
+              AND stage_type = 'final'");
+        $advanceStmt = $pdo->prepare('SELECT COALESCE(teams_advance_per_group, 1)
+            FROM tournament_categories WHERE tournament_category_id = :category_id');
+        foreach ($groupsByCategory as $categoryId => $groupIds) {
+            $finalStmt->execute([
+                'tournament_id' => $tournamentId,
+                'category_id' => $categoryId ?: null,
+            ]);
+            if ((int) $finalStmt->fetchColumn() > 0) continue;
+
+            $advanceStmt->execute(['category_id' => $categoryId ?: null]);
+            $advanceCount = max(1, (int) ($advanceStmt->fetchColumn() ?: $state['points_advance'] ?: 1));
+            foreach ($groupIds as $groupId) {
+                if (getGroupQualifiers($pdo, $groupId, false, $advanceCount)) return true;
+            }
+        }
+        return false;
+    }
+
+    $completedGroupMatchStmt = $pdo->prepare("SELECT COUNT(*)
+        FROM matches m
+        JOIN tournament_groups tg ON tg.tournament_group_id = m.group_id
+        WHERE tg.tournament_id = :tournament_id AND tg.stage_type = 'group'
+          AND m.status IN ('completed', 'walkover')");
+    $completedGroupMatchStmt->execute(['tournament_id' => $tournamentId]);
+    if ((int) $completedGroupMatchStmt->fetchColumn() === 0) return false;
+
+    $advanceStmt = $pdo->prepare('SELECT COALESCE(teams_advance_per_group, 1)
+        FROM tournament_categories WHERE tournament_category_id = :category_id');
+    $playoffStmt = $pdo->prepare('SELECT COUNT(*) FROM matches
+        WHERE tournament_id = :tournament_id AND group_id IS NULL
+          AND COALESCE(tournament_category_id, 0) = :category_id');
+    foreach ($groupsByCategory as $categoryId => $groupIds) {
+        $advanceStmt->execute(['category_id' => $categoryId ?: null]);
+        $advanceCount = max(1, (int) ($advanceStmt->fetchColumn() ?: 1));
+        if (count($groupIds) * $advanceCount < 2) continue;
+
+        $playoffStmt->execute([
+            'tournament_id' => $tournamentId,
+            'category_id' => $categoryId,
+        ]);
+        if ((int) $playoffStmt->fetchColumn() === 0) return true;
+    }
+
+    return false;
+}
+
 function getGameTournamentPreset(string $gameName): array
 {
     $gameName = strtolower(trim($gameName));
@@ -1195,6 +1284,20 @@ try {
 } catch (Exception $e) { }
 
 $games = $pdo->query("SELECT game_id, name, play_mode FROM games WHERE is_active = 1 ORDER BY game_id ASC")->fetchAll(PDO::FETCH_ASSOC);
+$filterGamesByName = [];
+foreach ($games as $game) {
+    $filterGameName = trim((string) $game['name']);
+    $filterGameNameKey = strtolower($filterGameName);
+    if (!isset($filterGamesByName[$filterGameNameKey])) {
+        $filterGamesByName[$filterGameNameKey] = [
+            'game_id' => (int) $game['game_id'],
+            'game_ids' => [],
+            'name' => $filterGameName,
+        ];
+    }
+    $filterGamesByName[$filterGameNameKey]['game_ids'][] = (int) $game['game_id'];
+}
+$filterGames = array_values($filterGamesByName);
 $formGames = [];
 foreach ($games as $game) {
     $gameLabel = trim((string) $game['name']);
@@ -1804,7 +1907,27 @@ $filterAction = trim($_GET['needs_action'] ?? '');
 $tournamentWhere = [];
 $tournamentParams = [];
 if ($filterSearch !== '') { $tournamentWhere[] = 't.name LIKE :search'; $tournamentParams['search'] = '%' . $filterSearch . '%'; }
-if ($filterGame > 0) { $tournamentWhere[] = 't.game_id = :game_id_filter'; $tournamentParams['game_id_filter'] = $filterGame; }
+if ($filterGame > 0) {
+    $selectedGameIds = [];
+    foreach ($filterGames as $filterGameOption) {
+        if (in_array($filterGame, $filterGameOption['game_ids'], true)) {
+            $selectedGameIds = $filterGameOption['game_ids'];
+            break;
+        }
+    }
+    if ($selectedGameIds) {
+        $gamePlaceholders = [];
+        foreach ($selectedGameIds as $index => $selectedGameId) {
+            $placeholder = 'game_id_filter_' . $index;
+            $gamePlaceholders[] = ':' . $placeholder;
+            $tournamentParams[$placeholder] = $selectedGameId;
+        }
+        $tournamentWhere[] = 't.game_id IN (' . implode(', ', $gamePlaceholders) . ')';
+    } else {
+        $tournamentWhere[] = 't.game_id = :game_id_filter';
+        $tournamentParams['game_id_filter'] = $filterGame;
+    }
+}
 if ($filterStatus === 'current') { $tournamentWhere[] = "t.status NOT IN ('completed', 'cancelled')"; }
 elseif (in_array($filterStatus, ['registration_open', 'registration_closed', 'checkin_open', 'ongoing', 'completed', 'cancelled'], true)) {
     if ($filterStatus === 'checkin_open') {
@@ -3218,7 +3341,7 @@ $csrfToken = generateCsrfToken();
 
             <form method="GET" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-9 gap-3">
                 <input type="search" name="search" value="<?php echo htmlspecialchars($filterSearch); ?>" placeholder="ค้นหา Tournament" class="rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                <select name="game_id" class="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="0">ทุกเกม</option><?php foreach ($games as $game): ?><option value="<?php echo (int) $game['game_id']; ?>" <?php echo $filterGame === (int) $game['game_id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($game['name']); ?></option><?php endforeach; ?></select>
+                <select name="game_id" class="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="0">ทุกเกม</option><?php foreach ($filterGames as $game): ?><option value="<?php echo (int) $game['game_id']; ?>" <?php echo in_array($filterGame, $game['game_ids'], true) ? 'selected' : ''; ?>><?php echo htmlspecialchars($game['name']); ?></option><?php endforeach; ?></select>
                 <select name="year" class="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="0">ทุกปี</option><?php for ($year = (int) date('Y') + 1; $year >= 2020; $year--): ?><option value="<?php echo $year; ?>" <?php echo $filterYear === $year ? 'selected' : ''; ?>>ปี <?php echo $year; ?></option><?php endfor; ?></select>
                 <select name="status" class="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">ทั้งหมด</option><?php foreach (['current' => 'รายการปัจจุบัน', 'registration_open' => 'เปิดรับสมัคร', 'registration_closed' => 'ปิดรับสมัคร', 'checkin_open' => 'กำลัง Check-in', 'ongoing' => 'กำลังแข่งขัน', 'ready_to_close' => 'พร้อมปิดการแข่งขัน', 'completed' => 'แข่งขันจบแล้ว', 'cancelled' => 'ยกเลิกแล้ว'] as $value => $label): ?><option value="<?php echo $value; ?>" <?php echo $filterStatus === $value ? 'selected' : ''; ?>><?php echo $label; ?></option><?php endforeach; ?></select>
                 <select name="category" class="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">ทุกประเภท</option><option value="male" <?php echo $filterCategory === 'male' ? 'selected' : ''; ?>>ชาย</option><option value="female" <?php echo $filterCategory === 'female' ? 'selected' : ''; ?>>หญิง</option><option value="open" <?php echo $filterCategory === 'open' ? 'selected' : ''; ?>>โอเพ่น</option></select>
@@ -3465,7 +3588,7 @@ $csrfToken = generateCsrfToken();
                                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-sm">
                                             <i class="fa-solid fa-sitemap"></i> จัดสายอัตโนมัติ
                                         </button>
-                                    <?php elseif (in_array($t['status'], ['bracket_generated', 'ongoing'], true) && $t['format'] == 'group_playoff' && (int) $t['group_count'] > 0 && (int) $t['playoff_matches_count'] === 0): ?>
+                                    <?php elseif (shouldShowPlayoffFallback($pdo, $t)): ?>
                                         <form method="POST" onsubmit="return confirm('ยืนยันสร้างสาย Playoff จากอันดับ Group?')">
                                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8'); ?>">
                                             <input type="hidden" name="action" value="generate_playoff">

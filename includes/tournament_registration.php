@@ -308,16 +308,21 @@ function saveTeamTournamentRegistration(PDO $pdo, int $userId, int $tournamentId
         } else {
             $duplicateTeam = $pdo->prepare('SELECT team_id FROM teams
                 WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name))
+                  AND game_id = :game_id
                 LIMIT 1 FOR UPDATE');
-            $duplicateTeam->execute(['name' => $teamName]);
+            $duplicateTeam->execute([
+                'name' => $teamName,
+                'game_id' => (int) $category['tournament_game_id'],
+            ]);
             if ($duplicateTeam->fetchColumn()) {
                 throw new InvalidArgumentException('ชื่อทีมนี้ถูกใช้แล้ว');
             }
             $insertTeam = $pdo->prepare('INSERT INTO teams (name, logo_path, captain_player_id, game_id, is_solo_wrapper, status)
-                VALUES (:name, :logo, :captain, NULL, 0, "active")');
+                VALUES (:name, :logo, :captain, :game_id, 0, "active")');
             $insertTeam->execute([
                 'name' => $teamName, 'logo' => $logoPath,
                 'captain' => $captain['player_id'],
+                'game_id' => (int) $category['tournament_game_id'],
             ]);
             $teamId = (int) $pdo->lastInsertId();
         }
